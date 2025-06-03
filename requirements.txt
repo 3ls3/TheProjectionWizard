@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 streamlit>=1.32.0
 pandas>=2.2.0
 scikit-learn>=1.4.0
@@ -11,3 +12,32 @@ xgboost>=2.0.0
 lightgbm>=4.3.0
 catboost>=1.2.0
 # prophet or tensorflow depending on your model
+=======
+# Core dependencies for The Projection Wizard
+# Team A: EDA, Validation & Cleaning Pipeline
+# Web interface
+streamlit==1.45.1
+# Data manipulation and analysis
+pandas==1.5.3
+numpy==1.25.2
+# Machine learning
+scikit-learn==1.6.1
+# Data validation
+great-expectations==0.18.11
+pyspark==4.0.0
+# EDA and profiling
+ydata-profiling==4.6.3
+visions==0.7.5
+# Visualization (used by ydata-profiling)
+matplotlib==3.8.4
+seaborn==0.12.2
+# Optional dependencies for enhanced functionality
+# openpyxl              # For Excel file support
+# plotly                # For interactive visualizations
+# prophet               # For time series (Team B)
+# tensorflow            # For deep learning (Team B)
+# Development and testing
+# pytest                # For testing
+# black                 # For code formatting
+# flake8                # For linting
+>>>>>>> 958fbb734b6d5a19bc8797d9a92f3e32be420f08

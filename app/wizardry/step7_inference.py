@@ -117,46 +117,6 @@ def run():
             # Store predictions in session state for later use
             st.session_state["predictions"] = df_with_predictions
             
-<<<<<<< Updated upstream
-            st.success(f"Data split into {len(train_data)} training and {len(test_data)} test samples")
-        
-        test_df = st.session_state["test_data"]
-    else:
-        # Handle new data upload
-        uploaded_file = st.file_uploader("Upload new data for prediction", type=["csv"])
-        if not uploaded_file:
-            st.info("Please upload a CSV file to make predictions")
-            return
-        test_df = pd.read_csv(uploaded_file)
-    
-    # Display test data preview
-    st.write("Data for predictions:")
-    st.dataframe(test_df.head())
-    
-    # Make predictions (placeholder for now)
-    # TODO: Replace with actual model predictions
-    preds = [1 if i % 2 == 0 else 0 for i in range(len(test_df))]
-    test_df["prediction"] = preds
-    
-    # Store predictions
-    st.session_state["predictions"] = test_df
-    
-    # Display results
-    st.success(f"Predictions completed using {best_model}")
-    
-    # Add download button
-    st.download_button(
-        "Download Predictions",
-        test_df.to_csv(index=False),
-        file_name="predictions.csv",
-        mime="text/csv"
-    )
-    
-    # Show prediction distribution
-    st.write("Prediction Distribution:")
-    st.bar_chart(test_df["prediction"].value_counts())
-<<<<<<< HEAD
-=======
         except Exception as e:
             st.error(f"Error making predictions: {str(e)}")
             # Add more detailed error information
@@ -165,8 +125,6 @@ def run():
                 st.write(model.feature_names_in_)
                 st.write("Current data has these features:")
                 st.write(processed_data.columns.tolist())
-=======
->>>>>>> 958fbb734b6d5a19bc8797d9a92f3e32be420f08
 
     # Add navigation buttons at the bottom
     st.markdown("---")
@@ -180,7 +138,3 @@ def run():
         if st.button("Next: Explainability ➡️", type="primary", use_container_width=True):
             st.session_state.current_step = "Step 8: Explainability"
             st.rerun()
-<<<<<<< HEAD
->>>>>>> Stashed changes
-=======
->>>>>>> 958fbb734b6d5a19bc8797d9a92f3e32be420f08

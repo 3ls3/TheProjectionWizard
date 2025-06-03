@@ -91,10 +91,6 @@ def run():
     processed_df, _ = preprocess_data(df, target_col)
     X = processed_df
 
-<<<<<<< Updated upstream
-    st.session_state["explanations"] = "Explanation artifacts (placeholder)"
-<<<<<<< HEAD
-=======
     # Handle different model types
     if isinstance(model, (KMeans, DBSCAN, AgglomerativeClustering)):
         st.subheader("Clustering Analysis")
@@ -165,8 +161,6 @@ def run():
         "shap_values": shap_values if 'shap_values' in locals() else None,
         "lime_explainer": explainer if 'explainer' in locals() else None
     }
-=======
->>>>>>> 958fbb734b6d5a19bc8797d9a92f3e32be420f08
 
     # Add navigation buttons at the bottom
     st.markdown("---")
@@ -180,7 +174,3 @@ def run():
         if st.button("Next: Final Outputs ➡️", type="primary", use_container_width=True):
             st.session_state.current_step = "Step 9: Outputs"
             st.rerun()
-<<<<<<< HEAD
->>>>>>> Stashed changes
-=======
->>>>>>> 958fbb734b6d5a19bc8797d9a92f3e32be420f08

@@ -77,3 +77,16 @@ def run():
     # Show prediction distribution
     st.write("Prediction Distribution:")
     st.bar_chart(test_df["prediction"].value_counts())
+
+    # Add navigation buttons at the bottom
+    st.markdown("---")
+    col1, col2, col3 = st.columns([1,2,1])
+    with col1:
+        if st.button("⬅️ Back: Training", use_container_width=True):
+            st.session_state.current_step = "Step 6: Training"
+            st.rerun()
+    
+    with col3:
+        if st.button("Next: Explainability ➡️", type="primary", use_container_width=True):
+            st.session_state.current_step = "Step 8: Explainability"
+            st.rerun()

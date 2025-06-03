@@ -21,3 +21,11 @@ def run():
 
     st.write("📊 Explainability Artifacts:")
     st.text(st.session_state.get("explanations", "None available"))
+
+    # Add back button at the bottom
+    st.markdown("---")
+    col1, col2, col3 = st.columns([1,2,1])
+    with col2:
+        if st.button("⬅️ Back: Explainability", use_container_width=True):
+            st.session_state.current_step = "Step 8: Explainability"
+            st.rerun()

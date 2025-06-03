@@ -38,3 +38,16 @@ def run():
     st.session_state["best_model"] = leaderboard[0]["model"]
 
     st.success(f"Best model: {leaderboard[0]['model']} (score: {leaderboard[0]['score']})")
+
+    # Add navigation buttons at the bottom
+    st.markdown("---")
+    col1, col2, col3 = st.columns([1,2,1])
+    with col1:
+        if st.button("⬅️ Back: Model Selection", use_container_width=True):
+            st.session_state.current_step = "Step 5: Model Selection"
+            st.rerun()
+    
+    with col3:
+        if st.button("Next: Inference ➡️", type="primary", use_container_width=True):
+            st.session_state.current_step = "Step 7: Inference"
+            st.rerun()

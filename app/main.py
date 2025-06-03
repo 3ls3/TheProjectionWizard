@@ -1,6 +1,6 @@
 import streamlit as st
-from wizardry import model_dict
-from wizardry import (
+from app.wizardry import model_dict
+from app.wizardry import (
     step4_task_detection, step5_model_selection, step6_training,
     step7_inference, step8_explainability, step9_outputs
 )

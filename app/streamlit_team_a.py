@@ -47,6 +47,201 @@ def main():
         export_section()
 
 
+def type_override_section(df):
+    """Handle type override and target selection UI."""
+    st.subheader("🎯 Type Override & Target Selection")
+    st.write("Review and adjust data types, then select your target variable for ML.")
+    
+    # Initialize session state for type overrides if not exists
+    if 'type_overrides' not in st.session_state:
+        st.session_state['type_overrides'] = {}
+    if 'target_column' not in st.session_state:
+        st.session_state['target_column'] = None
+    if 'types_confirmed' not in st.session_state:
+        st.session_state['types_confirmed'] = False
+    
+    # Define available data types for dropdown
+    available_types = [
+        'string/object',
+        'integer', 
+        'float',
+        'boolean',
+        'category',
+        'datetime'
+    ]
+    
+    # Map pandas dtypes to our simplified types
+    def pandas_to_simple_type(dtype_str):
+        dtype_str = str(dtype_str).lower()
+        if 'int' in dtype_str:
+            return 'integer'
+        elif 'float' in dtype_str:
+            return 'float'
+        elif 'bool' in dtype_str:
+            return 'boolean'
+        elif 'datetime' in dtype_str:
+            return 'datetime'
+        elif 'category' in dtype_str:
+            return 'category'
+        else:
+            return 'string/object'
+    
+    # Display the type override table
+    st.write("**Column Type Configuration:**")
+    
+    # Create columns for the table header
+    header_cols = st.columns([3, 2, 3, 2])
+    with header_cols[0]:
+        st.write("**Column Name**")
+    with header_cols[1]:
+        st.write("**Inferred Type**")
+    with header_cols[2]:
+        st.write("**New Type**")
+    with header_cols[3]:
+        st.write("**Is Target?**")
+    
+    st.markdown("---")
+    
+    # Create rows for each column
+    for idx, column in enumerate(df.columns):
+        col_row = st.columns([3, 2, 3, 2])
+        
+        with col_row[0]:
+            st.write(f"`{column}`")
+        
+        with col_row[1]:
+            inferred_type = pandas_to_simple_type(df[column].dtype)
+            st.write(inferred_type)
+        
+        with col_row[2]:
+            # Get current override type or default to inferred type
+            current_type = st.session_state['type_overrides'].get(column, inferred_type)
+            new_type = st.selectbox(
+                "Select type",
+                available_types,
+                index=available_types.index(current_type) if current_type in available_types else 0,
+                key=f"type_{column}_{idx}",
+                label_visibility="collapsed"
+            )
+            st.session_state['type_overrides'][column] = new_type
+        
+        with col_row[3]:
+            is_target = st.radio(
+                "Target",
+                ["No", "Yes"],
+                index=1 if st.session_state['target_column'] == column else 0,
+                key=f"target_{column}_{idx}",
+                horizontal=True,
+                label_visibility="collapsed"
+            )
+            
+            # Update target column in session state
+            if is_target == "Yes":
+                st.session_state['target_column'] = column
+            elif st.session_state['target_column'] == column and is_target == "No":
+                st.session_state['target_column'] = None
+    
+    st.markdown("---")
+    
+    # Display current selections summary
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.session_state['target_column']:
+            st.success(f"🎯 **Target Column:** `{st.session_state['target_column']}`")
+        else:
+            st.warning("⚠️ **No target column selected**")
+    
+    with col2:
+        type_changes = sum(1 for col in df.columns 
+                          if st.session_state['type_overrides'].get(col) != pandas_to_simple_type(df[col].dtype))
+        if type_changes > 0:
+            st.info(f"📝 **Type changes:** {type_changes} columns")
+        else:
+            st.info("📝 **No type changes**")
+    
+    # Confirmation button
+    col1, col2, col3 = st.columns([2, 1, 2])
+    with col2:
+        if st.button("✅ Confirm Types & Target", type="primary"):
+            if st.session_state['target_column'] is None:
+                st.error("❌ Please select a target column before confirming.")
+            else:
+                # Apply type conversions to the dataframe
+                success, updated_df = apply_type_conversions(df, st.session_state['type_overrides'])
+                
+                if success:
+                    st.session_state['types_confirmed'] = True
+                    st.session_state['processed_df'] = updated_df
+                    st.success("✅ **Data types and target column confirmed!**")
+                    st.success("🚀 **Ready for next steps (EDA/Validation)**")
+                    
+                    # Display summary of changes
+                    with st.expander("📋 View Applied Changes", expanded=False):
+                        changes_df = pd.DataFrame({
+                            'Column': df.columns,
+                            'Original Type': [pandas_to_simple_type(df[col].dtype) for col in df.columns],
+                            'New Type': [st.session_state['type_overrides'].get(col, pandas_to_simple_type(df[col].dtype)) for col in df.columns],
+                            'Is Target': ['✅' if col == st.session_state['target_column'] else '' for col in df.columns]
+                        })
+                        st.dataframe(changes_df, use_container_width=True)
+                else:
+                    st.error("❌ Error applying type conversions. Please check your type selections.")
+
+    # Show confirmation status
+    if st.session_state.get('types_confirmed', False):
+        st.success("✅ Types and target confirmed! You can now proceed to EDA Profiling in the sidebar.")
+
+
+def apply_type_conversions(df, type_overrides):
+    """Apply type conversions to the dataframe with error handling."""
+    try:
+        updated_df = df.copy()
+        
+        for column, new_type in type_overrides.items():
+            if column not in df.columns:
+                continue
+                
+            try:
+                if new_type == 'integer':
+                    # Handle potential NaN values for integer conversion
+                    if updated_df[column].isnull().any():
+                        # Convert to nullable integer type
+                        updated_df[column] = pd.to_numeric(updated_df[column], errors='coerce').astype('Int64')
+                    else:
+                        updated_df[column] = pd.to_numeric(updated_df[column], errors='coerce').astype('int64')
+                        
+                elif new_type == 'float':
+                    updated_df[column] = pd.to_numeric(updated_df[column], errors='coerce').astype('float64')
+                    
+                elif new_type == 'boolean':
+                    # Convert to boolean, handling common string representations
+                    updated_df[column] = updated_df[column].astype(str).str.lower()
+                    updated_df[column] = updated_df[column].replace({
+                        'true': True, 'false': False, '1': True, '0': False,
+                        'yes': True, 'no': False, 't': True, 'f': False
+                    }).astype('boolean')
+                    
+                elif new_type == 'category':
+                    updated_df[column] = updated_df[column].astype('category')
+                    
+                elif new_type == 'datetime':
+                    updated_df[column] = pd.to_datetime(updated_df[column], errors='coerce')
+                    
+                elif new_type == 'string/object':
+                    updated_df[column] = updated_df[column].astype('object')
+                    
+            except Exception as e:
+                st.warning(f"⚠️ Could not convert column '{column}' to {new_type}: {str(e)}")
+                # Keep original type if conversion fails
+                continue
+                
+        return True, updated_df
+        
+    except Exception as e:
+        st.error(f"❌ Error during type conversion: {str(e)}")
+        return False, df
+
+
 def upload_data_section():
     """Handle data upload and initial inspection."""
     st.header("📁 Data Upload")
@@ -106,6 +301,9 @@ def upload_data_section():
                 preview_rows = st.slider("Number of rows to preview", 5, min(50, len(df)), 10)
                 st.dataframe(df.head(preview_rows), use_container_width=True)
                 
+                # Type Override UI - NEW SECTION
+                type_override_section(df)
+                
                 # Save file option
                 st.subheader("💾 Save to Raw Data Directory")
                 
@@ -129,22 +327,25 @@ def upload_data_section():
                         
                         save_path = raw_data_dir / filename
                         
+                        # Use processed df if types have been confirmed, otherwise use original df
+                        df_to_save = st.session_state.get('processed_df', df)
+                        
                         # Check if file already exists
                         if save_path.exists():
                             if st.checkbox("⚠️ File exists. Overwrite?"):
-                                df.to_csv(save_path, index=False)
+                                df_to_save.to_csv(save_path, index=False)
                                 st.success(f"✅ File saved successfully to: {save_path}")
                                 
                                 # Store filename in session state for other sections
                                 st.session_state['current_dataset'] = str(save_path)
-                                st.session_state['current_df'] = df
+                                st.session_state['current_df'] = df_to_save
                         else:
-                            df.to_csv(save_path, index=False)
+                            df_to_save.to_csv(save_path, index=False)
                             st.success(f"✅ File saved successfully to: {save_path}")
                             
                             # Store filename in session state for other sections
                             st.session_state['current_dataset'] = str(save_path)
-                            st.session_state['current_df'] = df
+                            st.session_state['current_df'] = df_to_save
                             
                     except Exception as e:
                         st.error(f"❌ Error saving file: {str(e)}")
@@ -198,7 +399,23 @@ def eda_profiling_section():
     st.header("📊 Exploratory Data Analysis")
     st.write("Generate comprehensive data profiling report.")
     
-    # TODO: Implement EDA profiling
+    # Check if types have been confirmed
+    if not st.session_state.get('types_confirmed', False):
+        st.warning("⚠️ Please upload data and confirm types & target selection first in the 'Upload Data' section.")
+        return
+    
+    # Check if we have processed data
+    if 'processed_df' not in st.session_state:
+        st.error("❌ No processed data found. Please go back to 'Upload Data' and confirm your type selections.")
+        return
+    
+    df = st.session_state['processed_df']
+    target_column = st.session_state.get('target_column')
+    
+    st.success(f"✅ Using processed data with {len(df)} rows, {len(df.columns)} columns")
+    st.info(f"🎯 Target column: `{target_column}`")
+    
+    # TODO: Implement EDA profiling with ydata-profiling using the processed dataframe
     st.info("🚧 EDA profiling functionality to be implemented")
 
 
@@ -207,7 +424,23 @@ def validation_section():
     st.header("✅ Data Validation")
     st.write("Validate data quality using Great Expectations.")
     
-    # TODO: Implement validation logic
+    # Check if types have been confirmed
+    if not st.session_state.get('types_confirmed', False):
+        st.warning("⚠️ Please upload data and confirm types & target selection first in the 'Upload Data' section.")
+        return
+    
+    # Check if we have processed data
+    if 'processed_df' not in st.session_state:
+        st.error("❌ No processed data found. Please go back to 'Upload Data' and confirm your type selections.")
+        return
+    
+    df = st.session_state['processed_df']
+    target_column = st.session_state.get('target_column')
+    
+    st.success(f"✅ Using processed data with {len(df)} rows, {len(df.columns)} columns")
+    st.info(f"🎯 Target column: `{target_column}`")
+    
+    # TODO: Implement validation logic with Great Expectations using the processed dataframe
     st.info("🚧 Data validation functionality to be implemented")
 
 
@@ -216,7 +449,23 @@ def cleaning_section():
     st.header("🧹 Data Cleaning")
     st.write("Clean and preprocess the data.")
     
-    # TODO: Implement cleaning logic
+    # Check if types have been confirmed
+    if not st.session_state.get('types_confirmed', False):
+        st.warning("⚠️ Please upload data and confirm types & target selection first in the 'Upload Data' section.")
+        return
+    
+    # Check if we have processed data
+    if 'processed_df' not in st.session_state:
+        st.error("❌ No processed data found. Please go back to 'Upload Data' and confirm your type selections.")
+        return
+    
+    df = st.session_state['processed_df']
+    target_column = st.session_state.get('target_column')
+    
+    st.success(f"✅ Using processed data with {len(df)} rows, {len(df.columns)} columns")
+    st.info(f"🎯 Target column: `{target_column}`")
+    
+    # TODO: Implement cleaning logic using the processed dataframe
     st.info("🚧 Data cleaning functionality to be implemented")
 
 
@@ -225,7 +474,23 @@ def export_section():
     st.header("💾 Export Results")
     st.write("Export cleaned and validated data for modeling pipeline.")
     
-    # TODO: Implement export logic
+    # Check if types have been confirmed
+    if not st.session_state.get('types_confirmed', False):
+        st.warning("⚠️ Please upload data and confirm types & target selection first in the 'Upload Data' section.")
+        return
+    
+    # Check if we have processed data
+    if 'processed_df' not in st.session_state:
+        st.error("❌ No processed data found. Please go back to 'Upload Data' and confirm your type selections.")
+        return
+    
+    df = st.session_state['processed_df']
+    target_column = st.session_state.get('target_column')
+    
+    st.success(f"✅ Using processed data with {len(df)} rows, {len(df.columns)} columns")
+    st.info(f"🎯 Target column: `{target_column}`")
+    
+    # TODO: Implement export logic - export cleaned_data.csv and schema.json
     st.info("🚧 Export functionality to be implemented")
 
 

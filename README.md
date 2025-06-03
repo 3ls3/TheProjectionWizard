@@ -1,8 +1,87 @@
-# ProjectionWizard
+# The Projection Wizard
 
-**AutoML Data Science Pipeline for Tabular Data**
+A data science bootcamp project to build an end-to-end ML pipeline. Users upload a tabular CSV (non-time-series), and receive:
+→ a trained model
+→ predictions
+→ data profiling reports
+→ basic model explanations
 
-A collaborative data science bootcamp project implementing an end-to-end AutoML pipeline with clean team boundaries and modular architecture.
+## Project Structure
+
+The pipeline consists of two teams:
+- **Team A (Current Focus)**: Handles EDA, data validation, and light cleaning
+  - Goal: Output a cleaned_data.csv and schema.json ready for AutoML
+- **Team B**: Takes the cleaned data and runs AutoML (e.g. PyCaret), model comparison, and explainability
+
+## New Feature: Type Override UI
+
+### Overview
+We've implemented a user-first approach where users can review and override auto-detected data types and select their target variable before running intensive EDA and validation processes.
+
+### How It Works
+
+1. **Upload CSV**: Users upload their CSV file as before
+2. **Data Preview**: View basic file info, column information, and data preview
+3. **🆕 Type Override & Target Selection**: 
+   - Review pandas-inferred data types for each column
+   - Override types using dropdown menus (string/object, integer, float, boolean, category, datetime)
+   - Select target variable using radio buttons (only one allowed)
+   - Confirm selections with the "Confirm Types & Target" button
+4. **Processing**: DataFrame is updated with confirmed types and stored in session state
+5. **Next Steps**: EDA, validation, and cleaning steps now use the processed DataFrame with correct types
+
+### Benefits
+
+- **More Accurate EDA**: Reports are generated on correctly typed data
+- **Better Validation**: Great Expectations rules apply to the intended data schema
+- **Improved Cleaning**: Operations work on properly typed columns
+- **User Control**: Users explicitly confirm their data schema before analysis
+
+### UI Components
+
+- **Column Type Grid**: Shows column name, inferred type, new type dropdown, and target selection
+- **Real-time Summary**: Displays selected target column and number of type changes
+- **Confirmation System**: Requires explicit confirmation before proceeding
+- **Error Handling**: Graceful handling of type conversion failures
+- **State Management**: Preserves user selections and processed data across navigation
+
+### Technical Implementation
+
+- **Session State**: Uses `st.session_state` to maintain user selections and processed DataFrame
+- **Type Conversion**: Robust type casting with error handling for edge cases
+- **Integration**: All subsequent pipeline steps check for confirmed types before proceeding
+- **Modularity**: Clean separation of concerns with dedicated functions
+
+## Running the Application
+
+```bash
+# Activate virtual environment
+source .venv/bin/activate
+
+# Run Team A's Streamlit interface
+streamlit run app/streamlit_team_a.py
+```
+
+## Pipeline Flow
+
+1. **Upload Data** → Upload CSV and review basic info
+2. **🆕 Type Override** → Confirm column types and target selection  
+3. **EDA Profiling** → Generate ydata-profiling reports (uses confirmed types)
+4. **Data Validation** → Run Great Expectations validation (uses confirmed types)
+5. **Data Cleaning** → Clean and preprocess data (uses confirmed types)
+6. **Export Results** → Export cleaned_data.csv and schema.json for Team B
+
+## Sample Data
+
+Test the application with the sample data file:
+- `data/mock/sample_data.csv` - Contains various data types for testing
+
+## Next Steps
+
+- Implement ydata-profiling EDA reports using processed DataFrame
+- Add Great Expectations validation with confirmed schema
+- Implement data cleaning operations
+- Create export functionality for cleaned_data.csv and schema.json
 
 ## 🏗️ Project Structure
 

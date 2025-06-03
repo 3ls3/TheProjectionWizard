@@ -15,10 +15,8 @@ Usage:
 import pandas as pd
 import argparse
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any
 import logging
-from datetime import datetime
-import json
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -28,71 +26,15 @@ try:
     from ydata_profiling import ProfileReport
     YDATA_AVAILABLE = True
 except ImportError:
-    logger.warning("ydata-profiling not installed. Install with: pip install ydata-profiling>=4.8.3")
+    logger.warning("ydata-profiling not installed. Install with: pip install ydata-profiling")
     YDATA_AVAILABLE = False
-
-# Constants
-LARGE_DATASET_THRESHOLD = 50000
-DEFAULT_SAMPLE_SIZE = 10000
-REPORTS_DIR = "data/processed/reports"
-
-
-def sample_large_dataset(df: pd.DataFrame, sample_size: int = DEFAULT_SAMPLE_SIZE) -> Tuple[pd.DataFrame, dict]:
-    """
-    Sample large datasets to improve performance and avoid memory issues.
-    
-    Args:
-        df (pd.DataFrame): Input DataFrame
-        sample_size (int): Size of the sample to take
-        
-    Returns:
-        Tuple[pd.DataFrame, dict]: Sampled DataFrame and sampling info
-    """
-    original_shape = df.shape
-    
-    if len(df) <= LARGE_DATASET_THRESHOLD:
-        logger.info(f"Dataset size ({len(df)} rows) is below threshold. No sampling needed.")
-        return df, {
-            "sampled": False,
-            "original_rows": original_shape[0],
-            "original_cols": original_shape[1],
-            "sample_rows": original_shape[0],
-            "sample_cols": original_shape[1],
-            "sampling_ratio": 1.0
-        }
-    
-    logger.info(f"Large dataset detected ({len(df)} rows). Sampling {sample_size} rows.")
-    
-    # Use stratified sampling if possible, otherwise random sampling
-    try:
-        # Try to maintain distribution across categorical columns
-        sampled_df = df.sample(n=min(sample_size, len(df)), random_state=42)
-    except Exception as e:
-        logger.warning(f"Error in sampling: {e}. Using head() instead.")
-        sampled_df = df.head(sample_size)
-    
-    sampling_info = {
-        "sampled": True,
-        "original_rows": original_shape[0],
-        "original_cols": original_shape[1],
-        "sample_rows": len(sampled_df),
-        "sample_cols": sampled_df.shape[1],
-        "sampling_ratio": len(sampled_df) / len(df)
-    }
-    
-    logger.info(f"Sampled {len(sampled_df)} rows from {len(df)} rows "
-                f"(ratio: {sampling_info['sampling_ratio']:.2%})")
-    
-    return sampled_df, sampling_info
 
 
 def generate_profile(
     df: pd.DataFrame, 
     title: Optional[str] = None,
-    config: Optional[Dict[str, Any]] = None,
-    enable_sampling: bool = True,
-    sample_size: int = DEFAULT_SAMPLE_SIZE
-) -> Optional[Tuple[object, dict]]:
+    config: Optional[Dict[str, Any]] = None
+) -> Optional[object]:
     """
     Generate a comprehensive EDA profile report for the given DataFrame.
     
@@ -100,15 +42,13 @@ def generate_profile(
         df (pd.DataFrame): Input DataFrame to profile
         title (str, optional): Title for the profile report
         config (dict, optional): Configuration options for ydata-profiling
-        enable_sampling (bool): Whether to enable sampling for large datasets
-        sample_size (int): Sample size for large datasets
         
     Returns:
-        Tuple[ProfileReport, dict] or None if ydata-profiling not available
+        ProfileReport object or None if ydata-profiling not available
         
     Example:
         >>> df = pd.read_csv('data.csv')
-        >>> profile, info = generate_profile(df, title="My Dataset Profile")
+        >>> profile = generate_profile(df, title="My Dataset Profile")
     """
     if not YDATA_AVAILABLE:
         logger.error("ydata-profiling not available. Cannot generate profile.")
@@ -117,22 +57,7 @@ def generate_profile(
     try:
         logger.info(f"Generating profile for dataset with shape: {df.shape}")
         
-        # Handle large datasets with sampling
-        sampling_info = {}
-        if enable_sampling:
-            df_to_profile, sampling_info = sample_large_dataset(df, sample_size)
-        else:
-            df_to_profile = df
-            sampling_info = {
-                "sampled": False,
-                "original_rows": df.shape[0],
-                "original_cols": df.shape[1],
-                "sample_rows": df.shape[0],
-                "sample_cols": df.shape[1],
-                "sampling_ratio": 1.0
-            }
-        
-        # Default configuration optimized for performance
+        # Default configuration
         default_config = {
             "title": title or "Dataset Profile Report",
             "dataset": {
@@ -140,24 +65,6 @@ def generate_profile(
             },
             "variables": {
                 "descriptions": {}
-            },
-            # Performance optimizations
-            "correlations": {
-                "auto": {"calculate": True},
-                "pearson": {"calculate": True},
-                "spearman": {"calculate": False},  # Disable for performance
-                "kendall": {"calculate": False},   # Disable for performance
-                "phi_k": {"calculate": False},     # Disable for performance
-                "cramers": {"calculate": False},   # Disable for performance
-            },
-            "interactions": {
-                "continuous": False,  # Disable for performance
-                "targets": []
-            },
-            "missing_diagrams": {
-                "matrix": False,  # Disable for performance on large datasets
-                "bar": True,
-                "heatmap": False
             }
         }
         
@@ -166,17 +73,10 @@ def generate_profile(
             default_config.update(config)
             
         # Generate profile
-        profile = ProfileReport(df_to_profile, **default_config)
-        
-        # Add sampling information to the profile metadata
-        profile_info = {
-            "generation_time": datetime.now().isoformat(),
-            "sampling": sampling_info,
-            "profile_config": default_config
-        }
+        profile = ProfileReport(df, **default_config)
         
         logger.info("Profile generation completed successfully")
-        return profile, profile_info
+        return profile
         
     except Exception as e:
         logger.error(f"Error generating profile: {str(e)}")
@@ -186,101 +86,51 @@ def generate_profile(
 def save_profile_report(
     profile: object, 
     output_path: str,
-    format: str = "html",
-    profile_info: Optional[dict] = None
-) -> Tuple[bool, dict]:
+    format: str = "html"
+) -> bool:
     """
-    Save the profile report to file with both HTML and JSON outputs.
+    Save the profile report to file.
     
     Args:
         profile: ProfileReport object
         output_path (str): Path to save the report
-        format (str): Primary output format ('html', 'json', 'both')
-        profile_info (dict, optional): Additional profile metadata
+        format (str): Output format ('html', 'json', 'json_minimal')
         
     Returns:
-        Tuple[bool, dict]: Success status and output file paths
+        bool: True if successful, False otherwise
         
     Example:
-        >>> success, paths = save_profile_report(profile, "reports/profile.html")
+        >>> save_profile_report(profile, "reports/profile.html")
     """
     try:
         output_path = Path(output_path)
-        
-        # Ensure reports directory exists
-        reports_dir = Path(REPORTS_DIR)
-        reports_dir.mkdir(parents=True, exist_ok=True)
-        
-        # If output_path is just a filename, place it in reports directory
-        if not output_path.is_absolute() and len(output_path.parts) == 1:
-            output_path = reports_dir / output_path
-        else:
-            output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         
         logger.info(f"Saving profile report to: {output_path}")
         
-        output_files = {}
-        
-        # Generate base filename without extension
-        base_path = output_path.with_suffix('')
-        
-        # Save HTML report
-        if format.lower() in ["html", "both"]:
-            html_path = base_path.with_suffix('.html')
-            profile.to_file(html_path)
-            output_files['html'] = str(html_path)
-            logger.info(f"HTML report saved: {html_path}")
-        
-        # Save JSON summary
-        if format.lower() in ["json", "both"]:
-            json_path = base_path.with_suffix('.json')
-            
-            # Get the profile summary as JSON
-            profile_json = profile.to_json()
-            
-            # Add our metadata if provided
-            if profile_info:
-                profile_data = json.loads(profile_json)
-                profile_data['metadata'] = profile_info
-                profile_json = json.dumps(profile_data, indent=2)
-            
-            with open(json_path, 'w', encoding='utf-8') as f:
-                f.write(profile_json)
-            
-            output_files['json'] = str(json_path)
-            logger.info(f"JSON summary saved: {json_path}")
-        
-        # Default to HTML if format not recognized
-        if format.lower() not in ["html", "json", "both"]:
-            html_path = base_path.with_suffix('.html')
-            profile.to_file(html_path)
-            output_files['html'] = str(html_path)
-            logger.warning(f"Unknown format '{format}', defaulting to HTML")
-        
-        # Save metadata file
-        if profile_info:
-            metadata_path = base_path.with_suffix('.metadata.json')
-            with open(metadata_path, 'w', encoding='utf-8') as f:
-                json.dump(profile_info, f, indent=2)
-            output_files['metadata'] = str(metadata_path)
-            logger.info(f"Metadata saved: {metadata_path}")
+        if format.lower() == "html":
+            profile.to_file(output_path)
+        elif format.lower() == "json":
+            profile.to_file(output_path)
+        elif format.lower() == "json_minimal":
+            profile.to_file(output_path)
+        else:
+            logger.error(f"Unsupported format: {format}")
+            return False
             
         logger.info("Profile report saved successfully")
-        return True, output_files
+        return True
         
     except Exception as e:
         logger.error(f"Error saving profile report: {str(e)}")
-        return False, {}
+        return False
 
 
 def profile_csv_file(
     input_path: str,
     output_path: Optional[str] = None,
-    title: Optional[str] = None,
-    enable_sampling: bool = True,
-    sample_size: int = DEFAULT_SAMPLE_SIZE,
-    format: str = "both"
-) -> Tuple[bool, dict]:
+    title: Optional[str] = None
+) -> bool:
     """
     Complete pipeline: load CSV, generate profile, and save report.
     
@@ -288,12 +138,9 @@ def profile_csv_file(
         input_path (str): Path to input CSV file
         output_path (str, optional): Path for output report
         title (str, optional): Title for the report
-        enable_sampling (bool): Whether to enable sampling for large datasets
-        sample_size (int): Sample size for large datasets
-        format (str): Output format ('html', 'json', 'both')
         
     Returns:
-        Tuple[bool, dict]: Success status and output file paths
+        bool: True if successful, False otherwise
     """
     try:
         # Load data
@@ -302,67 +149,21 @@ def profile_csv_file(
         logger.info(f"Loaded dataset with shape: {df.shape}")
         
         # Generate profile
-        result = generate_profile(
-            df, 
-            title=title, 
-            enable_sampling=enable_sampling,
-            sample_size=sample_size
-        )
-        if result is None:
-            return False, {}
-        
-        profile, profile_info = result
+        profile = generate_profile(df, title=title)
+        if profile is None:
+            return False
         
         # Determine output path
         if output_path is None:
             input_path_obj = Path(input_path)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_filename = f"{input_path_obj.stem}_profile_{timestamp}.html"
-            output_path = output_filename
+            output_path = f"data/processed/{input_path_obj.stem}_profile.html"
         
         # Save report
-        success, output_files = save_profile_report(
-            profile, 
-            output_path, 
-            format=format,
-            profile_info=profile_info
-        )
-        
-        return success, output_files
+        return save_profile_report(profile, output_path)
         
     except Exception as e:
         logger.error(f"Error in profile_csv_file: {str(e)}")
-        return False, {}
-
-
-def get_available_reports() -> list:
-    """
-    Get list of available profile reports in the reports directory.
-    
-    Returns:
-        list: List of report file information
-    """
-    reports_dir = Path(REPORTS_DIR)
-    if not reports_dir.exists():
-        return []
-    
-    reports = []
-    for html_file in reports_dir.glob("*.html"):
-        try:
-            stat = html_file.stat()
-            report_info = {
-                "filename": html_file.name,
-                "path": str(html_file),
-                "size_kb": stat.st_size / 1024,
-                "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
-                "has_json": (html_file.with_suffix('.json')).exists(),
-                "has_metadata": (html_file.with_suffix('.metadata.json')).exists()
-            }
-            reports.append(report_info)
-        except Exception as e:
-            logger.warning(f"Error reading report info for {html_file}: {e}")
-    
-    return sorted(reports, key=lambda x: x['modified'], reverse=True)
+        return False
 
 
 def main():
@@ -386,7 +187,7 @@ def main():
     args = parser.parse_args()
     
     # Run profiling
-    success, output_files = profile_csv_file(
+    success = profile_csv_file(
         input_path=args.input_path,
         output_path=args.output,
         title=args.title
@@ -394,8 +195,6 @@ def main():
     
     if success:
         print("✅ Profile generation completed successfully")
-        for filename, path in output_files.items():
-            print(f"  {filename}: {path}")
     else:
         print("❌ Profile generation failed")
         exit(1)

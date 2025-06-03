@@ -1,7 +1,4 @@
 streamlit
 pandas
 scikit-learn
-setuptools
-ydata-profiling>=4.8.3
-great-expectations
 # prophet or tensorflow depending on your model

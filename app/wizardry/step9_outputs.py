@@ -69,6 +69,7 @@ def run():
 <<<<<<< Updated upstream
     st.write("📊 Explainability Artifacts:")
     st.text(st.session_state.get("explanations", "None available"))
+<<<<<<< HEAD
 =======
         # Download buttons for individual files
         st.subheader("📁 Model Files")
@@ -108,6 +109,8 @@ def run():
 
     except Exception as e:
         st.error(f"Error saving model artifacts: {str(e)}")
+=======
+>>>>>>> 958fbb734b6d5a19bc8797d9a92f3e32be420f08
 
     # Add back button at the bottom
     st.markdown("---")
@@ -116,4 +119,7 @@ def run():
         if st.button("⬅️ Back: Explainability", use_container_width=True):
             st.session_state.current_step = "Step 8: Explainability"
             st.rerun()
+<<<<<<< HEAD
 >>>>>>> Stashed changes
+=======
+>>>>>>> 958fbb734b6d5a19bc8797d9a92f3e32be420f08

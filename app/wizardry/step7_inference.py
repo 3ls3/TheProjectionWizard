@@ -155,6 +155,7 @@ def run():
     # Show prediction distribution
     st.write("Prediction Distribution:")
     st.bar_chart(test_df["prediction"].value_counts())
+<<<<<<< HEAD
 =======
         except Exception as e:
             st.error(f"Error making predictions: {str(e)}")
@@ -164,6 +165,8 @@ def run():
                 st.write(model.feature_names_in_)
                 st.write("Current data has these features:")
                 st.write(processed_data.columns.tolist())
+=======
+>>>>>>> 958fbb734b6d5a19bc8797d9a92f3e32be420f08
 
     # Add navigation buttons at the bottom
     st.markdown("---")
@@ -177,4 +180,7 @@ def run():
         if st.button("Next: Explainability ➡️", type="primary", use_container_width=True):
             st.session_state.current_step = "Step 8: Explainability"
             st.rerun()
+<<<<<<< HEAD
 >>>>>>> Stashed changes
+=======
+>>>>>>> 958fbb734b6d5a19bc8797d9a92f3e32be420f08

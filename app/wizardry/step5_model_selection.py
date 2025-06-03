@@ -26,3 +26,16 @@ def run():
     candidates = model_dict.get(task, [])
     selected_models = st.multiselect("Select candidate models", candidates, default=candidates[:2])
     st.session_state["candidate_models"] = selected_models
+
+    # Add navigation buttons at the bottom
+    st.markdown("---")
+    col1, col2, col3 = st.columns([1,2,1])
+    with col1:
+        if st.button("⬅️ Back: Task Detection", use_container_width=True):
+            st.session_state.current_step = "Step 4: Task Detection"
+            st.rerun()
+    
+    with col3:
+        if st.button("Next: Training ➡️", type="primary", use_container_width=True):
+            st.session_state.current_step = "Step 6: Training"
+            st.rerun()

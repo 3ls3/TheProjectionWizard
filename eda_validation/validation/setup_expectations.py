@@ -30,6 +30,9 @@ try:
 except ImportError:
     logger.warning("Great Expectations not installed. Install with: pip install great_expectations")
     GX_AVAILABLE = False
+except Exception as e:
+    logger.warning(f"Great Expectations import failed: {str(e)}")
+    GX_AVAILABLE = False
 
 
 def initialize_great_expectations_context(project_root: str = ".") -> Optional[object]:
@@ -68,6 +71,186 @@ def initialize_great_expectations_context(project_root: str = ".") -> Optional[o
     except Exception as e:
         logger.error(f"Error initializing Great Expectations context: {str(e)}")
         return None
+
+
+def create_typed_expectation_suite(
+    df: pd.DataFrame,
+    suite_name: str = "typed_validation_suite"
+) -> List[Dict[str, Any]]:
+    """
+    Create expectations based on user-confirmed data types in the DataFrame.
+    This is optimized for DataFrames that have already been type-cast by users.
+    
+    Args:
+        df (pd.DataFrame): DataFrame with user-confirmed types
+        suite_name (str): Name for the expectation suite
+        
+    Returns:
+        List of expectation configurations
+        
+    Example:
+        >>> expectations = create_typed_expectation_suite(df, "user_typed_suite")
+    """
+    logger.info(f"Creating typed expectation suite: {suite_name}")
+    logger.info(f"Analyzing DataFrame with shape: {df.shape}")
+    
+    expectations = []
+    
+    try:
+        # Basic dataset expectations
+        expectations.append({
+            "expectation_type": "expect_table_row_count_to_be_between",
+            "kwargs": {
+                "min_value": max(1, len(df) // 2),  # At least half the current rows
+                "max_value": len(df) * 3  # Allow for some growth
+            }
+        })
+        
+        expectations.append({
+            "expectation_type": "expect_table_column_count_to_equal",
+            "kwargs": {
+                "value": len(df.columns)
+            }
+        })
+        
+        # Column-specific expectations based on confirmed types
+        for col in df.columns:
+            col_data = df[col]
+            col_dtype = str(col_data.dtype).lower()
+            
+            # Basic column existence
+            expectations.append({
+                "expectation_type": "expect_column_to_exist",
+                "kwargs": {
+                    "column": col
+                }
+            })
+            
+            # Type-specific expectations
+            if 'int' in col_dtype:
+                # Integer column expectations
+                non_null_data = col_data.dropna()
+                if len(non_null_data) > 0:
+                    min_val = int(non_null_data.min())
+                    max_val = int(non_null_data.max())
+                    
+                    expectations.append({
+                        "expectation_type": "expect_column_values_to_be_between",
+                        "kwargs": {
+                            "column": col,
+                            "min_value": min_val - abs(min_val * 0.1),  # 10% buffer
+                            "max_value": max_val + abs(max_val * 0.1)
+                        }
+                    })
+                
+            elif 'float' in col_dtype:
+                # Float column expectations
+                non_null_data = col_data.dropna()
+                if len(non_null_data) > 0:
+                    min_val = float(non_null_data.min())
+                    max_val = float(non_null_data.max())
+                    
+                    expectations.append({
+                        "expectation_type": "expect_column_values_to_be_between",
+                        "kwargs": {
+                            "column": col,
+                            "min_value": min_val - abs(min_val * 0.1),
+                            "max_value": max_val + abs(max_val * 0.1)
+                        }
+                    })
+                
+            elif 'bool' in col_dtype:
+                # Boolean column expectations
+                expectations.append({
+                    "expectation_type": "expect_column_values_to_be_in_set",
+                    "kwargs": {
+                        "column": col,
+                        "value_set": [True, False]
+                    }
+                })
+                
+            elif 'category' in col_dtype:
+                # Category column expectations
+                unique_values = col_data.cat.categories.tolist()
+                expectations.append({
+                    "expectation_type": "expect_column_values_to_be_in_set",
+                    "kwargs": {
+                        "column": col,
+                        "value_set": unique_values
+                    }
+                })
+                
+            elif 'datetime' in col_dtype:
+                # DateTime column expectations
+                non_null_data = col_data.dropna()
+                if len(non_null_data) > 0:
+                    min_date = non_null_data.min()
+                    max_date = non_null_data.max()
+                    
+                    expectations.append({
+                        "expectation_type": "expect_column_values_to_be_between",
+                        "kwargs": {
+                            "column": col,
+                            "min_value": min_date.isoformat(),
+                            "max_value": max_date.isoformat()
+                        }
+                    })
+                    
+            else:
+                # String/Object column expectations
+                unique_values = col_data.dropna().unique()
+                
+                if len(unique_values) <= 100:  # Categorical-like
+                    expectations.append({
+                        "expectation_type": "expect_column_values_to_be_in_set",
+                        "kwargs": {
+                            "column": col,
+                            "value_set": unique_values.tolist()
+                        }
+                    })
+                else:
+                    # String length expectations
+                    str_lengths = col_data.dropna().astype(str).str.len()
+                    if len(str_lengths) > 0:
+                        max_length = str_lengths.max()
+                        min_length = str_lengths.min()
+                        expectations.append({
+                            "expectation_type": "expect_column_value_lengths_to_be_between",
+                            "kwargs": {
+                                "column": col,
+                                "min_value": max(1, min_length),
+                                "max_value": max_length * 2  # Allow some buffer
+                            }
+                        })
+            
+            # Null value expectations
+            null_count = col_data.isnull().sum()
+            if null_count == 0:
+                expectations.append({
+                    "expectation_type": "expect_column_values_to_not_be_null",
+                    "kwargs": {
+                        "column": col
+                    }
+                })
+            else:
+                # Allow current null percentage plus small buffer
+                null_percentage = null_count / len(df)
+                if null_percentage < 0.8:  # Only if less than 80% null
+                    expectations.append({
+                        "expectation_type": "expect_column_values_to_not_be_null",
+                        "kwargs": {
+                            "column": col,
+                            "mostly": max(0.1, 1 - null_percentage - 0.05)  # 5% buffer
+                        }
+                    })
+        
+        logger.info(f"Created {len(expectations)} typed expectations")
+        return expectations
+        
+    except Exception as e:
+        logger.error(f"Error creating typed expectation suite: {str(e)}")
+        # Fall back to basic expectations
+        return create_basic_expectation_suite(df, suite_name)
 
 
 def create_basic_expectation_suite(

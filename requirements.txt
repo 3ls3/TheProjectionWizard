@@ -1,4 +1,10 @@
 streamlit
 pandas
 scikit-learn
+great-expectations==0.16.8
+pyspark
 # prophet or tensorflow depending on your model
+
+# Additional dependencies for validation
+ydata-profiling
+visions

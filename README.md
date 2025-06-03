@@ -66,20 +66,52 @@ streamlit run app/streamlit_team_a.py
 
 1. **Upload Data** → Upload CSV and review basic info
 2. **🆕 Type Override** → Confirm column types and target selection  
-3. **EDA Profiling** → Generate ydata-profiling reports (uses confirmed types)
-4. **Data Validation** → Run Great Expectations validation (uses confirmed types)
-5. **Data Cleaning** → Clean and preprocess data (uses confirmed types)
-6. **Export Results** → Export cleaned_data.csv and schema.json for Team B
+3. **✅ Auto Validation** → Automatic Great Expectations validation (runs after type confirmation)
+4. **EDA Profiling** → Generate ydata-profiling reports (uses confirmed types)
+5. **Data Validation** → Additional validation checks if needed
+6. **Data Cleaning** → Clean and preprocess data (uses confirmed types)
+7. **Export Results** → Export cleaned_data.csv and schema.json for Team B
 
 ## Sample Data
 
 Test the application with the sample data file:
 - `data/mock/sample_data.csv` - Contains various data types for testing
 
+## ✅ Latest Updates: Data Validation Integration
+
+### New Validation Features
+
+We've successfully integrated **Great Expectations data validation** that automatically runs after type confirmation:
+
+#### **Auto-Validation After Type Override**
+- **Trigger**: Automatically runs when user clicks "Confirm Types & Target"
+- **Smart Expectations**: Creates type-specific validation rules based on user-confirmed column types
+- **Comprehensive Checks**: Validates data ranges, null values, categorical sets, string lengths, and more
+
+#### **Validation Results UI**
+- **Status Badge**: Clear PASSED/FAILED indicators with success metrics
+- **Detailed Reporting**: Expandable failure details with specific error descriptions
+- **Validation Override**: Option to proceed despite validation failures
+- **Report Saving**: Automatic timestamped JSON reports saved to `data/processed/`
+
+#### **Type-Aware Validation Rules**
+- **Integer Columns**: Range validation with 10% buffer
+- **Float Columns**: Numeric range validation with buffer
+- **Boolean Columns**: Strict True/False value checking
+- **Category Columns**: Validates against expected categorical values
+- **DateTime Columns**: Date range validation
+- **String Columns**: Length validation and categorical checking for limited value sets
+
+#### **User Experience Improvements**
+- **Seamless Integration**: Validation runs immediately after type confirmation
+- **Clear Feedback**: User-friendly error messages and actionable insights
+- **Progress Indicators**: Loading spinners and success animations
+- **Flexible Workflow**: Option to override validation failures and continue
+
 ## Next Steps
 
+- ✅ **COMPLETED**: Great Expectations validation with confirmed schema
 - Implement ydata-profiling EDA reports using processed DataFrame
-- Add Great Expectations validation with confirmed schema
 - Implement data cleaning operations
 - Create export functionality for cleaned_data.csv and schema.json
 

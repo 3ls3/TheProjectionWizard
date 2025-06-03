@@ -29,6 +29,9 @@ try:
 except ImportError:
     logger.warning("Great Expectations not installed. Install with: pip install great_expectations")
     GX_AVAILABLE = False
+except Exception as e:
+    logger.warning(f"Great Expectations import failed: {str(e)}")
+    GX_AVAILABLE = False
 
 
 def load_expectation_suite(suite_path: str) -> Optional[Dict[str, Any]]:
@@ -78,8 +81,8 @@ def validate_dataframe_with_suite(
         >>> success, results = validate_dataframe_with_suite(df, suite)
     """
     if not GX_AVAILABLE:
-        logger.error("Great Expectations not available. Cannot run validation.")
-        return False, {"error": "Great Expectations not installed"}
+        logger.warning("Great Expectations not available. Using simplified validation.")
+        # Continue with simplified validation instead of failing
     
     try:
         logger.info("Starting data validation")
@@ -187,15 +190,40 @@ def validate_single_expectation(
             column = kwargs.get("column")
             min_val = kwargs.get("min_value")
             max_val = kwargs.get("max_value")
-            if column in df.columns and df[column].dtype in ['int64', 'float64']:
-                values_in_range = df[column].between(min_val, max_val).all()
-                result["success"] = values_in_range
-                actual_min = df[column].min()
-                actual_max = df[column].max()
-                result["details"] = f"Range: {actual_min}-{actual_max}, Expected: {min_val}-{max_val}"
+            if column in df.columns:
+                col_dtype = str(df[column].dtype).lower()
+                # Handle various numeric types including nullable integers
+                if any(x in col_dtype for x in ['int', 'float', 'number']):
+                    non_null_values = df[column].dropna()
+                    if len(non_null_values) > 0:
+                        values_in_range = non_null_values.between(min_val, max_val).all()
+                        result["success"] = values_in_range
+                        actual_min = non_null_values.min()
+                        actual_max = non_null_values.max()
+                        result["details"] = f"Range: {actual_min}-{actual_max}, Expected: {min_val}-{max_val}"
+                    else:
+                        result["success"] = True
+                        result["details"] = "No non-null values to validate"
+                elif 'datetime' in col_dtype:
+                    # Handle datetime ranges
+                    non_null_values = df[column].dropna()
+                    if len(non_null_values) > 0:
+                        min_date = pd.to_datetime(min_val)
+                        max_date = pd.to_datetime(max_val)
+                        values_in_range = (non_null_values >= min_date) & (non_null_values <= max_date)
+                        result["success"] = values_in_range.all()
+                        actual_min = non_null_values.min()
+                        actual_max = non_null_values.max()
+                        result["details"] = f"Date range: {actual_min}-{actual_max}, Expected: {min_date}-{max_date}"
+                    else:
+                        result["success"] = True
+                        result["details"] = "No non-null datetime values to validate"
+                else:
+                    result["success"] = False
+                    result["details"] = f"Column '{column}' is not numeric or datetime (type: {col_dtype})"
             else:
                 result["success"] = False
-                result["details"] = f"Column '{column}' not found or not numeric"
+                result["details"] = f"Column '{column}' not found"
                 
         elif expectation_type == "expect_column_values_to_be_in_set":
             column = kwargs.get("column")

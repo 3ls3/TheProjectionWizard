@@ -1,10 +1,27 @@
-streamlit
-pandas
-scikit-learn
-great-expectations==0.16.8
-pyspark
-# prophet or tensorflow depending on your model
-
-# Additional dependencies for validation
-ydata-profiling
-visions
+# Core dependencies for The Projection Wizard
+# Team A: EDA, Validation & Cleaning Pipeline
+# Web interface
+streamlit==1.45.1
+# Data manipulation and analysis
+pandas==1.5.3
+numpy==1.25.2
+# Machine learning
+scikit-learn==1.6.1
+# Data validation
+great-expectations==0.18.11
+pyspark==4.0.0
+# EDA and profiling
+ydata-profiling==4.6.3
+visions==0.7.5
+# Visualization (used by ydata-profiling)
+matplotlib==3.8.4
+seaborn==0.12.2
+# Optional dependencies for enhanced functionality
+# openpyxl              # For Excel file support
+# plotly                # For interactive visualizations
+# prophet               # For time series (Team B)
+# tensorflow            # For deep learning (Team B)
+# Development and testing
+# pytest                # For testing
+# black                 # For code formatting
+# flake8                # For linting

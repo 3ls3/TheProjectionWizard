@@ -10,8 +10,18 @@ def run():
     df = st.session_state.get("clean_data")
     target_col = st.session_state.get("target_column")
 
-    if None in (tool, models, task, df, target_col):
-        st.warning("Missing configuration. Complete previous steps first.")
+    # Check if any required variables are missing
+    required_vars = {
+        "AutoML Tool": tool,
+        "Candidate Models": models,
+        "Task Type": task,
+        "Dataset": df,
+        "Target Column": target_col
+    }
+    
+    missing_vars = [name for name, value in required_vars.items() if value is None]
+    if missing_vars:
+        st.warning(f"Missing configuration: {', '.join(missing_vars)}. Complete previous steps first.")
         return
 
     st.write(f"Training models for task: `{task}` using `{tool}`...")

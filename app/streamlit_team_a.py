@@ -14,6 +14,7 @@ import pandas as pd
 from pathlib import Path
 import os
 from datetime import datetime
+import numpy as np
 
 # Import our modules
 import sys
@@ -70,6 +71,11 @@ def main_pipeline_flow():
                 st.text(f"⏳ {stage.replace('_', ' ').title()}")
 
     st.markdown("---")
+
+    # Always show Final EDA if cleaned data is present
+    if 'cleaned_df' in st.session_state and 'cleaning_report' in st.session_state:
+        final_eda_pipeline_section()
+        return
 
     # Render content based on current stage
     if st.session_state.current_stage == "upload":
@@ -700,6 +706,18 @@ def cleaning_pipeline_section():
         st.error("❌ No processed data found.")
         return
 
+    # If cleaning is done, skip to Final EDA
+    if st.session_state.get('cleaning_done', False):
+        st.session_state.current_stage = 'final_eda'
+        st.experimental_rerun()
+        return
+
+    # Get target column
+    target_column = st.session_state.get('target_column')
+    if target_column:
+        st.success(f"🎯 Target column: `{target_column}`")
+        st.info("ℹ️ The target column will be preserved during cleaning operations.")
+
     # Show original data info
     st.subheader("📊 Original Data Summary")
     col1, col2, col3 = st.columns(3)
@@ -708,12 +726,14 @@ def cleaning_pipeline_section():
     with col2:
         st.metric("Columns", len(df.columns))
     with col3:
-        st.metric("Target Column", st.session_state.get('target_column', 'None'))
+        st.metric("Target Column", target_column or "None")
 
     # Missing values summary
     missing_values = df.isnull().sum()
     if missing_values.sum() > 0:
         st.warning(f"⚠️ Found {missing_values.sum()} missing values across {len(missing_values[missing_values > 0])} columns")
+        if target_column and missing_values[target_column] > 0:
+            st.warning(f"⚠️ Target column '{target_column}' has {missing_values[target_column]} missing values")
     else:
         st.success("✅ No missing values found")
 
@@ -774,7 +794,8 @@ def cleaning_pipeline_section():
                         missing_threshold=missing_threshold,
                         standardize_columns=standardize_columns,
                         remove_dups=remove_dups,
-                        convert_dtypes=convert_dtypes
+                        convert_dtypes=convert_dtypes,
+                        target_column=target_column
                     )
 
                     # Store cleaned data and report
@@ -786,8 +807,6 @@ def cleaning_pipeline_section():
 
                     # Display cleaning report
                     with st.expander("📋 View Cleaning Report", expanded=True):
-                        # Show shape changes
-                        st.write("**Shape Changes:**")
                         col1, col2 = st.columns(2)
                         with col1:
                             st.metric(
@@ -801,13 +820,15 @@ def cleaning_pipeline_section():
                                 report['final_shape'][1],
                                 delta=report['columns_removed']
                             )
-
-                        # Show steps performed
+                        if target_column:
+                            target_preserved = report.get('target_column_preserved', False)
+                            if target_preserved:
+                                st.success(f"✅ Target column '{target_column}' was preserved")
+                            else:
+                                st.error(f"❌ Target column '{target_column}' was not preserved!")
                         st.write("**Steps Performed:**")
                         for step in report['steps_performed']:
                             st.write(f"- {step.replace('_', ' ').title()}")
-
-                        # Show missing values changes
                         if 'missing_values_original' in report and 'missing_values_final' in report:
                             st.write("**Missing Values Changes:**")
                             missing_before = sum(report['missing_values_original'].values())
@@ -820,17 +841,60 @@ def cleaning_pipeline_section():
 
                     # Continue button
                     st.markdown("---")
-                    if st.button("📋 Continue to Final EDA", type="primary"):
-                        st.session_state.current_stage = "final_eda"
-                        st.rerun()
+                    if st.button("📋 Continue to Final EDA", key="continue_to_final_eda"):
+                        st.session_state['current_stage'] = "final_eda"
+                        st.session_state['cleaning_done'] = True
+                        st.experimental_rerun()
 
                 except Exception as e:
                     st.error(f"❌ Error during data cleaning: {str(e)}")
                     st.info("Please try adjusting the cleaning options and try again.")
 
 
+def make_json_serializable(obj):
+    """Recursively convert pandas/numpy types and pandas extension dtypes to native Python types for JSON serialization."""
+    import pandas as pd
+    import numpy as np
+    from pandas.api.types import is_extension_array_dtype
+
+    # Handle pandas extension dtypes and numpy dtypes
+    if isinstance(obj, dict):
+        return {make_json_serializable(k): make_json_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [make_json_serializable(v) for v in obj]
+    elif isinstance(obj, (np.integer, np.int64, np.int32, np.int16, np.int8)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, np.float64, np.float32, np.float16)):
+        return float(obj)
+    elif isinstance(obj, (np.bool_, bool)):
+        return bool(obj)
+    elif isinstance(obj, (np.ndarray, pd.Series)):
+        return obj.tolist()
+    elif hasattr(obj, 'item') and callable(obj.item):
+        return obj.item()
+    # Handle pandas and numpy dtype objects
+    elif isinstance(obj, (np.dtype, pd.api.extensions.ExtensionDtype)):
+        return str(obj)
+    # Handle pandas NA (pd.NA)
+    elif obj is pd.NA:
+        return None
+    # Handle pandas extension scalar types (like pd.Int64Dtype type values)
+    elif is_extension_array_dtype(type(obj)):
+        return obj if obj is not pd.NA else None
+    # Handle pandas DataFrame
+    elif isinstance(obj, pd.DataFrame):
+        return obj.to_dict(orient='records')
+    # Handle any object whose class name ends with 'Dtype'
+    elif obj is not None and hasattr(obj, '__class__') and obj.__class__.__name__.endswith('Dtype'):
+        return str(obj)
+    # As a last resort, convert any non-JSON-native type to string
+    elif not isinstance(obj, (str, int, float, bool, type(None))):
+        return str(obj)
+    return obj
+
+
 def final_eda_pipeline_section():
-    """Final EDA section with downloadable CSV."""
+    """Final EDA section with downloadable CSV and JSON report for modeling pipeline."""
     st.header("📋 Step 6: Final EDA & Export")
 
     if 'cleaned_df' not in st.session_state:
@@ -838,7 +902,8 @@ def final_eda_pipeline_section():
         return
 
     df = st.session_state['cleaned_df']
-    target_column = st.session_state.get('target_column')
+    cleaning_report = st.session_state.get('cleaning_report', {})
+    target_column = cleaning_report.get('target_column_renamed') or st.session_state.get('target_column')
 
     st.success("🎉 **Data pipeline completed successfully!**")
 
@@ -860,52 +925,72 @@ def final_eda_pipeline_section():
     st.dataframe(df.head(10), use_container_width=True)
 
     # Download section
-    st.subheader("💾 Download Cleaned Data")
-    st.write("This cleaned data is ready for Team B's modeling pipeline.")
+    st.subheader("💾 Download Cleaned Data & Report")
+    st.write("This cleaned data and report are ready for Team B's modeling pipeline. The target column is clearly marked in both files.")
 
-    # Create CSV for download
-    csv_data = df.to_csv(index=False)
+    # Save cleaned CSV and JSON report to disk
+    processed_dir = Path("data/processed")
+    processed_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = processed_dir / "final_cleaned_data.csv"
+    json_path = processed_dir / "final_cleaned_report.json"
+    df.to_csv(csv_path, index=False)
 
+    # Generate schema with target marked
+    schema = cleaning.generate_schema(df, target_column=target_column)
+
+    # Compose final report
+    final_report = {
+        "schema": schema,
+        "cleaning_report": cleaning_report,
+        "target_column": target_column,
+        "original_filename": st.session_state.get('filename', 'unknown'),
+        "final_rows": len(df),
+        "final_columns": len(df.columns),
+        "validation_passed": st.session_state.get('validation_success', False),
+        "pipeline_completed": True,
+        "timestamp": datetime.now().isoformat()
+    }
+    import json
+    with open(json_path, 'w') as f:
+        json.dump(make_json_serializable(final_report), f, indent=2)
+
+    # Download buttons
     col1, col2 = st.columns(2)
     with col1:
-        st.download_button(
-            label="📥 Download cleaned_data.csv",
-            data=csv_data,
-            file_name="cleaned_data.csv",
-            mime="text/csv",
-            type="primary"
-        )
-
+        with open(csv_path, 'rb') as f:
+            st.download_button(
+                label="📥 Download final_cleaned_data.csv",
+                data=f,
+                file_name="final_cleaned_data.csv",
+                mime="text/csv",
+                type="primary"
+            )
     with col2:
-        # Create metadata
-        metadata = {
-            "original_filename": st.session_state.get('filename', 'unknown'),
-            "original_rows": len(st.session_state.get('uploaded_df', [])),
-            "final_rows": len(df),
-            "target_column": target_column,
-            "validation_passed": st.session_state.get('validation_success', False),
-            "pipeline_completed": True,
-            "timestamp": datetime.now().isoformat()
-        }
+        with open(json_path, 'rb') as f:
+            st.download_button(
+                label="📄 Download final_cleaned_report.json",
+                data=f,
+                file_name="final_cleaned_report.json",
+                mime="application/json"
+            )
 
-        import json
-        metadata_json = json.dumps(metadata, indent=2)
-
-        st.download_button(
-            label="📄 Download metadata.json",
-            data=metadata_json,
-            file_name="metadata.json",
-            mime="application/json"
-        )
-
-    # Option to start over
+    # Option to re-clean or start over
     st.markdown("---")
-    if st.button("🔄 Process Another Dataset"):
-        # Clear all session state
-        for key in list(st.session_state.keys()):
-            del st.session_state[key]
-        st.session_state.current_stage = "upload"
-        st.rerun()
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🔄 Re-clean Data"):
+            # Remove cleaned data and go back to cleaning
+            for key in ['cleaned_df', 'cleaning_report', 'cleaning_done']:
+                if key in st.session_state:
+                    del st.session_state[key]
+            st.session_state.current_stage = "cleaning"
+            st.experimental_rerun()
+    with col2:
+        if st.button("🚀 Start Over"):
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
+            st.session_state.current_stage = "upload"
+            st.rerun()
 
 
 def upload_data_section():
@@ -1110,29 +1195,75 @@ def cleaning_section():
     st.info("🚧 Data cleaning functionality to be implemented")
 
 
-def export_section():
-    """Handle exporting cleaned data for Team B."""
-    st.header("💾 Export Results")
-    st.write("Export cleaned and validated data for modeling pipeline.")
+def export_section(df: pd.DataFrame):
+    """Handle data export functionality."""
+    st.subheader("📤 Export Cleaned Data")
+    st.write("Export your cleaned data and schema to the processed directory.")
 
-    # Check if types have been confirmed
-    if not st.session_state.get('types_confirmed', False):
-        st.warning("⚠️ Please upload data and confirm types & target selection first in the 'Upload Data' section.")
+    if df is None:
+        st.warning("⚠️ Please upload and process data first.")
         return
 
-    # Check if we have processed data
-    if 'processed_df' not in st.session_state:
-        st.error("❌ No processed data found. Please go back to 'Upload Data' and confirm your type selections.")
-        return
-
-    df = st.session_state['processed_df']
+    # Get target column from session state
     target_column = st.session_state.get('target_column')
 
-    st.success(f"✅ Using processed data with {len(df)} rows, {len(df.columns)} columns")
-    st.info(f"🎯 Target column: `{target_column}`")
+    # Export options
+    col1, col2 = st.columns(2)
+    with col1:
+        export_filename = st.text_input(
+            "Export Filename",
+            value="cleaned_data",
+            help="Base filename for the exported files (without extension)"
+        )
+    with col2:
+        include_schema = st.checkbox(
+            "Include Schema",
+            value=True,
+            help="Generate and export schema.json with the data"
+        )
 
-    # TODO: Implement export logic - export cleaned_data.csv and schema.json
-    st.info("🚧 Export functionality to be implemented")
+    if st.button("📤 Export Data", type="primary"):
+        try:
+            with st.spinner("Exporting data..."):
+                # Create processed directory if it doesn't exist
+                processed_dir = Path("data/processed")
+                processed_dir.mkdir(parents=True, exist_ok=True)
+
+                # Export the data
+                csv_path, schema_path = cleaning.export_cleaned_data(
+                    df=df,
+                    output_dir=str(processed_dir),
+                    filename=export_filename,
+                    target_column=target_column,
+                    include_schema=include_schema
+                )
+
+                # Display success message with file paths
+                st.success("✅ Data exported successfully!")
+                st.info(f"📄 CSV file: `{csv_path}`")
+                if schema_path:
+                    st.info(f"📄 Schema file: `{schema_path}`")
+
+                # Add download buttons
+                with open(csv_path, 'rb') as f:
+                    st.download_button(
+                        "⬇️ Download CSV",
+                        f,
+                        file_name=csv_path.name,
+                        mime="text/csv"
+                    )
+
+                if schema_path:
+                    with open(schema_path, 'rb') as f:
+                        st.download_button(
+                            "⬇️ Download Schema",
+                            f,
+                            file_name=schema_path.name,
+                            mime="application/json"
+                        )
+
+        except Exception as e:
+            st.error(f"❌ Error exporting data: {str(e)}")
 
 
 def upload_data_debug_section():

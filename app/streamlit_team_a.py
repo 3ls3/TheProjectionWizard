@@ -28,23 +28,62 @@ def main():
     st.title("🔍 EDA & Validation Pipeline (Team A)")
     st.markdown("---")
     
-    # Sidebar for navigation
-    st.sidebar.title("Pipeline Steps")
-    step = st.sidebar.selectbox(
-        "Choose step:",
-        ["Upload Data", "EDA Profiling", "Data Validation", "Data Cleaning", "Export Results"]
+    # Initialize session state for pipeline stages
+    if 'current_stage' not in st.session_state:
+        st.session_state.current_stage = "upload"
+    
+    # Sidebar for detailed debugging/logging
+    st.sidebar.title("🔍 Debugging & Details")
+    debug_section = st.sidebar.selectbox(
+        "View detailed information:",
+        ["Main Pipeline", "Upload Data Details", "Type Override Details", "Data Validation Details", "Data Cleaning Details", "EDA Profiling Details"]
     )
     
-    if step == "Upload Data":
-        upload_data_section()
-    elif step == "EDA Profiling":
-        eda_profiling_section()
-    elif step == "Data Validation":
-        validation_section()
-    elif step == "Data Cleaning":
-        cleaning_section()
-    elif step == "Export Results":
-        export_section()
+    if debug_section == "Main Pipeline":
+        main_pipeline_flow()
+    elif debug_section == "Upload Data Details":
+        upload_data_debug_section()
+    elif debug_section == "Type Override Details":
+        type_override_debug_section()
+    elif debug_section == "Data Validation Details":
+        validation_debug_section()
+    elif debug_section == "Data Cleaning Details":
+        cleaning_debug_section()
+    elif debug_section == "EDA Profiling Details":
+        eda_debug_section()
+
+
+def main_pipeline_flow():
+    """Main continuous pipeline flow on the main page."""
+    # Progress indicator
+    stages = ["upload", "basic_eda", "type_override", "validation", "cleaning", "final_eda"]
+    current_idx = stages.index(st.session_state.current_stage) if st.session_state.current_stage in stages else 0
+    
+    progress_cols = st.columns(len(stages))
+    for i, stage in enumerate(stages):
+        with progress_cols[i]:
+            if i < current_idx:
+                st.success(f"✅ {stage.replace('_', ' ').title()}")
+            elif i == current_idx:
+                st.info(f"🔄 {stage.replace('_', ' ').title()}")
+            else:
+                st.text(f"⏳ {stage.replace('_', ' ').title()}")
+    
+    st.markdown("---")
+    
+    # Render content based on current stage
+    if st.session_state.current_stage == "upload":
+        upload_pipeline_section()
+    elif st.session_state.current_stage == "basic_eda":
+        basic_eda_pipeline_section()
+    elif st.session_state.current_stage == "type_override":
+        type_override_pipeline_section()
+    elif st.session_state.current_stage == "validation":
+        validation_pipeline_section()
+    elif st.session_state.current_stage == "cleaning":
+        cleaning_pipeline_section()
+    elif st.session_state.current_stage == "final_eda":
+        final_eda_pipeline_section()
 
 
 def validation_section(df=None):
@@ -337,8 +376,9 @@ def type_override_section(df):
                         })
                         st.dataframe(changes_df, use_container_width=True)
                     
-                    # Add validation section after type confirmation
-                    validation_section(updated_df)
+                    # Advance to validation stage
+                    st.session_state.current_stage = "validation"
+                    st.rerun()
                 else:
                     st.error("❌ Error applying type conversions. Please check your type selections.")
 
@@ -395,6 +435,370 @@ def apply_type_conversions(df, type_overrides):
     except Exception as e:
         st.error(f"❌ Error during type conversion: {str(e)}")
         return False, df
+
+
+def upload_pipeline_section():
+    """Upload section for the main pipeline flow."""
+    st.header("📁 Step 1: Data Upload")
+    st.write("Upload your CSV file to start the pipeline.")
+    
+    # Create data/raw directory if it doesn't exist
+    raw_data_dir = Path("data/raw")
+    raw_data_dir.mkdir(parents=True, exist_ok=True)
+    
+    # File uploader widget
+    uploaded_file = st.file_uploader(
+        "Choose a CSV file",
+        type=['csv'],
+        help="Upload a CSV file (max 200MB)"
+    )
+    
+    if uploaded_file is not None:
+        try:
+            # Validate file size (200MB limit)
+            file_size_mb = uploaded_file.size / (1024 * 1024)
+            if file_size_mb > 200:
+                st.error(f"❌ File too large: {file_size_mb:.1f}MB. Maximum allowed: 200MB")
+                return
+            
+            # Display file info
+            st.success(f"✅ File uploaded: {uploaded_file.name}")
+            st.info(f"📊 File size: {file_size_mb:.2f}MB")
+            
+            # Try to read the CSV file
+            try:
+                df = pd.read_csv(uploaded_file)
+                
+                # Store in session state
+                st.session_state['uploaded_df'] = df
+                st.session_state['filename'] = uploaded_file.name
+                
+                # Display basic info about the dataset
+                st.subheader("📋 Dataset Overview")
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.metric("Rows", len(df))
+                with col2:
+                    st.metric("Columns", len(df.columns))
+                with col3:
+                    st.metric("Memory Usage", f"{df.memory_usage(deep=True).sum() / 1024:.1f}KB")
+                
+                # Show column info
+                st.subheader("📝 Column Information")
+                col_info = pd.DataFrame({
+                    'Column': df.columns,
+                    'Type': df.dtypes.astype(str),
+                    'Non-Null Count': df.count(),
+                    'Null Count': df.isnull().sum(),
+                    'Null %': (df.isnull().sum() / len(df) * 100).round(2)
+                })
+                st.dataframe(col_info, use_container_width=True)
+                
+                # Display preview of the data
+                st.subheader("👀 Data Preview")
+                preview_rows = st.slider("Number of rows to preview", 5, min(50, len(df)), 10)
+                st.dataframe(df.head(preview_rows), use_container_width=True)
+                
+                # Continue button
+                col1, col2, col3 = st.columns([2, 1, 2])
+                with col2:
+                    if st.button("📊 Continue to Basic EDA", type="primary"):
+                        st.session_state.current_stage = "basic_eda"
+                        st.rerun()
+                        
+            except pd.errors.EmptyDataError:
+                st.error("❌ The uploaded file is empty or contains no data.")
+            except pd.errors.ParserError as e:
+                st.error(f"❌ Error parsing CSV file: {str(e)}")
+                st.info("💡 Please ensure the file is a valid CSV format.")
+            except UnicodeDecodeError:
+                st.error("❌ Error reading file encoding. Please ensure the file uses UTF-8 encoding.")
+            except Exception as e:
+                st.error(f"❌ Unexpected error reading file: {str(e)}")
+                
+        except Exception as e:
+            st.error(f"❌ Error processing uploaded file: {str(e)}")
+
+
+def basic_eda_pipeline_section():
+    """Basic EDA section for the main pipeline flow."""
+    st.header("📊 Step 2: Basic Data Analysis")
+    
+    if 'uploaded_df' not in st.session_state:
+        st.error("❌ No data found. Please go back to upload a CSV file.")
+        if st.button("🔙 Back to Upload"):
+            st.session_state.current_stage = "upload"
+            st.rerun()
+        return
+    
+    df = st.session_state['uploaded_df']
+    
+    st.write("Quick statistical overview of your data:")
+    
+    # Basic statistics
+    st.subheader("📈 Statistical Summary")
+    st.dataframe(df.describe(include='all'), use_container_width=True)
+    
+    # Missing values analysis
+    st.subheader("❓ Missing Values Analysis")
+    missing_data = df.isnull().sum()
+    missing_data = missing_data[missing_data > 0].sort_values(ascending=False)
+    
+    if len(missing_data) > 0:
+        st.write("Columns with missing values:")
+        missing_df = pd.DataFrame({
+            'Column': missing_data.index,
+            'Missing Count': missing_data.values,
+            'Missing %': (missing_data.values / len(df) * 100).round(2)
+        })
+        st.dataframe(missing_df, use_container_width=True)
+    else:
+        st.success("✅ No missing values found!")
+    
+    # Data types overview
+    st.subheader("🔢 Data Types Overview")
+    dtype_counts = df.dtypes.value_counts()
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write("**Data Type Distribution:**")
+        for dtype, count in dtype_counts.items():
+            st.write(f"- {dtype}: {count} columns")
+    
+    with col2:
+        # Potential issues detection
+        st.write("**Potential Issues:**")
+        issues = []
+        
+        # Check for high cardinality object columns
+        for col in df.select_dtypes(include=['object']).columns:
+            unique_ratio = df[col].nunique() / len(df)
+            if unique_ratio > 0.9:
+                issues.append(f"High cardinality in '{col}' ({unique_ratio:.1%} unique)")
+        
+        # Check for very sparse columns
+        for col in df.columns:
+            null_ratio = df[col].isnull().sum() / len(df)
+            if null_ratio > 0.5:
+                issues.append(f"Sparse column '{col}' ({null_ratio:.1%} missing)")
+        
+        if issues:
+            for issue in issues:
+                st.warning(f"⚠️ {issue}")
+        else:
+            st.success("✅ No obvious data quality issues detected")
+    
+    # Continue button
+    st.markdown("---")
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        if st.button("🎯 Continue to Type Override", type="primary"):
+            st.session_state.current_stage = "type_override"
+            st.rerun()
+
+
+def type_override_pipeline_section():
+    """Type override section for the main pipeline flow."""
+    st.header("🎯 Step 3: Type Override & Target Selection")
+    
+    if 'uploaded_df' not in st.session_state:
+        st.error("❌ No data found. Please start from the beginning.")
+        if st.button("🔙 Back to Upload"):
+            st.session_state.current_stage = "upload"
+            st.rerun()
+        return
+    
+    df = st.session_state['uploaded_df']
+    
+    # Use the existing type override function
+    type_override_section(df)
+
+
+def validation_pipeline_section():
+    """Validation section for the main pipeline flow."""
+    st.header("✅ Step 4: Data Validation")
+    
+    if not st.session_state.get('types_confirmed', False):
+        st.error("❌ Please complete type override first.")
+        if st.button("🔙 Back to Type Override"):
+            st.session_state.current_stage = "type_override"
+            st.rerun()
+        return
+    
+    df = st.session_state.get('processed_df')
+    if df is None:
+        st.error("❌ No processed data found.")
+        return
+    
+    # Run validation automatically if not done yet
+    if 'validation_results' not in st.session_state:
+        st.write("🔄 Running data validation...")
+        with st.spinner("Validating data quality..."):
+            success, results = run_data_validation(df)
+            st.session_state['validation_results'] = results
+            st.session_state['validation_success'] = success
+    
+    # Display results
+    results = st.session_state['validation_results']
+    success = st.session_state.get('validation_success', False)
+    
+    if success:
+        st.success("🎉 **Data validation passed!** Your data meets all quality requirements.")
+        
+        # Show summary
+        total = results.get('total_expectations', 0)
+        passed = results.get('successful_expectations', 0)
+        st.info(f"✅ All {passed}/{total} validation checks passed")
+        
+        # Continue button
+        st.markdown("---")
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            if st.button("🧹 Continue to Data Cleaning", type="primary"):
+                st.session_state.current_stage = "cleaning"
+                st.rerun()
+                
+    else:
+        st.error("❌ **Data validation failed!** Some quality issues were detected.")
+        
+        # Show detailed results
+        display_validation_results(results)
+        
+        # Option to continue anyway
+        st.markdown("---")
+        st.subheader("⚠️ Continue Despite Issues?")
+        st.write("You can choose to proceed with data cleaning despite validation failures:")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🔧 Fix Issues First", type="secondary"):
+                st.session_state.current_stage = "type_override"
+                # Clear validation results to re-run
+                if 'validation_results' in st.session_state:
+                    del st.session_state['validation_results']
+                if 'validation_success' in st.session_state:
+                    del st.session_state['validation_success']
+                st.rerun()
+        
+        with col2:
+            if st.button("⚠️ Continue Anyway", type="primary"):
+                st.session_state['validation_override'] = True
+                st.session_state.current_stage = "cleaning"
+                st.rerun()
+
+
+def cleaning_pipeline_section():
+    """Data cleaning section for the main pipeline flow."""
+    st.header("🧹 Step 5: Data Cleaning")
+    
+    if not st.session_state.get('types_confirmed', False):
+        st.error("❌ No validated data found.")
+        return
+    
+    st.info("🚧 Data cleaning functionality will be implemented next.")
+    st.write("For now, we'll use the validated data as the final cleaned dataset.")
+    
+    # Use processed data as cleaned data for now
+    df = st.session_state.get('processed_df')
+    if df is not None:
+        st.session_state['cleaned_df'] = df
+        
+        # Show basic info about cleaned data
+        st.subheader("📊 Cleaned Data Summary")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Rows", len(df))
+        with col2:
+            st.metric("Columns", len(df.columns))
+        with col3:
+            st.metric("Target Column", st.session_state.get('target_column', 'None'))
+        
+        # Continue button
+        st.markdown("---")
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            if st.button("📋 Continue to Final EDA", type="primary"):
+                st.session_state.current_stage = "final_eda"
+                st.rerun()
+
+
+def final_eda_pipeline_section():
+    """Final EDA section with downloadable CSV."""
+    st.header("📋 Step 6: Final EDA & Export")
+    
+    if 'cleaned_df' not in st.session_state:
+        st.error("❌ No cleaned data found.")
+        return
+    
+    df = st.session_state['cleaned_df']
+    target_column = st.session_state.get('target_column')
+    
+    st.success("🎉 **Data pipeline completed successfully!**")
+    
+    # Final summary
+    st.subheader("📊 Final Data Summary")
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Final Rows", len(df))
+    with col2:
+        st.metric("Final Columns", len(df.columns))
+    with col3:
+        st.metric("Target Column", target_column or "None")
+    with col4:
+        validation_status = "✅ Passed" if st.session_state.get('validation_success', False) else "⚠️ Override"
+        st.metric("Validation", validation_status)
+    
+    # Data preview
+    st.subheader("👀 Final Data Preview")
+    st.dataframe(df.head(10), use_container_width=True)
+    
+    # Download section
+    st.subheader("💾 Download Cleaned Data")
+    st.write("This cleaned data is ready for Team B's modeling pipeline.")
+    
+    # Create CSV for download
+    csv_data = df.to_csv(index=False)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.download_button(
+            label="📥 Download cleaned_data.csv",
+            data=csv_data,
+            file_name="cleaned_data.csv",
+            mime="text/csv",
+            type="primary"
+        )
+    
+    with col2:
+        # Create metadata
+        metadata = {
+            "original_filename": st.session_state.get('filename', 'unknown'),
+            "original_rows": len(st.session_state.get('uploaded_df', [])),
+            "final_rows": len(df),
+            "target_column": target_column,
+            "validation_passed": st.session_state.get('validation_success', False),
+            "pipeline_completed": True,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        import json
+        metadata_json = json.dumps(metadata, indent=2)
+        
+        st.download_button(
+            label="📄 Download metadata.json",
+            data=metadata_json,
+            file_name="metadata.json",
+            mime="application/json"
+        )
+    
+    # Option to start over
+    st.markdown("---")
+    if st.button("🔄 Process Another Dataset"):
+        # Clear all session state
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.session_state.current_stage = "upload"
+        st.rerun()
 
 
 def upload_data_section():
@@ -622,6 +1026,126 @@ def export_section():
     
     # TODO: Implement export logic - export cleaned_data.csv and schema.json
     st.info("🚧 Export functionality to be implemented")
+
+
+def upload_data_debug_section():
+    """Detailed debugging information for upload step."""
+    st.header("🔍 Upload Data - Debug Information")
+    
+    st.subheader("📊 Session State")
+    upload_state = {
+        "uploaded_df": "uploaded_df" in st.session_state,
+        "filename": st.session_state.get('filename', 'Not set'),
+        "current_stage": st.session_state.get('current_stage', 'Not set')
+    }
+    st.json(upload_state)
+    
+    if 'uploaded_df' in st.session_state:
+        df = st.session_state['uploaded_df']
+        st.subheader("📋 DataFrame Information")
+        st.write(f"Shape: {df.shape}")
+        st.write(f"Memory usage: {df.memory_usage(deep=True).sum()} bytes")
+        st.write(f"Data types: {df.dtypes.to_dict()}")
+        
+        st.subheader("🔢 Column Analysis")
+        for col in df.columns:
+            with st.expander(f"Column: {col}"):
+                st.write(f"Type: {df[col].dtype}")
+                st.write(f"Unique values: {df[col].nunique()}")
+                st.write(f"Null count: {df[col].isnull().sum()}")
+                if df[col].dtype in ['object']:
+                    st.write(f"Sample values: {list(df[col].dropna().unique()[:5])}")
+
+
+def type_override_debug_section():
+    """Detailed debugging information for type override step."""
+    st.header("🎯 Type Override - Debug Information")
+    
+    st.subheader("📊 Session State")
+    override_state = {
+        "types_confirmed": st.session_state.get('types_confirmed', False),
+        "type_overrides": st.session_state.get('type_overrides', {}),
+        "target_column": st.session_state.get('target_column', 'Not set'),
+        "processed_df": "processed_df" in st.session_state
+    }
+    st.json(override_state)
+    
+    if 'type_overrides' in st.session_state and st.session_state['type_overrides']:
+        st.subheader("🔄 Type Changes Made")
+        if 'uploaded_df' in st.session_state:
+            df = st.session_state['uploaded_df']
+            changes = []
+            for col in df.columns:
+                original_type = str(df[col].dtype)
+                new_type = st.session_state['type_overrides'].get(col, 'No change')
+                changes.append({
+                    'Column': col,
+                    'Original Type': original_type,
+                    'New Type': new_type,
+                    'Changed': new_type != 'No change'
+                })
+            st.dataframe(pd.DataFrame(changes))
+    
+    if 'processed_df' in st.session_state:
+        df = st.session_state['processed_df']
+        st.subheader("📋 Processed DataFrame")
+        st.write(f"Shape: {df.shape}")
+        st.write(f"Data types after conversion: {df.dtypes.to_dict()}")
+
+
+def validation_debug_section():
+    """Detailed debugging information for validation step."""
+    st.header("✅ Data Validation - Debug Information")
+    
+    st.subheader("📊 Session State")
+    validation_state = {
+        "validation_results": "validation_results" in st.session_state,
+        "validation_success": st.session_state.get('validation_success', 'Not set'),
+        "validation_override": st.session_state.get('validation_override', False)
+    }
+    st.json(validation_state)
+    
+    if 'validation_results' in st.session_state:
+        st.subheader("🔍 Validation Results Details")
+        results = st.session_state['validation_results']
+        st.json(results)
+        
+        if 'expectation_results' in results:
+            st.subheader("📋 Individual Expectation Results")
+            for i, result in enumerate(results['expectation_results']):
+                success_icon = "✅" if result.get('success', False) else "❌"
+                with st.expander(f"{success_icon} Expectation {i+1}: {result.get('expectation_type', 'Unknown')}"):
+                    st.json(result)
+
+
+def cleaning_debug_section():
+    """Detailed debugging information for cleaning step."""
+    st.header("🧹 Data Cleaning - Debug Information")
+    
+    st.subheader("📊 Session State")
+    cleaning_state = {
+        "cleaned_df": "cleaned_df" in st.session_state,
+        "types_confirmed": st.session_state.get('types_confirmed', False)
+    }
+    st.json(cleaning_state)
+    
+    st.info("🚧 Data cleaning functionality not yet implemented.")
+    st.write("This section will show detailed cleaning operations and their effects.")
+
+
+def eda_debug_section():
+    """Detailed debugging information for EDA step."""
+    st.header("📊 EDA Profiling - Debug Information")
+    
+    st.subheader("📊 Session State")
+    eda_state = {
+        "cleaned_df": "cleaned_df" in st.session_state,
+        "filename": st.session_state.get('filename', 'Not set')
+    }
+    st.json(eda_state)
+    
+    st.info("🚧 EDA profiling functionality not yet implemented.")
+    st.write("This section will show detailed EDA reports and statistics.")
 
 
 if __name__ == "__main__":

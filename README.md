@@ -62,51 +62,59 @@ source .venv/bin/activate
 streamlit run app/streamlit_team_a.py
 ```
 
-## Pipeline Flow
+## 🔄 Pipeline Flow (Continuous UX)
 
-1. **Upload Data** → Upload CSV and review basic info
-2. **🆕 Type Override** → Confirm column types and target selection  
-3. **✅ Auto Validation** → Automatic Great Expectations validation (runs after type confirmation)
-4. **EDA Profiling** → Generate ydata-profiling reports (uses confirmed types)
-5. **Data Validation** → Additional validation checks if needed
-6. **Data Cleaning** → Clean and preprocess data (uses confirmed types)
-7. **Export Results** → Export cleaned_data.csv and schema.json for Team B
+### Main Pipeline (Continuous Flow)
+1. **📁 Upload Data** → Upload CSV and review basic file information
+2. **📊 Basic EDA** → Quick statistical overview and data quality checks  
+3. **🎯 Type Override** → Confirm column types and target selection
+4. **✅ Data Validation** → Automatic Great Expectations validation after confirmation
+5. **🧹 Data Cleaning** → Clean and preprocess data (placeholder for now)
+6. **📋 Final EDA** → Complete analysis with downloadable cleaned_data.csv
+
+### Debug Sidebar (Detailed Information)
+- **Upload Data Details** → Session state, DataFrame info, column analysis
+- **Type Override Details** → Type changes, processed DataFrame details
+- **Data Validation Details** → Validation results, expectation details
+- **Data Cleaning Details** → Cleaning operations (to be implemented)
+- **EDA Profiling Details** → Comprehensive reports (to be implemented)
 
 ## Sample Data
 
 Test the application with the sample data file:
 - `data/mock/sample_data.csv` - Contains various data types for testing
 
-## ✅ Latest Updates: Data Validation Integration
+## ✅ Latest Updates: Continuous Pipeline UX
 
-### New Validation Features
+### 🎯 New Continuous Flow Design
 
-We've successfully integrated **Great Expectations data validation** that automatically runs after type confirmation:
+We've completely restructured the user experience to provide a **seamless, continuous pipeline flow**:
 
-#### **Auto-Validation After Type Override**
-- **Trigger**: Automatically runs when user clicks "Confirm Types & Target"
-- **Smart Expectations**: Creates type-specific validation rules based on user-confirmed column types
-- **Comprehensive Checks**: Validates data ranges, null values, categorical sets, string lengths, and more
+#### **📊 Progress Tracking**
+- **Visual Progress Bar**: Clear 6-stage progress indicator at the top
+- **Stage-based Navigation**: Each stage builds on the previous one
+- **State Persistence**: Session state maintained when switching to debug views
+- **Smart Advancement**: Automatic progression when stages are completed
 
-#### **Validation Results UI**
-- **Status Badge**: Clear PASSED/FAILED indicators with success metrics
-- **Detailed Reporting**: Expandable failure details with specific error descriptions
-- **Validation Override**: Option to proceed despite validation failures
-- **Report Saving**: Automatic timestamped JSON reports saved to `data/processed/`
+#### **🔄 Main Pipeline Flow**
+1. **Upload** → File upload with immediate validation and preview
+2. **Basic EDA** → Quick statistical overview and data quality insights
+3. **Type Override** → Interactive type confirmation and target selection
+4. **Validation** → Automatic Great Expectations validation with clear pass/fail
+5. **Cleaning** → Data cleaning operations (placeholder implementation)
+6. **Final EDA** → Complete analysis with downloadable outputs
 
-#### **Type-Aware Validation Rules**
-- **Integer Columns**: Range validation with 10% buffer
-- **Float Columns**: Numeric range validation with buffer
-- **Boolean Columns**: Strict True/False value checking
-- **Category Columns**: Validates against expected categorical values
-- **DateTime Columns**: Date range validation
-- **String Columns**: Length validation and categorical checking for limited value sets
+#### **🔍 Debug Sidebar**
+- **Detailed Logging**: Comprehensive debugging information for each stage
+- **Session State Inspection**: Real-time view of all stored data and settings
+- **Validation Details**: In-depth validation results and expectation analysis
+- **Development Support**: Essential debugging tools for development and testing
 
-#### **User Experience Improvements**
-- **Seamless Integration**: Validation runs immediately after type confirmation
-- **Clear Feedback**: User-friendly error messages and actionable insights
-- **Progress Indicators**: Loading spinners and success animations
-- **Flexible Workflow**: Option to override validation failures and continue
+#### **🚀 User Experience Improvements**
+- **No Lost Progress**: Switching between main flow and debug views preserves all progress
+- **Clear Error Handling**: Actionable error messages with options to fix or continue
+- **Download Ready**: Final cleaned_data.csv and metadata.json ready for Team B
+- **Restart Option**: Easy reset to process multiple datasets in sequence
 
 ## Next Steps
 

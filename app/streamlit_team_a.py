@@ -32,46 +32,53 @@ def main():
     # Initialize session state for pipeline stages
     if 'current_stage' not in st.session_state:
         st.session_state.current_stage = "upload"
+    
+    # Initialize debug mode
+    if 'debug_mode' not in st.session_state:
+        st.session_state.debug_mode = False
 
-    # Sidebar for detailed debugging/logging
-    st.sidebar.title("🔍 Debugging & Details")
-    debug_section = st.sidebar.selectbox(
-        "View detailed information:",
-        ["Main Pipeline", "Upload Data Details", "Type Override Details", "Data Validation Details", "Data Cleaning Details", "EDA Profiling Details"]
-    )
-
-    if debug_section == "Main Pipeline":
-        main_pipeline_flow()
-    elif debug_section == "Upload Data Details":
-        upload_data_debug_section()
-    elif debug_section == "Type Override Details":
-        type_override_debug_section()
-    elif debug_section == "Data Validation Details":
-        validation_debug_section()
-    elif debug_section == "Data Cleaning Details":
-        cleaning_debug_section()
-    elif debug_section == "EDA Profiling Details":
-        eda_debug_section()
+    # Sidebar with debug toggle
+    st.sidebar.title("⚙️ Pipeline Control")
+    
+    # Debug toggle with gear icon
+    if st.sidebar.button("⚙️ Debug Toggle"):
+        st.session_state.debug_mode = not st.session_state.debug_mode
+    
+    if st.session_state.debug_mode:
+        st.sidebar.write("Debug mode ON")
+    
+    # Always show the main pipeline flow
+    main_pipeline_flow()
 
 
 def main_pipeline_flow():
     """Main continuous pipeline flow on the main page."""
-    # Progress indicator
-    stages = ["upload", "basic_eda", "type_override", "validation", "cleaning", "final_eda"]
-    current_idx = stages.index(st.session_state.current_stage) if st.session_state.current_stage in stages else 0
+    # Define pipeline stages
+    stages = [
+        ("upload", "📁 Upload"),
+        ("basic_eda", "📊 Basic EDA"), 
+        ("type_override", "🎯 Type Override"),
+        ("validation", "✅ Validation"),
+        ("cleaning", "🧹 Cleaning"),
+        ("final_eda", "📋 Final EDA")
+    ]
+    
+    current_stage = st.session_state.current_stage
+    current_idx = next((i for i, (stage, _) in enumerate(stages) if stage == current_stage), 0)
+    
+    # Sidebar checklist showing pipeline progress
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("**📋 Pipeline Progress**")
+    
+    for i, (stage, display_name) in enumerate(stages):
+        if i < current_idx:
+            st.sidebar.markdown(f"✅ {display_name}")
+        elif i == current_idx:
+            st.sidebar.markdown(f"🔄 {display_name}")
+        else:
+            st.sidebar.markdown(f"⏳ {display_name}")
 
-    progress_cols = st.columns(len(stages))
-    for i, stage in enumerate(stages):
-        with progress_cols[i]:
-            if i < current_idx:
-                st.success(f"✅ {stage.replace('_', ' ').title()}")
-            elif i == current_idx:
-                st.info(f"🔄 {stage.replace('_', ' ').title()}")
-            else:
-                st.text(f"⏳ {stage.replace('_', ' ').title()}")
-
-    st.markdown("---")
-
+    # Main content area - render content based on current stage
     # Always show Final EDA if cleaned data is present
     if 'cleaned_df' in st.session_state and 'cleaning_report' in st.session_state:
         final_eda_pipeline_section()

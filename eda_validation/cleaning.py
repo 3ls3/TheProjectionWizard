@@ -21,26 +21,8 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 
-# Utility: Make objects JSON serializable (handles numpy/pandas types)
-def make_json_serializable(obj):
-    if isinstance(obj, dict):
-        return {make_json_serializable(k): make_json_serializable(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [make_json_serializable(i) for i in obj]
-    elif isinstance(obj, (np.integer,)):
-        return int(obj)
-    elif isinstance(obj, (np.floating,)):
-        return float(obj)
-    elif isinstance(obj, (np.bool_, bool)):
-        return bool(obj)
-    elif isinstance(obj, (np.ndarray,)):
-        return obj.tolist()
-    elif isinstance(obj, (pd.Timestamp, np.datetime64)):
-        return str(obj)
-    elif isinstance(obj, (pd.Series, pd.DataFrame)):
-        return obj.to_dict()
-    else:
-        return obj
+# Import utility function from central location
+from eda_validation.utils import make_json_serializable
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

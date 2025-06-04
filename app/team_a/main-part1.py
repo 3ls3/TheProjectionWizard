@@ -32,7 +32,6 @@ from app.team_a.sections.cleaning import (
     cleaning_pipeline_section
 )
 from app.team_a.sections.final import show_final_results_section
-from app.team_a.sections.utils import make_json_serializable
 
 # Pipeline stages
 STAGES = ["upload", "type_override", "validation", "cleaning", "final"]

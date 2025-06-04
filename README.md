@@ -364,3 +364,27 @@ Data Science Bootcamp Project - Educational Use
 
 **Team A Contributors**: [Your Names Here]  
 **Team B Contributors**: [Team B Names Here]
+
+## Recent Changes
+
+### Utility Function Consolidation
+
+- **Consolidated `make_json_serializable`**: Moved the duplicate utility function from `app/team_a/sections/utils.py` and `eda_validation/cleaning.py` to a single location in `eda_validation/utils.py`
+- **Single Source of Truth**: Both modules now import this function from the central location, eliminating code duplication
+- **Enhanced Implementation**: The consolidated version combines the best features from both original implementations, handling more data types comprehensively
+
+### Team A Script Update
+
+- **Updated `run_team_a.sh`**: Now runs `app/team_a/main-part1.py` directly instead of the deprecated `app/streamlit_team_a.py`
+- **Simplified Pipeline**: Direct execution of the main Team A pipeline entry point
+
+### Import Structure
+
+```python
+# Central utility location
+from eda_validation.utils import make_json_serializable
+
+# Used by both:
+# - app/team_a/sections/utils.py
+# - eda_validation/cleaning.py
+```

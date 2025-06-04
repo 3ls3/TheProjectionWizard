@@ -4,6 +4,7 @@ Final results section for the main pipeline flow.
 
 import streamlit as st
 import pandas as pd
+import json
 from pathlib import Path
 from datetime import datetime
 from io import BytesIO
@@ -67,16 +68,48 @@ def show_final_results_section(is_current: bool = True):
         )
 
     with col2:
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            df.to_excel(writer, index=False, sheet_name='Data')
-        excel_data = output.getvalue()
+        # Create JSON report
+        report = {
+            "metadata": {
+                "generated_at": datetime.now().isoformat(),
+                "pipeline_version": "Team A - Part 1",
+                "total_rows": int(df.shape[0]),
+                "total_columns": int(df.shape[1])
+            },
+            "columns": {},
+            "data_quality": {
+                "missing_values": missing.to_dict(),
+                "total_missing": int(missing.sum()),
+                "data_types": df.dtypes.astype(str).to_dict()
+            }
+        }
+        
+        # Add column statistics
+        for col in df.columns:
+            col_info = {
+                "dtype": str(df[col].dtype),
+                "non_null_count": int(df[col].count()),
+                "null_count": int(df[col].isnull().sum())
+            }
+            
+            # Add statistics for numeric columns
+            if pd.api.types.is_numeric_dtype(df[col]):
+                col_info.update({
+                    "min": float(df[col].min()) if not pd.isna(df[col].min()) else None,
+                    "max": float(df[col].max()) if not pd.isna(df[col].max()) else None,
+                    "mean": float(df[col].mean()) if not pd.isna(df[col].mean()) else None,
+                    "std": float(df[col].std()) if not pd.isna(df[col].std()) else None
+                })
+            
+            report["columns"][col] = col_info
+        
+        json_str = json.dumps(report, indent=2)
         st.download_button(
-            "📥 Download Excel",
-            excel_data,
-            "cleaned_data.xlsx",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key='download-excel'
+            "📥 Download JSON Report",
+            json_str,
+            "data_report.json",
+            "application/json",
+            key='download-json'
         )
 
     # Show restart option

@@ -24,14 +24,58 @@ from eda_validation import ydata_profile, cleaning, utils
 from eda_validation.validation import setup_expectations, run_validation
 
 
+#
+# -------- New helper utilities --------
+STAGES = ["upload", "type_override", "validation", "cleaning", "final"]
+
+def render_sidebar(current_stage: str):
+    """Draw left‑hand checklist based on current stage."""
+    stage_icons = {
+        "upload": "📁",
+        "type_override": "🎯",
+        "validation": "🔍",
+        "cleaning": "🧹",
+        "final": "📋"
+    }
+    for stage in STAGES:
+        icon = stage_icons[stage]
+        if STAGES.index(stage) < STAGES.index(current_stage):
+            st.sidebar.markdown(f"✅ {icon} {stage.replace('_',' ').title()}")
+        elif stage == current_stage:
+            st.sidebar.markdown(f"🔄 {icon} {stage.replace('_',' ').title()}")
+        else:
+            st.sidebar.markdown(f"⏳ {icon} {stage.replace('_',' ').title()}")
+    st.sidebar.markdown("---")
+
+def render_stage_sequence(current_stage: str):
+    """Render all stages up to and including the current one in sequence."""
+    for stage in STAGES:
+        if STAGES.index(stage) > STAGES.index(current_stage):
+            break
+        render_one_stage(stage, is_current=(stage == current_stage))
+
+def render_one_stage(stage: str, is_current: bool = True):
+    """Call the section UI matching the stage with current/summary mode."""
+    if stage == "upload":
+        upload_pipeline_section(is_current)
+    elif stage == "type_override":
+        type_override_pipeline_section(is_current)
+    elif stage == "validation":
+        validation_pipeline_section(is_current)
+    elif stage == "cleaning":
+        cleaning_pipeline_section(is_current)
+    elif stage == "final":
+        show_final_results_section(is_current)
+
+
 def main():
     """Main Streamlit app for Team A's EDA and validation pipeline."""
     st.title("🔍 EDA & Validation Pipeline (Team A)")
     st.markdown("---")
 
     # Initialize session state for pipeline stages
-    if 'current_stage' not in st.session_state:
-        st.session_state.current_stage = "upload"
+    if 'stage' not in st.session_state:
+        st.session_state.stage = "upload"
     
     # Initialize debug mode
     if 'debug_mode' not in st.session_state:
@@ -46,47 +90,17 @@ def main():
     
     if st.session_state.debug_mode:
         st.sidebar.write("Debug mode ON")
-    
-    # Always show the main pipeline flow
-    main_pipeline_flow()
+
+    # Render sidebar and main stage
+    current_stage = st.session_state.get("stage", "upload")
+    render_sidebar(current_stage)
+    render_stage_sequence(current_stage)
 
 
-def main_pipeline_flow():
-    """Main continuous pipeline flow on the main page."""
-    # Define pipeline stages
-    stages = [
-        ("upload", "📁 Upload"),
-        ("type_override", "🎯 Type Override"),
-        ("validation", "🔍 Validation"),
-        ("cleaning", "🧹 Cleaning"),
-        ("final_eda", "📋 Final EDA")
-    ]
-    
-    current_stage = st.session_state.current_stage
-    
-    # Sidebar checklist showing pipeline progress - fixed logic
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("**📋 Pipeline Progress**")
-    
-    progress_flags = {
-        "upload":        'uploaded_df'      in st.session_state,
-        "type_override": st.session_state.get('types_confirmed', False),
-        "validation":    st.session_state.get('validation_results') is not None,
-        "cleaning":      st.session_state.get('cleaning_done', False),
-        "final_eda":     st.session_state.get('cleaning_done', False)
-    }
-
-    for stage, display_name in stages:
-        if progress_flags[stage]:
-            st.sidebar.markdown(f"✅ {display_name}")
-        elif stage == "validation" and st.session_state.get('validation_results') is not None:
-            # validation ran but failed
-            st.sidebar.markdown(f"⚠️ {display_name}")
-        else:
-            st.sidebar.markdown(f"⏳ {display_name}")
-
-    # Always render the continuous pipeline (no stage-based switching)
-    upload_pipeline_section()
+# Retire old controller
+# def main_pipeline_flow():
+#     """Main continuous pipeline flow on the main page."""
+#     ...
 
 
 def validation_section(df=None):
@@ -407,7 +421,7 @@ def type_override_section(df):
                             st.session_state['cleaning_done'] = True
                         
                         st.success("✅ **Auto-cleaning completed!** Proceeding to final EDA...")
-                        st.session_state.current_stage = "final_eda"
+                        st.session_state.stage = "final"
                         st.rerun()
                     else:
                         # Show validation failure with options
@@ -427,7 +441,7 @@ def type_override_section(df):
                                 for key in keys_to_clear:
                                     if key in st.session_state:
                                         del st.session_state[key]
-                                st.session_state.current_stage = "upload"
+                                st.session_state.stage = "upload"
                                 st.rerun()
                         
                         with col2:
@@ -489,9 +503,27 @@ def apply_type_conversions(df, type_overrides):
         return False, df
 
 
-def upload_pipeline_section():
+def upload_pipeline_section(is_current: bool = True):
     """Upload section for the main pipeline flow."""
     st.header("📁 Upload File")
+    
+    # If not current stage, show summary
+    if not is_current and 'uploaded_df' in st.session_state:
+        df = st.session_state['uploaded_df']
+        filename = st.session_state.get('filename', 'Unknown file')
+        
+        with st.expander(f"✅ **File Uploaded:** {filename}", expanded=False):
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Rows", len(df))
+            with col2:
+                st.metric("Columns", len(df.columns))
+            with col3:
+                missing_pct = (df.isnull().sum().sum() / (len(df) * len(df.columns)) * 100)
+                st.metric("Missing Values", f"{missing_pct:.1f}%")
+        return
+    
+    # If current stage or no data, show full UI
     st.write("Upload your CSV file to start the pipeline.")
 
     # Create data/raw directory if it doesn't exist
@@ -548,7 +580,7 @@ def upload_pipeline_section():
                 preview_rows = st.slider("Number of rows to preview", 5, min(50, len(df)), 10)
                 st.dataframe(df.head(preview_rows), use_container_width=True)
 
-                # Show success message and automatically continue with type override
+                # Show success message and store data
                 st.success("✅ **Data uploaded successfully!**")
                 
                 # Store the uploaded data
@@ -567,8 +599,9 @@ def upload_pipeline_section():
                     missing_pct = (df.isnull().sum().sum() / (len(df) * len(df.columns)) * 100)
                     st.metric("Missing Values", f"{missing_pct:.1f}%")
                 
-                # Automatically show type override section
-                continuous_type_override_section(df)
+                # 1️⃣ Transition to type_override stage
+                st.session_state["stage"] = "type_override"
+                st.rerun()
 
             except pd.errors.EmptyDataError:
                 st.error("❌ The uploaded file is empty or contains no data.")
@@ -584,100 +617,66 @@ def upload_pipeline_section():
             st.error(f"❌ Error processing uploaded file: {str(e)}")
 
 
-def basic_eda_pipeline_section():
-    """Basic EDA section for the main pipeline flow."""
-    st.header("📊 Step 2: Basic Data Analysis")
-
-    if 'uploaded_df' not in st.session_state:
-        st.error("❌ No data found. Please go back to upload a CSV file.")
-        if st.button("🔙 Back to Upload"):
-            st.session_state.current_stage = "upload"
-            st.rerun()
-        return
-
-    df = st.session_state['uploaded_df']
-
-    st.write("Quick statistical overview of your data:")
-
-    # Basic statistics
-    st.subheader("📈 Statistical Summary")
-    st.dataframe(df.describe(include='all'), use_container_width=True)
-
-    # Missing values analysis
-    st.subheader("❓ Missing Values Analysis")
-    missing_data = df.isnull().sum()
-    missing_data = missing_data[missing_data > 0].sort_values(ascending=False)
-
-    if len(missing_data) > 0:
-        st.write("Columns with missing values:")
-        missing_df = pd.DataFrame({
-            'Column': missing_data.index,
-            'Missing Count': missing_data.values,
-            'Missing %': (missing_data.values / len(df) * 100).round(2)
-        })
-        st.dataframe(missing_df, use_container_width=True)
-    else:
-        st.success("✅ No missing values found!")
-
-    # Data types overview
-    st.subheader("🔢 Data Types Overview")
-    dtype_counts = df.dtypes.value_counts()
-    col1, col2 = st.columns(2)
-    with col1:
-        st.write("**Data Type Distribution:**")
-        for dtype, count in dtype_counts.items():
-            st.write(f"- {dtype}: {count} columns")
-
-    with col2:
-        # Potential issues detection
-        st.write("**Potential Issues:**")
-        issues = []
-
-        # Check for high cardinality object columns
-        for col in df.select_dtypes(include=['object']).columns:
-            unique_ratio = df[col].nunique() / len(df)
-            if unique_ratio > 0.9:
-                issues.append(f"High cardinality in '{col}' ({unique_ratio:.1%} unique)")
-
-        # Check for very sparse columns
-        for col in df.columns:
-            null_ratio = df[col].isnull().sum() / len(df)
-            if null_ratio > 0.5:
-                issues.append(f"Sparse column '{col}' ({null_ratio:.1%} missing)")
-
-        if issues:
-            for issue in issues:
-                st.warning(f"⚠️ {issue}")
-        else:
-            st.success("✅ No obvious data quality issues detected")
-
-    # Continue button
-    st.markdown("---")
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        if st.button("🎯 Continue to Type Override", type="primary"):
-            st.session_state.current_stage = "type_override"
-            st.rerun()
+# Legacy function - replaced by upload summary logic in stage sequencer
+# def basic_eda_pipeline_section():
+#     """Basic EDA section for the main pipeline flow."""
+#     # This function is no longer used - upload summary handles this functionality
 
 
-def type_override_pipeline_section():
+def type_override_pipeline_section(is_current: bool = True):
     """Type override section for the main pipeline flow with continuous validation and cleaning."""
     st.header("🎯 Type Override & Target Selection")
 
+    # If not current stage, show summary
+    if not is_current and st.session_state.get('types_confirmed', False):
+        target_col = st.session_state.get('target_column', 'None')
+        type_changes = 0
+        if 'uploaded_df' in st.session_state and 'type_overrides' in st.session_state:
+            df = st.session_state['uploaded_df']
+            def pandas_to_simple_type(dtype_str):
+                dtype_str = str(dtype_str).lower()
+                if 'int' in dtype_str:
+                    return 'integer'
+                elif 'float' in dtype_str:
+                    return 'float'
+                elif 'bool' in dtype_str:
+                    return 'boolean'
+                elif 'datetime' in dtype_str:
+                    return 'datetime'
+                elif 'category' in dtype_str:
+                    return 'category'
+                else:
+                    return 'string/object'
+            
+            type_changes = sum(1 for col in df.columns
+                              if st.session_state['type_overrides'].get(col) != pandas_to_simple_type(df[col].dtype))
+        
+        with st.expander(f"✅ **Types Configured** | Target: `{target_col}` | Changes: {type_changes}", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.success(f"🎯 **Target Variable:** `{target_col}`")
+            with col2:
+                if type_changes > 0:
+                    st.info(f"📝 **Type changes applied:** {type_changes} columns")
+                else:
+                    st.info("📝 **No type changes** were needed")
+        return
+
+    # If current stage or not confirmed, show full UI
     if 'uploaded_df' not in st.session_state:
         st.error("❌ No data found. Please start from the beginning.")
-        if st.button("🔙 Back to Upload"):
-            st.session_state.current_stage = "upload"
+        if is_current and st.button("🔙 Back to Upload"):
+            st.session_state.stage = "upload"
             st.rerun()
         return
 
     df = st.session_state['uploaded_df']
 
     # Show type override section
-    continuous_type_override_section(df)
+    continuous_type_override_section(df, is_current)
 
 
-def continuous_type_override_section(df):
+def continuous_type_override_section(df, is_current: bool = True):
     """Continuous type override section with validation, cleaning, and final results on same page."""
     # Initialize session state for type overrides if not exists
     if 'type_overrides' not in st.session_state:
@@ -888,10 +887,13 @@ def continuous_type_override_section(df):
             else:
                 st.info("📝 **No type changes**")
 
-        # Confirmation button
-        col1, col2, col3 = st.columns([2, 1, 2])
-        with col2:
-            confirm_clicked = st.button("✅ Confirm Types & Target", type="primary")
+        # Confirmation button (only show if current)
+        if is_current:
+            col1, col2, col3 = st.columns([2, 1, 2])
+            with col2:
+                confirm_clicked = st.button("✅ Confirm Types & Target", type="primary")
+        else:
+            confirm_clicked = False
         
         # Handle confirmation outside of column layout to avoid width constraints
         if confirm_clicked and not st.session_state.get('types_confirmed', False):
@@ -905,35 +907,13 @@ def continuous_type_override_section(df):
                     st.session_state['types_confirmed'] = True
                     st.session_state['processed_df'] = updated_df
                     
-                    # Immediately show validation without page refresh - outside column layout
-                    st.markdown("---")
-                    st.subheader("🔍 Running Data Validation...")
-                    with st.spinner("Validating data quality..."):
-                        validation_success, validation_results = run_data_validation(updated_df)
-                        st.session_state['validation_results'] = validation_results
-                        st.session_state['validation_success'] = validation_success
-                    
-                    # Show validation results and cleaning options immediately
-                    show_validation_and_cleaning_results(updated_df)
+                    # 2️⃣ Transition to validation stage
+                    st.session_state["stage"] = "validation"
+                    st.rerun()
                 else:
                     st.error("❌ Error applying type conversions. Please check your type selections.")
 
-    # Show validation and cleaning results if types are confirmed (for subsequent interactions)
-    if st.session_state.get('types_confirmed', False):
-        updated_df = st.session_state['processed_df']
-        
-        # If validation results exist, show them
-        if 'validation_results' in st.session_state:
-            show_validation_and_cleaning_results(updated_df)
-        else:
-            # This shouldn't happen in normal flow, but handle it gracefully
-            st.markdown("---")
-            st.subheader("🔍 Running Data Validation...")
-            with st.spinner("Validating data quality..."):
-                validation_success, validation_results = run_data_validation(updated_df)
-                st.session_state['validation_results'] = validation_results
-                st.session_state['validation_success'] = validation_success
-            show_validation_and_cleaning_results(updated_df)
+    # Note: Validation and cleaning are now handled in separate stages
 
 
 def show_validation_and_cleaning_results(df):
@@ -949,6 +929,11 @@ def show_validation_and_cleaning_results(df):
         total = validation_results.get('total_expectations', 0)
         passed = validation_results.get('successful_expectations', 0)
         st.info(f"✅ All {passed}/{total} validation checks passed")
+        
+        # On validation pass → transition to cleaning
+        st.session_state["stage"] = "cleaning"
+        st.rerun()
+        
     else:
         st.error("❌ **Validation FAILED!** Some data quality issues were found.")
         display_validation_results(validation_results)
@@ -965,23 +950,24 @@ def show_validation_and_cleaning_results(df):
                 for key in keys_to_clear:
                     if key in st.session_state:
                         del st.session_state[key]
-                st.session_state.current_stage = "upload"
+                st.session_state.stage = "upload"
                 st.rerun()
         with col2:
             if st.button("⚠️ **Proceed Anyway**", type="primary", key="proceed_validation"):
                 st.session_state['validation_override'] = True
+                # On validation fail + proceed → transition to cleaning
+                st.session_state["stage"] = "cleaning"
+                st.rerun()
 
-    # Show cleaning options if validation passed or user chose to proceed
-    if validation_success or st.session_state.get('validation_override', False):
-        show_cleaning_section(df)
-
-    # Show final results if cleaning is done
-    if st.session_state.get('cleaning_done', False):
-        show_final_results_section()
+    # Note: Cleaning and final results are handled in separate stages
 
 
-def show_cleaning_section(df):
+def show_cleaning_section(df, is_current: bool = True):
     """Show cleaning options with auto/manual toggle."""
+    # 4️⃣ Guard: if already done, return early to avoid duplicates
+    if st.session_state.get("cleaning_done", False):
+        return
+    
     st.markdown("---")
     st.subheader("🧹 Data Cleaning")
     
@@ -992,7 +978,7 @@ def show_cleaning_section(df):
     if use_auto_cleaning:
         st.info("✨ **Automatic cleaning** will use default parameters: drop missing values (50% threshold), standardize column names, remove duplicates, auto-convert data types.")
         
-        if st.button("🧹 **Run Automatic Cleaning**", type="primary", key="run_auto_cleaning"):
+        if is_current and st.button("🧹 **Run Automatic Cleaning**", type="primary", key="run_auto_cleaning"):
             with st.spinner("Cleaning data with automatic parameters..."):
                 df_clean, report = cleaning.clean_dataframe(
                     df,
@@ -1006,6 +992,8 @@ def show_cleaning_section(df):
                 st.session_state['cleaned_df'] = df_clean
                 st.session_state['cleaning_report'] = report
                 st.session_state['cleaning_done'] = True
+                # 4️⃣ Transition to final stage
+                st.session_state["stage"] = "final"
             
             st.rerun()
     
@@ -1052,7 +1040,7 @@ def show_cleaning_section(df):
                 help="Automatically detect and convert data types"
             )
 
-        if st.button("🧹 **Run Custom Cleaning**", type="primary", key="run_custom_cleaning"):
+        if is_current and st.button("🧹 **Run Custom Cleaning**", type="primary", key="run_custom_cleaning"):
             with st.spinner("Cleaning data with custom parameters..."):
                 df_clean, report = cleaning.clean_dataframe(
                     df,
@@ -1066,17 +1054,22 @@ def show_cleaning_section(df):
                 st.session_state['cleaned_df'] = df_clean
                 st.session_state['cleaning_report'] = report
                 st.session_state['cleaning_done'] = True
+                # 4️⃣ Transition to final stage
+                st.session_state["stage"] = "final"
             
             st.rerun()
 
 
-def show_final_results_section():
+def show_final_results_section(is_current: bool = True):
     """Show final results and download options."""
-    # ensure sidebar marks last step complete
-    st.session_state.current_stage = "final_eda"
+    # 5️⃣ Set stage at the top
+    st.session_state["stage"] = "final"
     
     st.markdown("---")
     st.subheader("📋 Final Data Summary & Export")
+    
+    # Since final is typically always current in our flow, we don't need summary mode
+    # But we'll keep the parameter for consistency
     
     df = st.session_state['cleaned_df']
     cleaning_report = st.session_state.get('cleaning_report', {})
@@ -1176,75 +1169,117 @@ def show_final_results_section():
                 key="download_json_final"
             )
 
-    # Option to start over
-    st.markdown("---")
-    col1, col2, col3 = st.columns([2, 1, 2])
-    with col2:
-        if st.button("🚀 Start Over", type="secondary", key="start_over_final"):
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
-            st.session_state.current_stage = "upload"
-            st.rerun()
+    # Option to start over (only show when current)
+    if is_current:
+        st.markdown("---")
+        col1, col2, col3 = st.columns([2, 1, 2])
+        with col2:
+            if st.button("🚀 Start Over", type="secondary", key="start_over_final"):
+                for key in list(st.session_state.keys()):
+                    if key not in ['debug_mode']:  # Preserve debug mode
+                        del st.session_state[key]
+                st.session_state.stage = "upload"
+                st.rerun()
 
 
-def validation_pipeline_section():
+def validation_pipeline_section(is_current: bool = True):
     """Validation section for the main pipeline flow."""
-    st.header("✅ Step 3: Data Validation")
+    st.header("✅ Data Validation")
     
-    # This step is now handled automatically in type override
-    st.info("🔄 **Validation is handled automatically** after type confirmation in the previous step.")
-    
-    if 'validation_results' in st.session_state:
-        results = st.session_state['validation_results']
-        success = st.session_state.get('validation_success', False)
+    # If not current stage, show summary
+    if not is_current and 'validation_results' in st.session_state:
+        validation_success = st.session_state.get('validation_success', False)
+        validation_results = st.session_state.get('validation_results', {})
         
-        if success:
-            st.success("🎉 **Validation completed successfully!**")
-            total = results.get('total_expectations', 0)
-            passed = results.get('successful_expectations', 0)
-            st.info(f"✅ All {passed}/{total} validation checks passed")
+        if validation_success:
+            total = validation_results.get('total_expectations', 0)
+            passed = validation_results.get('successful_expectations', 0)
+            with st.expander(f"✅ **Validation Passed** | {passed}/{total} checks passed", expanded=False):
+                st.success("🎉 All data quality checks passed successfully!")
         else:
-            st.warning("⚠️ **Validation had issues** but pipeline continued with override.")
-            display_validation_results(results)
-    else:
-        st.warning("⚠️ No validation results found. Please go back to type override.")
-        
-    # Redirect to appropriate stage
-    if st.button("🔙 Back to Type Override"):
-        st.session_state.current_stage = "type_override"
-        st.rerun()
-
-
-def cleaning_pipeline_section():
-    """Data cleaning section for the main pipeline flow."""
-    st.header("🧹 Step 4: Data Cleaning")
+            total = validation_results.get('total_expectations', 0)
+            passed = validation_results.get('successful_expectations', 0)
+            failed = validation_results.get('failed_expectations', 0)
+            override_used = st.session_state.get('validation_override', False)
+            if override_used:
+                with st.expander(f"⚠️ **Validation Override** | {passed}/{total} passed, proceeded anyway", expanded=False):
+                    st.warning("❗ Some validation checks failed, but user chose to proceed")
+            else:
+                with st.expander(f"❌ **Validation Failed** | {passed}/{total} checks passed", expanded=False):
+                    st.error("❌ Data quality issues found")
+        return
     
-    # This step is now handled automatically after validation
-    st.info("🔄 **Cleaning is handled automatically** after validation in the type override step.")
-    
-    # If cleaning is done, show results and redirect to Final EDA
-    if st.session_state.get('cleaning_done', False):
-        st.success("✅ **Data cleaning completed automatically!**")
-        
-        if 'cleaning_report' in st.session_state:
-            report = st.session_state['cleaning_report']
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric("Final Rows", report['final_shape'][0])
-            with col2:
-                st.metric("Final Columns", report['final_shape'][1])
-        
-        if st.button("📋 Continue to Final EDA", type="primary"):
-            st.session_state.current_stage = 'final_eda'
+    # If current stage or no validation results, show full UI
+    if 'processed_df' not in st.session_state:
+        st.error("❌ No processed data found. Please go back to type override.")
+        if is_current and st.button("🔙 Back to Type Override"):
+            st.session_state.stage = "type_override"
             st.rerun()
         return
+
+    df = st.session_state['processed_df']
     
-    # If not done, redirect back
-    st.warning("⚠️ Cleaning not completed yet. Please go back to type override.")
-    if st.button("🔙 Back to Type Override"):
-        st.session_state.current_stage = "type_override"
+    # 3️⃣ Set stage at the top
+    st.session_state["stage"] = "validation"
+    
+    # Run validation if not already done
+    if 'validation_results' not in st.session_state:
+        st.subheader("🔍 Running Data Validation...")
+        with st.spinner("Validating data quality..."):
+            validation_success, validation_results = run_data_validation(df)
+            st.session_state['validation_results'] = validation_results
+            st.session_state['validation_success'] = validation_success
+        st.rerun()
+    
+    # Show validation results
+    show_validation_and_cleaning_results(df)
+
+
+def cleaning_pipeline_section(is_current: bool = True):
+    """Data cleaning section for the main pipeline flow."""
+    st.header("🧹 Data Cleaning")
+    
+    # If not current stage, show summary
+    if not is_current and st.session_state.get('cleaning_done', False):
+        cleaning_report = st.session_state.get('cleaning_report', {})
+        if cleaning_report:
+            final_rows = cleaning_report.get('final_shape', [0, 0])[0]
+            final_cols = cleaning_report.get('final_shape', [0, 0])[1]
+            rows_removed = cleaning_report.get('rows_removed', 0)
+            cols_removed = cleaning_report.get('columns_removed', 0)
+            
+            with st.expander(f"✅ **Data Cleaned** | {final_rows} rows, {final_cols} columns", expanded=False):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Final Rows", final_rows, delta=-rows_removed if rows_removed > 0 else None)
+                with col2:
+                    st.metric("Final Columns", final_cols, delta=-cols_removed if cols_removed > 0 else None)
+                
+                steps = cleaning_report.get('steps_performed', [])
+                if steps:
+                    st.write("**Steps performed:**", ", ".join([step.replace('_', ' ').title() for step in steps]))
+        else:
+            st.success("✅ **Data cleaning completed**")
+        return
+    
+    # If current stage or cleaning not done, show full UI
+    if 'processed_df' not in st.session_state:
+        st.error("❌ No processed data found. Please go back to validation.")
+        if is_current and st.button("🔙 Back to Validation"):
+            st.session_state.stage = "validation"
+            st.rerun()
+        return
+
+    df = st.session_state['processed_df']
+    
+    # 4️⃣ Guard: if cleaning already done, skip to final
+    if st.session_state.get("cleaning_done", False):
+        st.session_state["stage"] = "final"
         st.rerun()
         return
+    
+    # Show cleaning section
+    show_cleaning_section(df, is_current)
 
 
 def make_json_serializable(obj):
@@ -1540,7 +1575,7 @@ def upload_data_debug_section():
     upload_state = {
         "uploaded_df": "uploaded_df" in st.session_state,
         "filename": st.session_state.get('filename', 'Not set'),
-        "current_stage": st.session_state.get('current_stage', 'Not set')
+        "stage": st.session_state.get('stage', 'Not set')
     }
     st.json(upload_state)
 

@@ -5,3 +5,11 @@
 .DS_Store
 __pycache__/
 .ipynb_checkpoints/
+<<<<<<< Updated upstream
+=======
+.venv
+.cursor
+repomix*
+/data
+/credentials
+>>>>>>> Stashed changes

@@ -24,8 +24,30 @@ def run():
     }
 
     candidates = model_dict.get(task, [])
-    selected_models = st.multiselect("Select candidate models", candidates, default=candidates[:2])
-    st.session_state["candidate_models"] = selected_models
+    
+    # Create columns for the multiselect and select all button
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        # Initialize selected_models in session state if not present
+        if "selected_models" not in st.session_state:
+            st.session_state.selected_models = candidates[:2]
+        
+        selected_models = st.multiselect(
+            "Select candidate models",
+            candidates,
+            default=st.session_state.selected_models
+        )
+        st.session_state.selected_models = selected_models
+    
+    with col2:
+        # Add a spacer div to align with the multiselect
+        st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+        if st.button("Select All", use_container_width=True):
+            st.session_state.selected_models = candidates
+            st.rerun()
+    
+    st.session_state["candidate_models"] = st.session_state.selected_models
 
     # Add navigation buttons at the bottom
     st.markdown("---")

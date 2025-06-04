@@ -1,7 +1,5 @@
 # app/wizardry/step9_outputs.py
 import streamlit as st
-<<<<<<< Updated upstream
-=======
 import pandas as pd
 import joblib
 import os
@@ -92,30 +90,40 @@ def save_model_artifacts(model, scaler, task_type, model_name):
         json.dump(metadata, f, indent=2)
     
     return model_path, scaler_path, metadata_path
->>>>>>> Stashed changes
 
 def run():
-    st.header("📦 Step 9: Final Outputs to User")
+    st.header("📦 Step 9: Final Outputs")
+
+    # Get required data from session state
+    task = st.session_state.get("task_type")
+    best_model_name = st.session_state.get("best_model")
+    trained_models = st.session_state.get("trained_models")
+    scaler = st.session_state.get("scaler")
+    df = st.session_state.get("clean_data")
+    target_col = st.session_state.get("target_column")
+    explanations = st.session_state.get("explanations")
+
+    if not all([task, best_model_name, trained_models, scaler]):
+        st.warning("Please complete the training step first.")
+        return
 
     st.write("🎁 Final Deliverables:")
-    
-    if "predictions" in st.session_state:
-        st.download_button("📄 Download Predictions CSV",
-                           data=st.session_state["predictions"].to_csv(index=False),
-                           file_name="final_predictions.csv")
 
-    if "clean_data" in st.session_state:
-        st.download_button("🧼 Download Cleaned Data CSV",
-                           data=st.session_state["clean_data"].to_csv(index=False),
-                           file_name="cleaned_data.csv")
+    # Save and provide model artifacts
+    try:
+        model = trained_models[best_model_name]
+        model_path, scaler_path, metadata_path = save_model_artifacts(
+            model, scaler, task, best_model_name
+        )
 
-    st.write("📁 Model File: (simulated)")
-    st.download_button("💾 Download Model File", data="BinaryDataPlaceholder", file_name="model.pkl")
+        # Create a zip file containing all artifacts
+        import zipfile
+        zip_path = os.path.join("artifacts", "model_artifacts.zip")
+        with zipfile.ZipFile(zip_path, 'w') as zipf:
+            zipf.write(model_path, "model.pkl")
+            zipf.write(scaler_path, "scaler.pkl")
+            zipf.write(metadata_path, "metadata.json")
 
-<<<<<<< Updated upstream
-    st.write("📊 Explainability Artifacts:")
-    st.text(st.session_state.get("explanations", "None available"))
-=======
         # Download buttons for individual files
         st.subheader("📁 Model Files")
         with open(zip_path, 'rb') as f:
@@ -168,7 +176,6 @@ def run():
 
     except Exception as e:
         st.error(f"Error saving model artifacts: {str(e)}")
->>>>>>> Stashed changes
 
     # Add back button at the bottom
     st.markdown("---")

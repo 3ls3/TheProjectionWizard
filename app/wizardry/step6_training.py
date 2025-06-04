@@ -4,13 +4,13 @@ import streamlit as st
 def run():
     st.header("🏋️ Step 6: Model Training & Tuning")
 
+    # Get required data from session state
     tool = st.session_state.get("automl_tool")
     models = st.session_state.get("candidate_models")
     task = st.session_state.get("task_type")
     df = st.session_state.get("clean_data")
     target_col = st.session_state.get("target_column")
 
-<<<<<<< Updated upstream
     # Check if any required variables are missing
     required_vars = {
         "AutoML Tool": tool,
@@ -23,11 +23,6 @@ def run():
     missing_vars = [name for name, value in required_vars.items() if value is None]
     if missing_vars:
         st.warning(f"Missing configuration: {', '.join(missing_vars)}. Complete previous steps first.")
-=======
-    # Check if required variables exist and are not None
-    if task is None or candidate_models is None or df is None:
-        st.warning("Please complete model selection first.")
->>>>>>> Stashed changes
         return
 
     st.write(f"Training models for task: `{task}` using `{tool}`...")

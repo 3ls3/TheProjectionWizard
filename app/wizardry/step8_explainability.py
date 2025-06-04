@@ -1,7 +1,5 @@
 # app/wizardry/step8_explainability.py
 import streamlit as st
-<<<<<<< Updated upstream
-=======
 import pandas as pd
 import numpy as np
 import shap
@@ -10,11 +8,30 @@ import lime.lime_tabular
 from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
 import seaborn as sns
-from .step6_training import preprocess_data
 from sklearn.cluster import KMeans, DBSCAN, AgglomerativeClustering
 from sklearn.inspection import permutation_importance
 import warnings
 warnings.filterwarnings('ignore')
+
+def preprocess_data(df, target_col):
+    """Preprocess data for model explanation"""
+    # Make a copy to avoid modifying the original
+    processed_df = df.copy()
+    
+    # Separate features and target
+    y = processed_df[target_col] if target_col in processed_df.columns else None
+    X = processed_df.drop(columns=[target_col]) if target_col in processed_df.columns else processed_df
+    
+    # Handle categorical variables
+    categorical_cols = X.select_dtypes(include=['object', 'category']).columns
+    if len(categorical_cols) > 0:
+        X = pd.get_dummies(X, columns=categorical_cols, drop_first=True)
+    
+    # Scale numerical features
+    scaler = StandardScaler()
+    X = pd.DataFrame(scaler.fit_transform(X), columns=X.columns)
+    
+    return X, y
 
 def get_explainer(model, X, task_type):
     """Get the appropriate explainer based on the model type"""
@@ -66,7 +83,6 @@ def analyze_cluster_centers(model, X):
         plt.ylabel('Number of Samples')
         st.pyplot(fig)
         plt.close()
->>>>>>> Stashed changes
 
 def get_feature_importance(model, X, y, task_type):
     """Get feature importance using permutation importance"""
@@ -96,21 +112,18 @@ def get_feature_importance(model, X, y, task_type):
 def run():
     st.header("🧠 Step 8: Model Explainability")
 
+    # Get required data from session state
     model = st.session_state.get("best_model")
+    df = st.session_state.get("clean_data")
+    target_col = st.session_state.get("target_column")
+    task = st.session_state.get("task_type")
+
     if model is None:
         st.warning("No model available for explanation.")
         return
 
     st.write(f"Explainability for model: `{model}`")
-    st.write("Using SHAP and LIME (placeholders for now)...")
 
-<<<<<<< Updated upstream
-    # Placeholder explanation visuals
-    st.bar_chart([0.2, 0.15, 0.1, 0.05, 0.03], use_container_width=True)
-    st.info("SHAP force plots and LIME graphs will go here.")
-
-    st.session_state["explanations"] = "Explanation artifacts (placeholder)"
-=======
     # Preprocess the data for explanation
     processed_df, y = preprocess_data(df, target_col)
     X = processed_df
@@ -217,7 +230,6 @@ def run():
         "lime_explainer": explainer if 'explainer' in locals() else None,
         "feature_importance": importance_df if 'importance_df' in locals() else None
     }
->>>>>>> Stashed changes
 
     # Add navigation buttons at the bottom
     st.markdown("---")

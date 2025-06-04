@@ -68,42 +68,20 @@ def main_pipeline_flow():
     st.sidebar.markdown("---")
     st.sidebar.markdown("**📋 Pipeline Progress**")
     
-    for i, (stage, display_name) in enumerate(stages):
-        # Determine the status based on actual progress
-        if stage == "upload":
-            if st.session_state.get('uploaded_df') is not None:
-                st.sidebar.markdown(f"✅ {display_name}")
-            else:
-                st.sidebar.markdown(f"⏳ {display_name}")
-        elif stage == "type_override":
-            if st.session_state.get('types_confirmed', False):
-                st.sidebar.markdown(f"✅ {display_name}")
-            elif st.session_state.get('uploaded_df') is not None:
-                st.sidebar.markdown(f"🔄 {display_name}")
-            else:
-                st.sidebar.markdown(f"⏳ {display_name}")
-        elif stage == "validation":
-            if st.session_state.get('validation_results') is not None:
-                if st.session_state.get('validation_success', False):
-                    st.sidebar.markdown(f"✅ {display_name}")
-                else:
-                    st.sidebar.markdown(f"⚠️ {display_name} (Override)")
-            elif st.session_state.get('types_confirmed', False):
-                st.sidebar.markdown(f"🔄 {display_name}")
-            else:
-                st.sidebar.markdown(f"⏳ {display_name}")
-        elif stage == "cleaning":
-            if st.session_state.get('cleaning_done', False):
-                st.sidebar.markdown(f"✅ {display_name}")
-            elif st.session_state.get('validation_results') is not None or st.session_state.get('validation_override', False):
-                st.sidebar.markdown(f"🔄 {display_name}")
-            else:
-                st.sidebar.markdown(f"⏳ {display_name}")
-        elif stage == "final_eda":
-            if st.session_state.get('cleaning_done', False):
-                st.sidebar.markdown(f"✅ {display_name}")
-            else:
-                st.sidebar.markdown(f"⏳ {display_name}")
+    progress_flags = {
+        "upload":        'uploaded_df'      in st.session_state,
+        "type_override": st.session_state.get('types_confirmed', False),
+        "validation":    st.session_state.get('validation_results') is not None,
+        "cleaning":      st.session_state.get('cleaning_done', False),
+        "final_eda":     st.session_state.get('cleaning_done', False)
+    }
+
+    for stage, display_name in stages:
+        if progress_flags[stage]:
+            st.sidebar.markdown(f"✅ {display_name}")
+        elif stage == "validation" and st.session_state.get('validation_results') is not None:
+            # validation ran but failed
+            st.sidebar.markdown(f"⚠️ {display_name}")
         else:
             st.sidebar.markdown(f"⏳ {display_name}")
 
@@ -1029,8 +1007,7 @@ def show_cleaning_section(df):
                 st.session_state['cleaning_report'] = report
                 st.session_state['cleaning_done'] = True
             
-            # Show final results immediately
-            show_final_results_section()
+            st.rerun()
     
     else:
         st.info("⚙️ **Manual cleaning** - customize the parameters below:")
@@ -1090,12 +1067,14 @@ def show_cleaning_section(df):
                 st.session_state['cleaning_report'] = report
                 st.session_state['cleaning_done'] = True
             
-            # Show final results immediately
-            show_final_results_section()
+            st.rerun()
 
 
 def show_final_results_section():
     """Show final results and download options."""
+    # ensure sidebar marks last step complete
+    st.session_state.current_stage = "final_eda"
+    
     st.markdown("---")
     st.subheader("📋 Final Data Summary & Export")
     

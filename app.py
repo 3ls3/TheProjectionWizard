@@ -15,6 +15,7 @@ import importlib
 # Import page modules
 upload_page_module = importlib.import_module('ui.01_upload_page')
 target_page_module = importlib.import_module('ui.02_target_page')
+schema_page_module = importlib.import_module('ui.03_schema_page')
 
 
 def get_page_config():
@@ -66,9 +67,13 @@ def show_navigation_sidebar():
         if st.sidebar.button("🎯 Target Confirmation", use_container_width=True):
             st.session_state['current_page'] = 'target_confirmation'
             st.rerun()
+            
+        # Available after target confirmation: Schema confirmation
+        if st.sidebar.button("📋 Schema Confirmation", use_container_width=True):
+            st.session_state['current_page'] = 'schema_confirmation'
+            st.rerun()
     
     # Future pages (disabled for now)
-    st.sidebar.button("📋 Schema Confirmation", disabled=True, help="Complete target confirmation first")
     st.sidebar.button("🔍 Data Validation", disabled=True, help="Complete schema confirmation first")
     st.sidebar.button("🔧 Data Preparation", disabled=True, help="Complete data validation first")
     st.sidebar.button("🤖 Model Training", disabled=True, help="Complete data preparation first")
@@ -89,6 +94,8 @@ def route_to_page():
         upload_page_module.show_upload_page()
     elif current_page == 'target_confirmation':
         target_page_module.show_target_page()
+    elif current_page == 'schema_confirmation':
+        schema_page_module.show_schema_page()
     else:
         st.error(f"Page '{current_page}' is not yet implemented.")
         st.info("Please use the navigation sidebar to go to an available page.")

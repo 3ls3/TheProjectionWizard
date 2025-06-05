@@ -90,10 +90,30 @@ class TargetInfo(BaseModel):
         return v
 
 
+class FeatureSchemaInfo(BaseModel):
+    """Schema information for a feature column after user confirmation."""
+    dtype: str = Field(..., description="The final decided data type for the column")
+    encoding_role: str = Field(..., description="The encoding role for ML processing")
+    source: Literal['user_confirmed', 'system_defaulted'] = Field(..., description="Source of the schema decision")
+    initial_dtype_suggestion: Optional[str] = None
+    
+    @validator('encoding_role')
+    def validate_encoding_role(cls, v):
+        if v not in ENCODING_ROLES:
+            raise ValueError(f'encoding_role must be one of {ENCODING_ROLES}')
+        return v
+
+
 class MetadataWithTarget(BaseMetadata):
     """Metadata model that includes target information from step 2 schema confirmation."""
     target_info: Optional[TargetInfo] = None
     task_type: Optional[str] = None  # Top-level convenience field
+
+
+class MetadataWithFullSchema(MetadataWithTarget):
+    """Metadata model that includes both target and feature schema information."""
+    feature_schemas: Optional[Dict[str, FeatureSchemaInfo]] = None
+    feature_schemas_confirmed_at: Optional[datetime] = None
 
 
 class DetailedTargetInfo(BaseModel):

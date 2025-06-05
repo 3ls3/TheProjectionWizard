@@ -1,6 +1,6 @@
-# Step 2 Schema - Target Definition
+# Step 2 Schema - Target Definition & Feature Schema Assist
 
-This module contains the logic for Target Confirmation (Task 3) in The Projection Wizard pipeline.
+This module contains the logic for Target Confirmation (Task 3) and Key Feature Schema Assist & Confirmation (Task 4) in The Projection Wizard pipeline.
 
 ## Functions
 
@@ -39,8 +39,63 @@ Confirms the target definition and updates the run's metadata.json and status.js
 - Updates `status.json` with stage completion status
 - Writes to run-specific log file
 
+## Feature Schema Functions
+
+### `identify_key_features(df_original, target_info, num_features_to_surface=7)`
+
+Identifies potentially important features using basic importance metrics.
+
+**Parameters:**
+- `df_original`: The original pandas DataFrame (loaded from original_data.csv)
+- `target_info`: Dictionary with target column info (name, task_type, ml_type) from metadata.json
+- `num_features_to_surface`: How many top features to suggest (default: 7)
+
+**Returns:**
+- List of top N feature column names
+
+**Implementation:**
+- Uses mutual information for classification tasks
+- Uses f-regression for regression tasks
+- Performs minimal stable cleaning for metric calculation stability
+- Falls back to correlation-based methods if advanced metrics fail
+
+### `suggest_initial_feature_schemas(df)`
+
+Suggests initial data types and encoding roles for all columns based on heuristics.
+
+**Parameters:**
+- `df`: The original pandas DataFrame
+
+**Returns:**
+- Dictionary where keys are column names and values are dicts with 'initial_dtype' and 'suggested_encoding_role'
+
+**Encoding Role Heuristics:**
+- `numeric-continuous`: For numeric columns with many unique values
+- `categorical-nominal`: For object/categorical columns with low cardinality
+- `boolean`: For boolean dtype columns
+- `datetime`: For datetime columns
+- `text`: For high cardinality object columns or ID-like columns
+
+### `confirm_feature_schemas(run_id, user_confirmed_schemas, all_initial_schemas)`
+
+Confirms feature schemas and updates metadata.json with feature schema information.
+
+**Parameters:**
+- `run_id`: The ID of the current run
+- `user_confirmed_schemas`: Dictionary of user-confirmed schemas (only for reviewed columns)
+- `all_initial_schemas`: Full dictionary of initial suggestions for all columns
+
+**Returns:**
+- `True` if successful, `False` otherwise
+
+**Side Effects:**
+- Updates `metadata.json` with feature_schemas section
+- Updates `status.json` with stage completion status
+- Writes to run-specific log file
+
 ## Example Usage
 
+### Target Definition
 ```python
 import pandas as pd
 from step_2_schema.target_definition_logic import suggest_target_and_task, confirm_target_definition
@@ -63,6 +118,39 @@ success = confirm_target_definition(
     confirmed_target_column=confirmed_target,
     confirmed_task_type=confirmed_task,
     confirmed_target_ml_type=confirmed_ml_type
+)
+```
+
+### Feature Schema Assist
+```python
+import pandas as pd
+from step_2_schema.feature_definition_logic import (
+    identify_key_features, 
+    suggest_initial_feature_schemas, 
+    confirm_feature_schemas
+)
+
+# Load data
+df = pd.read_csv('path/to/original_data.csv')
+
+# Get initial schema suggestions for all columns
+all_schemas = suggest_initial_feature_schemas(df)
+
+# Identify key features based on target
+target_info = {'name': 'target_column', 'task_type': 'classification', 'ml_type': 'binary_01'}
+key_features = identify_key_features(df, target_info, num_features_to_surface=5)
+
+# User reviews and confirms schemas (in real usage, this would come from UI)
+user_confirmed = {
+    'feature1': {'final_dtype': 'float64', 'final_encoding_role': 'numeric-continuous'},
+    'feature2': {'final_dtype': 'object', 'final_encoding_role': 'categorical-ordinal'}
+}
+
+# Confirm and save
+success = confirm_feature_schemas(
+    run_id="your_run_id",
+    user_confirmed_schemas=user_confirmed,
+    all_initial_schemas=all_schemas
 )
 ```
 

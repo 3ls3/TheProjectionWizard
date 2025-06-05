@@ -241,11 +241,10 @@ def show_target_page():
                         st.success("✅ Target definition saved successfully!")
                         st.balloons()
                         
-                        # Provide navigation to next step
-                        st.info("Ready to proceed to Key Feature Schema confirmation.")
-                        if st.button("Proceed to Key Feature Schema"):
-                            st.session_state['current_page'] = 'schema_confirmation'
-                            st.rerun()
+                        # Automatically navigate to next step
+                        st.info("🚀 Proceeding to Key Feature Schema confirmation...")
+                        st.session_state['current_page'] = 'schema_confirmation'
+                        st.rerun()
                     else:
                         st.error("❌ Failed to save target definition. Check logs for details.")
                         

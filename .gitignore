@@ -168,3 +168,4 @@ logs/
 *.py.ipynb 
 
 .cursor/rules/PRD.mdc
+.cursor/rules/files.mdc

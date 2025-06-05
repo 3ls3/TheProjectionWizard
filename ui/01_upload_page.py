@@ -40,10 +40,10 @@ def show_upload_page():
                 st.success(f"File uploaded successfully! Run ID: {run_id}")
                 st.info(f"Data saved to data/runs/{run_id}/{constants.ORIGINAL_DATA_FILE}")
                 
-                # Display a button/link to navigate to the next step
-                if st.button("Proceed to Target Confirmation"):
-                    st.session_state['current_page'] = 'target_confirmation'
-                    st.rerun()
+                # Automatically navigate to next step
+                st.info("🚀 Proceeding to Target Confirmation...")
+                st.session_state['current_page'] = 'target_confirmation'
+                st.rerun()
             
             else:
                 st.error(f"File upload or initial processing failed for Run ID: {run_id}. Check logs in data/runs/{run_id}/{constants.PIPELINE_LOG_FILE}.")

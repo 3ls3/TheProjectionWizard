@@ -321,10 +321,10 @@ def show_schema_page():
         # Confirmation Section
         st.divider()
         
-        col1, col2 = st.columns([1, 1])
+        col1, col2 = st.columns([3, 1])
         
         with col1:
-            if st.button("Confirm Feature Schemas", type="primary", use_container_width=True):
+            if st.button("✅ Confirm Feature Schemas", type="primary", use_container_width=True):
                 with st.spinner("Saving feature schemas..."):
                     # Get user overrides from session state
                     user_overrides = st.session_state.get('ui_feature_schemas_override', {})
@@ -341,8 +341,7 @@ def show_schema_page():
                         # Clear session state
                         st.session_state.ui_feature_schemas_override = {}
                         
-                        # Automatically navigate to next step
-                        st.info("🚀 Proceeding to Data Validation...")
+                        # Auto-navigate to next step immediately
                         st.session_state['current_page'] = 'validation'
                         st.rerun()
                     else:
@@ -353,7 +352,7 @@ def show_schema_page():
                         st.error(f"Check log file: `{log_path}`")
         
         with col2:
-            if st.button("Back to Target Confirmation", use_container_width=True):
+            if st.button("← Back", use_container_width=True):
                 st.session_state['current_page'] = 'target_confirmation'
                 st.rerun()
     

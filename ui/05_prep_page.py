@@ -233,9 +233,9 @@ def show_prep_page():
                         except Exception as e:
                             st.error(f"Error checking model files: {e}")
                     
-                    # Navigation to next step
+                    # Navigation to next step (only show if prep is already complete)
                     st.subheader("Next Steps")
-                    col_nav1, col_nav2 = st.columns(2)
+                    col_nav1, col_nav2 = st.columns([3, 1])
                     
                     with col_nav1:
                         if st.button("🚀 Proceed to Model Training", type="primary", use_container_width=True):
@@ -243,7 +243,7 @@ def show_prep_page():
                             st.rerun()
                     
                     with col_nav2:
-                        if st.button("🔄 Re-run Data Preparation", use_container_width=True):
+                        if st.button("🔄 Re-run", use_container_width=True):
                             # Set session state to force re-run and refresh page
                             st.session_state['force_prep_rerun'] = True
                             st.rerun()
@@ -348,13 +348,11 @@ def show_prep_page():
                                     if len(cleaning_steps) > 5:
                                         st.write(f"• ... and {len(cleaning_steps) - 5} more steps")
                                 
-                                # Provide navigation to next step
+                                # Auto-navigate to next step immediately
                                 st.balloons()
-                                st.info("🚀 Your data is now ready for model training!")
-                                
-                                if st.button("Continue to Model Training", use_container_width=True):
-                                    st.session_state['current_page'] = 'automl'
-                                    st.rerun()
+                                st.success("🚀 Proceeding to Model Training...")
+                                st.session_state['current_page'] = 'automl'
+                                st.rerun()
                                 
                                 # Clear running flag on successful completion
                                 if 'prep_running' in st.session_state:
@@ -388,33 +386,13 @@ def show_prep_page():
                     if 'prep_running' in st.session_state:
                         del st.session_state['prep_running']
     
-    # Navigation section
-    st.divider()
-    st.subheader("Navigation")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
+    # Navigation section (only show if prep not yet run)
+    if not prep_completed:
+        st.divider()
+        
         if st.button("← Back to Data Validation", use_container_width=True):
             st.session_state['current_page'] = 'validation'
             st.rerun()
-    
-    with col2:
-        # Only enable next step if prep has completed successfully
-        try:
-            status_data = storage.read_json(run_id, constants.STATUS_FILENAME)
-            can_proceed = (status_data and 
-                          status_data.get('stage') == constants.PREP_STAGE and 
-                          status_data.get('status') == 'completed')
-        except:
-            can_proceed = False
-        
-        if can_proceed:
-            if st.button("Next: Model Training →", type="primary", use_container_width=True):
-                st.session_state['current_page'] = 'automl'
-                st.rerun()
-        else:
-            st.button("Next: Model Training →", disabled=True, help="Complete data preparation successfully first")
 
 
 if __name__ == "__main__":

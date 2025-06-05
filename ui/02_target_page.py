@@ -228,10 +228,10 @@ def show_target_page():
         # Confirmation Button
         st.divider()
         
-        col1, col2 = st.columns([1, 1])
+        col1, col2 = st.columns([3, 1])
         
         with col1:
-            if st.button("Confirm Target and Task", type="primary", use_container_width=True):
+            if st.button("✅ Confirm Target and Task", type="primary", use_container_width=True):
                 with st.spinner("Saving target definition..."):
                     success = target_definition_logic.confirm_target_definition(
                         run_id, selected_target, selected_task, selected_ml_type
@@ -241,8 +241,7 @@ def show_target_page():
                         st.success("✅ Target definition saved successfully!")
                         st.balloons()
                         
-                        # Automatically navigate to next step
-                        st.info("🚀 Proceeding to Key Feature Schema confirmation...")
+                        # Auto-navigate to next step immediately
                         st.session_state['current_page'] = 'schema_confirmation'
                         st.rerun()
                     else:
@@ -253,7 +252,7 @@ def show_target_page():
                         st.error(f"Check log file: `{log_path}`")
         
         with col2:
-            if st.button("Back to Upload", use_container_width=True):
+            if st.button("← Back", use_container_width=True):
                 st.session_state['current_page'] = 'upload'
                 st.rerun()
     

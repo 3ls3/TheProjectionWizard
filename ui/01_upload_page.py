@@ -40,8 +40,8 @@ def show_upload_page():
                 st.success(f"File uploaded successfully! Run ID: {run_id}")
                 st.info(f"Data saved to data/runs/{run_id}/{constants.ORIGINAL_DATA_FILE}")
                 
-                # Automatically navigate to next step
-                st.info("🚀 Proceeding to Target Confirmation...")
+                # Auto-navigate to next step immediately
+                st.success("🚀 Proceeding to Target Confirmation...")
                 st.session_state['current_page'] = 'target_confirmation'
                 st.rerun()
             

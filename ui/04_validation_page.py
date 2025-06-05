@@ -191,9 +191,9 @@ def show_validation_page():
                         else:
                             st.info("No detailed failure information available.")
                 
-                # Navigation to next step
+                # Navigation to next step (only show if validation is already complete)
                 st.subheader("Next Steps")
-                col_nav1, col_nav2 = st.columns(2)
+                col_nav1, col_nav2 = st.columns([3, 1])
                 
                 with col_nav1:
                     if st.button("🚀 Proceed to Data Preparation", type="primary", use_container_width=True):
@@ -201,7 +201,7 @@ def show_validation_page():
                         st.rerun()
                 
                 with col_nav2:
-                    if st.button("🔄 Re-run Validation", use_container_width=True):
+                    if st.button("🔄 Re-run", use_container_width=True):
                         # Set session state to force re-run and refresh page
                         st.session_state['force_validation_rerun'] = True
                         st.rerun()
@@ -278,13 +278,11 @@ def show_validation_page():
                                 with col3:
                                     st.metric("Failed", validation_summary.failed_expectations)
                                 
-                                # Provide navigation to next step
+                                # Auto-navigate to next step immediately
                                 st.balloons()
-                                st.info("🚀 You can now proceed to Data Preparation.")
-                                
-                                if st.button("Continue to Data Preparation", use_container_width=True):
-                                    st.session_state['current_page'] = 'prep'
-                                    st.rerun()
+                                st.success("🚀 Proceeding to Data Preparation...")
+                                st.session_state['current_page'] = 'prep'
+                                st.rerun()
                                 
                                 # Clear running flag on successful completion
                                 if 'validation_running' in st.session_state:
@@ -320,36 +318,13 @@ def show_validation_page():
                     if 'validation_running' in st.session_state:
                         del st.session_state['validation_running']
     
-    # Navigation section
-    st.divider()
-    st.subheader("Navigation")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
+    # Navigation section (only show if validation not yet run)
+    if validation_report_data is None:
+        st.divider()
+        
         if st.button("← Back to Schema Confirmation", use_container_width=True):
             st.session_state['current_page'] = 'schema_confirmation'
             st.rerun()
-    
-    with col2:
-        # Only enable next step if validation has passed
-        try:
-            validation_report_data = storage.read_json(run_id, constants.VALIDATION_FILENAME)
-            can_proceed = False
-            if validation_report_data:
-                validation_summary = schemas.ValidationReportSummary(**validation_report_data)
-                # Allow proceeding even with warnings if success rate is high enough (>95%)
-                success_rate = (validation_summary.successful_expectations / validation_summary.total_expectations) if validation_summary.total_expectations > 0 else 0
-                can_proceed = validation_summary.overall_success or success_rate >= 0.95
-        except:
-            can_proceed = False
-        
-        if can_proceed:
-            if st.button("Next: Data Preparation →", type="primary", use_container_width=True):
-                st.session_state['current_page'] = 'prep'
-                st.rerun()
-        else:
-            st.button("Next: Data Preparation →", disabled=True, help="Complete validation successfully first")
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ upload_page_module = importlib.import_module('ui.01_upload_page')
 target_page_module = importlib.import_module('ui.02_target_page')
 schema_page_module = importlib.import_module('ui.03_schema_page')
 validation_page_module = importlib.import_module('ui.04_validation_page')
+prep_page_module = importlib.import_module('ui.05_prep_page')
 
 
 def get_page_config():
@@ -100,7 +101,25 @@ def show_navigation_sidebar():
     else:
         st.sidebar.button("🔧 Data Preparation", disabled=True, help="Complete data validation first")
     
-    st.sidebar.button("🤖 Model Training", disabled=True, help="Complete data preparation first")
+    # Check if data preparation is complete
+    prep_complete = False
+    if 'run_id' in st.session_state:
+        try:
+            from common import storage, constants
+            status_data = storage.read_json(st.session_state['run_id'], constants.STATUS_FILENAME)
+            prep_complete = (status_data and 
+                           status_data.get('stage') == constants.PREP_STAGE and 
+                           status_data.get('status') == 'completed')
+        except:
+            prep_complete = False
+    
+    if prep_complete:
+        if st.sidebar.button("🤖 Model Training", use_container_width=True):
+            st.session_state['current_page'] = 'automl'
+            st.rerun()
+    else:
+        st.sidebar.button("🤖 Model Training", disabled=True, help="Complete data preparation first")
+    
     st.sidebar.button("📊 Model Explanation", disabled=True, help="Complete model training first")
     st.sidebar.button("📈 Results", disabled=True, help="Complete model explanation first")
 
@@ -122,6 +141,8 @@ def route_to_page():
         schema_page_module.show_schema_page()
     elif current_page == 'validation':
         validation_page_module.show_validation_page()
+    elif current_page == 'prep':
+        prep_page_module.show_prep_page()
     else:
         st.error(f"Page '{current_page}' is not yet implemented.")
         st.info("Please use the navigation sidebar to go to an available page.")

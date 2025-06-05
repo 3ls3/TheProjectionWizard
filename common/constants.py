@@ -149,7 +149,8 @@ ENCODING_ROLES = [
     "text",
     "datetime",
     "boolean",
-    "target"
+    "target",
+    "identifier_ignore"
 ]
 
 # Default cleaning strategies

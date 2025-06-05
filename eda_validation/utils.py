@@ -21,7 +21,52 @@ import json
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Union, Tuple
 import hashlib
-from datetime import datetime
+from datetime import datetime, date
+
+
+def make_json_serializable(obj):
+    """
+    Convert non-serializable objects to JSON serializable format.
+    
+    This function handles various numpy, pandas, and Python data types
+    to ensure they can be serialized to JSON format.
+    
+    Args:
+        obj: Object to make JSON serializable
+        
+    Returns:
+        JSON-serializable version of the object
+        
+    Example:
+        >>> serialized = make_json_serializable(np.int64(42))
+        >>> assert serialized == 42
+    """
+    if isinstance(obj, dict):
+        return {make_json_serializable(k): make_json_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [make_json_serializable(item) for item in obj]
+    elif isinstance(obj, (np.int_, np.intc, np.intp, np.int8,
+                         np.int16, np.int32, np.int64, np.uint8,
+                         np.uint16, np.uint32, np.uint64, np.integer)):
+        return int(obj)
+    elif isinstance(obj, (np.float_, np.float16, np.float32, np.float64, np.floating)):
+        return float(obj)
+    elif isinstance(obj, (np.bool_, bool)):
+        return bool(obj)
+    elif isinstance(obj, (np.ndarray,)):
+        return obj.tolist()
+    elif isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    elif isinstance(obj, (pd.Timestamp, np.datetime64)):
+        return str(obj)
+    elif isinstance(obj, Path):
+        return str(obj)
+    elif isinstance(obj, pd.Series):
+        return obj.to_dict()
+    elif isinstance(obj, pd.DataFrame):
+        return obj.to_dict(orient='records')
+    else:
+        return obj
 
 
 def setup_logging(

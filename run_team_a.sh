@@ -5,4 +5,4 @@ echo "Opening http://localhost:8501 in browser"
 
 # Activate virtual environment and run streamlit
 source .venv/bin/activate
-streamlit run app/streamlit_team_a.py 
+streamlit run app/team_a/main-part1.py 

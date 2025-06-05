@@ -60,9 +60,12 @@ RUNS_DIR_NAME = "runs"
 
 # File names for run artifacts
 ORIGINAL_DATA_FILE = "original_data.csv"
+ORIGINAL_DATA_FILENAME = "original_data.csv"  # Alias for storage compatibility
 CLEANED_DATA_FILE = "cleaned_data.csv"
 METADATA_FILE = "metadata.json"
+METADATA_FILENAME = "metadata.json"  # Alias for storage compatibility
 STATUS_FILE = "status.json"
+STATUS_FILENAME = "status.json"  # Alias for storage compatibility
 VALIDATION_FILE = "validation.json"
 PIPELINE_LOG_FILE = "pipeline.log"
 PIPELINE_LOG_FILENAME = "pipeline.log"  # Alias for logger compatibility
@@ -118,6 +121,19 @@ UI_CONFIG = {
 
 # Task types
 TASK_TYPES = ["classification", "regression"]
+
+# Target ML types for encoding
+TARGET_ML_TYPES = [
+    "binary_01",
+    "binary_numeric", 
+    "binary_text_labels",
+    "binary_boolean",
+    "multiclass_int_labels",
+    "multiclass_text_labels",
+    "high_cardinality_text",
+    "numeric_continuous",
+    "unknown_type"
+]
 
 # Status values
 STATUS_VALUES = ["pending", "running", "completed", "failed", "cancelled"]

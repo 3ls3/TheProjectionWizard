@@ -61,8 +61,11 @@ def show_upload_page():
 
 def main():
     """Main function to run the upload page."""
-    # Display Current Run ID (if exists)
-    if 'run_id' in st.session_state:
+    # Note: When run from main app.py, the sidebar is handled centrally
+    # This main() function is primarily for standalone testing
+    
+    # Display Current Run ID (if exists) - only when running standalone
+    if 'run_id' in st.session_state and not hasattr(st, '_is_running_from_main_app'):
         st.sidebar.info(f"Current Run ID: {st.session_state['run_id']}")
     
     # Show the upload page

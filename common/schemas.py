@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Union, Literal
 from pydantic import BaseModel, Field, validator
 
-from .constants import STATUS_VALUES, TASK_TYPES, ENCODING_ROLES, PIPELINE_STAGES
+from .constants import STATUS_VALUES, TASK_TYPES, ENCODING_ROLES, PIPELINE_STAGES, TARGET_ML_TYPES
 
 
 class BaseMetadata(BaseModel):
@@ -71,7 +71,33 @@ class DataStats(BaseModel):
     
 
 class TargetInfo(BaseModel):
-    """Information about the target variable."""
+    """Information about the target variable for step 2 schema confirmation."""
+    name: str = Field(..., description="Target column name")
+    task_type: str = Field(..., description="classification or regression")
+    ml_type: str = Field(..., description="ML-ready type for target encoding")
+    user_confirmed_at: Optional[datetime] = None
+    
+    @validator('task_type')
+    def validate_task_type(cls, v):
+        if v not in TASK_TYPES:
+            raise ValueError(f'task_type must be one of {TASK_TYPES}')
+        return v
+    
+    @validator('ml_type')
+    def validate_ml_type(cls, v):
+        if v not in TARGET_ML_TYPES:
+            raise ValueError(f'ml_type must be one of {TARGET_ML_TYPES}')
+        return v
+
+
+class MetadataWithTarget(BaseMetadata):
+    """Metadata model that includes target information from step 2 schema confirmation."""
+    target_info: Optional[TargetInfo] = None
+    task_type: Optional[str] = None  # Top-level convenience field
+
+
+class DetailedTargetInfo(BaseModel):
+    """Detailed information about the target variable for later stages."""
     column_name: str
     task_type: str = Field(..., description="classification or regression")
     encoding_role: str
@@ -126,7 +152,7 @@ class RunMetadata(BaseModel):
     updated_at: datetime
     original_filename: str
     data_stats: DataStats
-    target_info: Optional[TargetInfo] = None
+    target_info: Optional[DetailedTargetInfo] = None
     column_schemas: Dict[str, ColumnSchema] = {}
     processing_steps: List[ProcessingStep] = []
     model_info: Optional[ModelInfo] = None

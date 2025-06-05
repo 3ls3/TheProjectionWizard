@@ -167,4 +167,4 @@ logs/
 # Python Interactive files
 *.py.ipynb 
 
-.cursor/rules/
+.cursor/rules/PRD.mdc

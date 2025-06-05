@@ -7,8 +7,81 @@ import pandas as pd
 from pathlib import Path
 from typing import Optional
 import warnings
+import signal
+import time
 
 from common import logger
+
+
+class TimeoutError(Exception):
+    """Custom timeout exception"""
+    pass
+
+
+def timeout_handler(signum, frame):
+    """Signal handler for timeout"""
+    raise TimeoutError("Profile generation timed out")
+
+
+def generate_profile_report_with_timeout(df_final_prepared: pd.DataFrame, 
+                                       report_path: Path, 
+                                       title: str,
+                                       timeout_seconds: int = 300) -> bool:
+    """
+    Generate profile report with timeout protection.
+    
+    Args:
+        df_final_prepared: The DataFrame after cleaning and encoding
+        report_path: Full Path object where the HTML report should be saved
+        title: Title for the ydata-profiling report
+        timeout_seconds: Maximum time to allow for profile generation (default: 5 minutes)
+        
+    Returns:
+        True if report generation successful, False otherwise
+    """
+    try:
+        # Set up timeout signal (Unix/Mac only)
+        if hasattr(signal, 'SIGALRM'):
+            signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm(timeout_seconds)
+        
+        # Generate the profile
+        result = generate_profile_report(df_final_prepared, report_path, title)
+        
+        # Cancel the alarm if we succeeded
+        if hasattr(signal, 'SIGALRM'):
+            signal.alarm(0)
+            
+        return result
+        
+    except TimeoutError:
+        # Create logger for timeout error
+        log = logger.get_logger("profiling_temp", "profiling")
+        log.error(f"Profile generation timed out after {timeout_seconds} seconds")
+        
+        # Clean up partial file if it exists
+        try:
+            if report_path.exists():
+                report_path.unlink()
+                log.info("Cleaned up partial report file after timeout")
+        except Exception as cleanup_error:
+            log.warning(f"Could not clean up partial file after timeout: {cleanup_error}")
+        
+        return False
+        
+    except Exception as e:
+        # Cancel the alarm on any exception
+        if hasattr(signal, 'SIGALRM'):
+            signal.alarm(0)
+        
+        log = logger.get_logger("profiling_temp", "profiling")
+        log.error(f"Profile generation failed with exception: {str(e)}")
+        return False
+    
+    finally:
+        # Ensure alarm is always cancelled
+        if hasattr(signal, 'SIGALRM'):
+            signal.alarm(0)
 
 
 def generate_profile_report(df_final_prepared: pd.DataFrame, 
@@ -65,19 +138,19 @@ def generate_profile_report(df_final_prepared: pd.DataFrame,
                 minimal=False,  # Full report
                 samples={"head": 5, "tail": 5},  # Limit sample size for performance
                 correlations={
-                    "auto": {"calculate": True},
-                    "pearson": {"calculate": True},
-                    "spearman": {"calculate": False},  # Skip spearman for performance
-                    "kendall": {"calculate": False},   # Skip kendall for performance
-                    "phi_k": {"calculate": False},     # Skip phi_k for performance
-                    "cramers": {"calculate": False}    # Skip cramers for performance
+                    "auto": {"calculate": False},      # DISABLE - can hang on large datasets
+                    "pearson": {"calculate": False},   # DISABLE - can hang on large datasets
+                    "spearman": {"calculate": False},  # DISABLE - can hang on large datasets
+                    "kendall": {"calculate": False},   # DISABLE - can hang on large datasets
+                    "phi_k": {"calculate": False},     # DISABLE - can hang on large datasets
+                    "cramers": {"calculate": False}    # DISABLE - can hang on large datasets
                 },
                 missing_diagrams={
                     "matrix": True,
                     "bar": True,
                     "heatmap": False  # Skip heatmap for performance with large datasets
                 },
-                interactions={"continuous": False},  # Disable interactions for performance
+                interactions={"continuous": False, "targets": []},  # Disable interactions for performance
                 duplicates={"head": 5}  # Limit duplicate examples
             )
         
@@ -131,9 +204,9 @@ def generate_profile_report_with_fallback(df_final_prepared: pd.DataFrame,
     # Get logger with optional run context
     log = logger.get_logger(run_id, "prep_profiling_stage") if run_id else logger.get_logger("profiling_temp", "profiling")
     
-    # First attempt: Full profile report
-    log.info(f"Attempting full profile report generation for '{title}'")
-    success = generate_profile_report(df_final_prepared, report_path, title)
+    # First attempt: Full profile report with timeout protection
+    log.info(f"Attempting full profile report generation for '{title}' (with 5-minute timeout)")
+    success = generate_profile_report_with_timeout(df_final_prepared, report_path, title, timeout_seconds=300)
     
     if success:
         return True
@@ -149,16 +222,27 @@ def generate_profile_report_with_fallback(df_final_prepared: pd.DataFrame,
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             
-            # Minimal profile with basic statistics only
+            # Minimal profile with basic statistics only - ULTRA SAFE
             profile = ProfileReport(
                 df_final_prepared,
                 title=f"{title} (Minimal)",
                 minimal=True,  # Minimal report
                 explorative=False,
-                correlations={"auto": {"calculate": False}},
+                # DISABLE ALL CORRELATIONS - these cause hangs
+                correlations={
+                    "auto": {"calculate": False},
+                    "pearson": {"calculate": False},
+                    "spearman": {"calculate": False},
+                    "kendall": {"calculate": False},
+                    "phi_k": {"calculate": False},
+                    "cramers": {"calculate": False}
+                },
                 missing_diagrams={"matrix": False, "bar": True, "heatmap": False},
-                interactions={"continuous": False},
-                duplicates={"head": 0}
+                interactions={"continuous": False, "targets": []},
+                duplicates={"head": 0},
+                # Additional safety settings
+                samples={"head": 0, "tail": 0},  # No sample display
+                infer_dtypes=False  # Skip dtype inference
             )
             
         profile.to_file(report_path)

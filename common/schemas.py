@@ -1,0 +1,167 @@
+"""
+Pydantic data models for The Projection Wizard.
+Defines schemas for metadata.json, status.json, and validation.json.
+"""
+
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Union
+from pydantic import BaseModel, Field, validator
+
+from .constants import STATUS_VALUES, TASK_TYPES, ENCODING_ROLES
+
+
+class ColumnSchema(BaseModel):
+    """Schema information for a single column."""
+    name: str
+    dtype: str
+    encoding_role: str = Field(..., description="Role for ML encoding")
+    is_target: bool = False
+    missing_count: int = 0
+    unique_count: int = 0
+    importance_score: Optional[float] = None
+    suggested_encoding: Optional[str] = None
+    
+    @validator('encoding_role')
+    def validate_encoding_role(cls, v):
+        if v not in ENCODING_ROLES:
+            raise ValueError(f'encoding_role must be one of {ENCODING_ROLES}')
+        return v
+
+
+class DataStats(BaseModel):
+    """Basic statistics about the dataset."""
+    n_rows: int
+    n_cols: int
+    missing_values_total: int
+    duplicate_rows: int
+    memory_usage_mb: float
+    
+
+class TargetInfo(BaseModel):
+    """Information about the target variable."""
+    column_name: str
+    task_type: str = Field(..., description="classification or regression")
+    encoding_role: str
+    unique_values: int
+    class_distribution: Optional[Dict[str, int]] = None
+    target_stats: Optional[Dict[str, float]] = None  # For regression targets
+    
+    @validator('task_type')
+    def validate_task_type(cls, v):
+        if v not in TASK_TYPES:
+            raise ValueError(f'task_type must be one of {TASK_TYPES}')
+        return v
+
+
+class ModelInfo(BaseModel):
+    """Information about the trained model."""
+    model_name: str
+    model_type: str
+    performance_metrics: Dict[str, float]
+    training_time_seconds: float
+    feature_importance: Optional[Dict[str, float]] = None
+    cv_scores: Optional[List[float]] = None
+    best_params: Optional[Dict[str, Any]] = None
+
+
+class ValidationResult(BaseModel):
+    """Results from Great Expectations validation."""
+    total_expectations: int
+    successful_expectations: int
+    failed_expectations: int
+    success_rate: float
+    critical_failures: List[str] = []
+    warnings: List[str] = []
+    
+    
+class ProcessingStep(BaseModel):
+    """Information about a data processing step."""
+    step_name: str
+    step_type: str
+    description: str
+    parameters: Dict[str, Any] = {}
+    timestamp: datetime
+    rows_before: int
+    rows_after: int
+    columns_affected: List[str] = []
+
+
+class RunMetadata(BaseModel):
+    """Complete metadata for a pipeline run."""
+    run_id: str
+    created_at: datetime
+    updated_at: datetime
+    original_filename: str
+    data_stats: DataStats
+    target_info: Optional[TargetInfo] = None
+    column_schemas: Dict[str, ColumnSchema] = {}
+    processing_steps: List[ProcessingStep] = []
+    model_info: Optional[ModelInfo] = None
+    validation_summary: Optional[ValidationResult] = None
+    artifact_paths: Dict[str, str] = {}
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
+
+
+class RunStatus(BaseModel):
+    """Status information for a pipeline run."""
+    run_id: str
+    current_stage: str
+    status: str = Field(..., description="Current status of the run")
+    progress_percentage: float = Field(0.0, ge=0.0, le=100.0)
+    last_updated: datetime
+    errors: List[str] = []
+    warnings: List[str] = []
+    stage_timings: Dict[str, float] = {}  # Stage name -> duration in seconds
+    
+    @validator('status')
+    def validate_status(cls, v):
+        if v not in STATUS_VALUES:
+            raise ValueError(f'status must be one of {STATUS_VALUES}')
+        return v
+        
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
+
+
+class ValidationSummary(BaseModel):
+    """Summary of data validation results."""
+    run_id: str
+    validation_timestamp: datetime
+    overall_success: bool
+    total_checks: int
+    passed_checks: int
+    failed_checks: int
+    critical_failures: List[str] = []
+    warnings: List[str] = []
+    data_quality_score: float = Field(..., ge=0.0, le=1.0)
+    expectation_results: Dict[str, Any] = {}  # Raw GE results
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
+
+
+class RunIndex(BaseModel):
+    """Index entry for a completed run."""
+    run_id: str
+    created_at: datetime
+    original_filename: str
+    target_column: Optional[str] = None
+    task_type: Optional[str] = None
+    model_name: Optional[str] = None
+    final_score: Optional[float] = None
+    data_rows: int
+    data_cols: int
+    status: str
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        } 

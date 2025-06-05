@@ -1,6 +1,0 @@
-runtime: python310
-entrypoint: streamlit run your_script.py
-
-handlers:
-- url: /.*
-  script: auto

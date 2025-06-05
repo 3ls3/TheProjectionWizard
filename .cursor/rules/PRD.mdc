@@ -169,3 +169,19 @@ run_smoke_test.py passes in CI.
 Reduced merge conflicts and improved developer velocity.
 
 User can successfully upload a CSV and receive a trained model, predictions, and key reports.
+
+9. Future Considerations & Long-Term Vision
+While the current refactor focuses on establishing a modular, locally runnable pipeline with file-based artefacts, the long-term vision includes:
+Backend Integration (Supabase on Lovable):
+Migrating artefact storage (metadata, status, large files like datasets and models) from the local file system to Supabase (PostgreSQL for structured data, Supabase Storage for blobs).
+The common/storage.py module is designed as an abstraction layer to facilitate this transition; its backend implementation will change while function signatures ideally remain stable for the pipeline buckets.
+Configuration in common/constants.py will expand to include Supabase connection details, managed via environment variables.
+User Authentication & Multi-Tenancy: Leveraging Supabase's authentication to support multiple users, ensuring data isolation and run ownership. Each run_id will be associated with a user_id.
+Enhanced User Interaction with LLM Layer:
+Exploring the integration of a Language Model (LLM) to provide more intelligent assistance and natural language interaction for user feedback stages, particularly for:
+Explaining why certain features are flagged as important for schema review.
+Allowing users to provide feedback or ask questions about schema/encoding choices in natural language.
+Potentially generating more nuanced suggestions for data cleaning or feature engineering based on data characteristics and user goals.
+Advanced AutoML & Explainability: Incorporating tools like AutoGluon, more sophisticated hyperparameter tuning options, and row-level LIME/detailed SHAP explanations.
+Scalability & Performance: Optimizing for larger datasets and concurrent runs once deployed with a robust backend.
+These considerations are not part of the immediate refactor scope but inform design choices that promote future adaptability (e.g., modularity, clear storage APIs).

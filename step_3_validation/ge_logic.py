@@ -420,8 +420,11 @@ def run_ge_validation_on_dataframe(df: pd.DataFrame, ge_suite: dict, run_id: str
                     run_logger.warning(f"Error validating {expectation_type}: {str(e)}")
                     result["success"] = False
                 
-                # Update statistics
-                if result["success"]:
+                # Update statistics - ensure boolean values
+                is_success = result["success"] in [True, "True", 1, "1"]
+                result["success"] = is_success  # Normalize to boolean
+                
+                if is_success:
                     validation_results["statistics"]["successful_expectations"] += 1
                 else:
                     validation_results["statistics"]["unsuccessful_expectations"] += 1

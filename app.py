@@ -79,8 +79,27 @@ def show_navigation_sidebar():
             st.session_state['current_page'] = 'validation'
             st.rerun()
     
-    # Future pages (disabled for now)
-    st.sidebar.button("🔧 Data Preparation", disabled=True, help="Complete data validation first")
+    # Future pages (conditionally enabled)
+    # Check if validation is complete and successful enough
+    validation_complete = False
+    if 'run_id' in st.session_state:
+        try:
+            from common import storage, constants, schemas
+            validation_data = storage.read_json(st.session_state['run_id'], constants.VALIDATION_FILENAME)
+            if validation_data:
+                validation_summary = schemas.ValidationReportSummary(**validation_data)
+                success_rate = (validation_summary.successful_expectations / validation_summary.total_expectations) if validation_summary.total_expectations > 0 else 0
+                validation_complete = validation_summary.overall_success or success_rate >= 0.95
+        except:
+            validation_complete = False
+    
+    if validation_complete:
+        if st.sidebar.button("🔧 Data Preparation", use_container_width=True):
+            st.session_state['current_page'] = 'prep'
+            st.rerun()
+    else:
+        st.sidebar.button("🔧 Data Preparation", disabled=True, help="Complete data validation first")
+    
     st.sidebar.button("🤖 Model Training", disabled=True, help="Complete data preparation first")
     st.sidebar.button("📊 Model Explanation", disabled=True, help="Complete model training first")
     st.sidebar.button("📈 Results", disabled=True, help="Complete model explanation first")

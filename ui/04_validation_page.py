@@ -35,12 +35,35 @@ def show_validation_page():
     # Display Current Run ID
     st.info(f"**Current Run ID:** {run_id}")
     
+    # Debug info (can be removed later)
+    if st.checkbox("🔧 Show Debug Info", value=False):
+        st.write("**Session State:**")
+        st.write(f"- force_validation_rerun: {st.session_state.get('force_validation_rerun', 'Not set')}")
+        st.write(f"- current_page: {st.session_state.get('current_page', 'Not set')}")
+        
+        # Check validation file timestamp
+        try:
+            validation_file_path = storage.get_run_dir(run_id) / constants.VALIDATION_FILENAME
+            if validation_file_path.exists():
+                import os
+                mtime = os.path.getmtime(validation_file_path)
+                from datetime import datetime
+                last_modified = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
+                st.write(f"- validation.json last modified: {last_modified}")
+            else:
+                st.write("- validation.json: Not found")
+        except Exception as e:
+            st.write(f"- validation.json: Error checking ({e})")
+    
     # Display Existing Results (if page is revisited)
     st.subheader("Validation Status")
     
+    # Check if user requested a re-run
+    force_rerun = st.session_state.get('force_validation_rerun', False)
+    
     try:
-        # Try to read existing validation.json
-        validation_report_data = storage.read_json(run_id, constants.VALIDATION_FILENAME)
+        # Try to read existing validation.json (unless force rerun)
+        validation_report_data = None if force_rerun else storage.read_json(run_id, constants.VALIDATION_FILENAME)
         
         if validation_report_data is not None:
             st.success("✅ Data validation has already been completed for this run.")
@@ -81,6 +104,18 @@ def show_validation_page():
                 with col6:
                     if validation_summary.ge_version:
                         st.metric("GE Version", validation_summary.ge_version)
+                
+                # Show validation timestamp if available
+                ge_meta = validation_summary.results_ge_native.get('meta', {})
+                if 'validation_timestamp' in ge_meta:
+                    from datetime import datetime
+                    try:
+                        # Parse and format timestamp
+                        ts = datetime.fromisoformat(ge_meta['validation_timestamp'].replace('Z', '+00:00'))
+                        formatted_ts = ts.strftime("%Y-%m-%d %H:%M:%S")
+                        st.caption(f"🕒 Validation run at: {formatted_ts}")
+                    except:
+                        st.caption(f"🕒 Validation timestamp: {ge_meta['validation_timestamp']}")
                 
                 # Add interpretation note
                 if not validation_summary.overall_success and success_rate >= 95.0:
@@ -167,9 +202,9 @@ def show_validation_page():
                 
                 with col_nav2:
                     if st.button("🔄 Re-run Validation", use_container_width=True):
-                        # Clear existing results and allow re-run
-                        st.info("Click 'Run Data Validation Checks' below to re-run validation.")
-                        validation_report_data = None  # This will trigger the validation section below
+                        # Set session state to force re-run and refresh page
+                        st.session_state['force_validation_rerun'] = True
+                        st.rerun()
                 
             except Exception as e:
                 st.error(f"Error parsing validation results: {str(e)}")
@@ -184,12 +219,29 @@ def show_validation_page():
     
     # Run Validation Button (show if no existing results or user wants to re-run)
     if validation_report_data is None:
-        st.subheader("Run Data Validation")
-        st.write("This step will validate your data against the confirmed schema using Great Expectations.")
+        if force_rerun:
+            st.subheader("Re-run Data Validation")
+            st.info("⚠️ **Re-running validation** - This will overwrite previous results.")
+        else:
+            st.subheader("Run Data Validation")
+            st.write("This step will validate your data against the confirmed schema using Great Expectations.")
         
-        if st.button("Run Data Validation Checks", type="primary", use_container_width=True):
+        # Check if validation is already running to prevent multiple runs
+        validation_running = st.session_state.get('validation_running', False)
+        
+        if validation_running:
+            st.warning("⏳ Validation is currently running. Please wait...")
+            st.button("Run Data Validation Checks", type="primary", use_container_width=True, disabled=True)
+        elif st.button("Run Data Validation Checks", type="primary", use_container_width=True):
+            # Set running flag
+            st.session_state['validation_running'] = True
+            
             with st.spinner("Running validation..."):
                 try:
+                    # Clear the force rerun flag before running
+                    if 'force_validation_rerun' in st.session_state:
+                        del st.session_state['force_validation_rerun']
+                    
                     # Call the validation runner
                     stage_success = validation_runner.run_validation_stage(run_id)
                     
@@ -234,6 +286,10 @@ def show_validation_page():
                                     st.session_state['current_page'] = 'prep'
                                     st.rerun()
                                 
+                                # Clear running flag on successful completion
+                                if 'validation_running' in st.session_state:
+                                    del st.session_state['validation_running']
+                                
                             except Exception as e:
                                 st.error(f"Error parsing validation results: {str(e)}")
                                 st.json(validation_report_data)
@@ -259,6 +315,10 @@ def show_validation_page():
                 except Exception as e:
                     st.error(f"❌ An error occurred during validation: {str(e)}")
                     st.exception(e)
+                finally:
+                    # Always clear the running flag
+                    if 'validation_running' in st.session_state:
+                        del st.session_state['validation_running']
     
     # Navigation section
     st.divider()

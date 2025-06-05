@@ -110,10 +110,30 @@ class MetadataWithTarget(BaseMetadata):
     task_type: Optional[str] = None  # Top-level convenience field
 
 
+class ValidationInfo(BaseModel):
+    """Validation information for metadata.json."""
+    passed: bool
+    report_filename: str
+    total_expectations_evaluated: Optional[int] = None
+    successful_expectations: Optional[int] = None
+
+
+class ValidationReportSummary(BaseModel):
+    """Summary model for the top part of validation.json."""
+    overall_success: bool
+    total_expectations: int
+    successful_expectations: int
+    failed_expectations: int
+    run_time_s: Optional[float] = None
+    ge_version: Optional[str] = None
+    results_ge_native: dict  # Raw, untyped GE result object
+
+
 class MetadataWithFullSchema(MetadataWithTarget):
     """Metadata model that includes both target and feature schema information."""
     feature_schemas: Optional[Dict[str, FeatureSchemaInfo]] = None
     feature_schemas_confirmed_at: Optional[datetime] = None
+    validation_info: Optional[ValidationInfo] = None
 
 
 class DetailedTargetInfo(BaseModel):

@@ -67,6 +67,7 @@ METADATA_FILENAME = "metadata.json"  # Alias for storage compatibility
 STATUS_FILE = "status.json"
 STATUS_FILENAME = "status.json"  # Alias for storage compatibility
 VALIDATION_FILE = "validation.json"
+VALIDATION_FILENAME = "validation.json"  # Alias for spec compatibility
 PIPELINE_LOG_FILE = "pipeline.log"
 PIPELINE_LOG_FILENAME = "pipeline.log"  # Alias for logger compatibility
 PROFILE_REPORT_FILE = "ydata_profile.html"
@@ -99,7 +100,8 @@ VALIDATION_CONFIG = {
     "missing_value_threshold": 0.3,  # 30% missing values triggers warning
     "duplicate_threshold": 0.1,      # 10% duplicates triggers warning
     "cardinality_threshold": 50,     # High cardinality categorical threshold
-    "outlier_std_threshold": 3       # Standard deviations for outlier detection
+    "outlier_std_threshold": 3,      # Standard deviations for outlier detection
+    "success_threshold": 80.0        # Minimum percentage of expectations that must pass
 }
 
 # Schema detection configuration

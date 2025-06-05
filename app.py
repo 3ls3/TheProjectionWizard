@@ -16,6 +16,7 @@ import importlib
 upload_page_module = importlib.import_module('ui.01_upload_page')
 target_page_module = importlib.import_module('ui.02_target_page')
 schema_page_module = importlib.import_module('ui.03_schema_page')
+validation_page_module = importlib.import_module('ui.04_validation_page')
 
 
 def get_page_config():
@@ -42,12 +43,12 @@ def show_navigation_sidebar():
         page_names = ['Upload Data', 'Target Confirmation', 'Schema Confirmation', 'Data Validation', 'Data Preparation', 'Model Training', 'Model Explanation', 'Results']
         
         st.sidebar.subheader("Pipeline Progress")
+        current_index = pages.index(current_page) if current_page in pages else 0
+        
         for i, (page, name) in enumerate(zip(pages, page_names)):
             if page == current_page:
                 st.sidebar.write(f"👉 **{i+1}. {name}**")
-            elif page == 'upload':
-                st.sidebar.write(f"✅ {i+1}. {name}")
-            elif page == 'target_confirmation' and current_page in pages[1:]:
+            elif i < current_index:
                 st.sidebar.write(f"✅ {i+1}. {name}")
             else:
                 st.sidebar.write(f"⏳ {i+1}. {name}")
@@ -72,9 +73,13 @@ def show_navigation_sidebar():
         if st.sidebar.button("📋 Schema Confirmation", use_container_width=True):
             st.session_state['current_page'] = 'schema_confirmation'
             st.rerun()
+            
+        # Available after schema confirmation: Data validation
+        if st.sidebar.button("🔍 Data Validation", use_container_width=True):
+            st.session_state['current_page'] = 'validation'
+            st.rerun()
     
     # Future pages (disabled for now)
-    st.sidebar.button("🔍 Data Validation", disabled=True, help="Complete schema confirmation first")
     st.sidebar.button("🔧 Data Preparation", disabled=True, help="Complete data validation first")
     st.sidebar.button("🤖 Model Training", disabled=True, help="Complete data preparation first")
     st.sidebar.button("📊 Model Explanation", disabled=True, help="Complete model training first")
@@ -96,6 +101,8 @@ def route_to_page():
         target_page_module.show_target_page()
     elif current_page == 'schema_confirmation':
         schema_page_module.show_schema_page()
+    elif current_page == 'validation':
+        validation_page_module.show_validation_page()
     else:
         st.error(f"Page '{current_page}' is not yet implemented.")
         st.info("Please use the navigation sidebar to go to an available page.")

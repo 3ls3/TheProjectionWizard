@@ -151,6 +151,47 @@ def read_status(run_id: str) -> Optional[dict]:
     return read_json(run_id, "status.json")
 
 
+def read_original_data(run_id: str) -> Optional["pd.DataFrame"]:
+    """
+    Read the original data CSV file for a run.
+    
+    Args:
+        run_id: Unique run identifier
+        
+    Returns:
+        pandas DataFrame with the original data, or None if file doesn't exist
+        
+    Raises:
+        IOError: If file exists but cannot be read or parsed
+    """
+    import pandas as pd
+    from .constants import ORIGINAL_DATA_FILE
+    
+    run_dir = get_run_dir(run_id)
+    filepath = run_dir / ORIGINAL_DATA_FILE
+    
+    if not filepath.exists():
+        return None
+        
+    try:
+        return pd.read_csv(filepath)
+    except Exception as e:
+        raise IOError(f"Failed to read original data from {filepath}: {e}")
+
+
+def get_run_dir_path(run_id: str) -> Path:
+    """
+    Get the path to the run directory (alias for get_run_dir for compatibility).
+    
+    Args:
+        run_id: Unique run identifier
+        
+    Returns:
+        Path to the run directory
+    """
+    return get_run_dir(run_id)
+
+
 def list_runs() -> List[str]:
     """
     List all available run IDs.

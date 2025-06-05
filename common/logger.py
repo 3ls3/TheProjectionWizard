@@ -8,45 +8,49 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from .constants import RUNS_DIR, PIPELINE_LOG_FILE
+from . import storage
+from .constants import PIPELINE_LOG_FILENAME
 
 
-def get_logger(run_id: str, level: int = logging.INFO) -> logging.Logger:
+def get_logger(run_id: str, logger_name: str = 'pipeline', log_level: str = 'INFO') -> logging.Logger:
     """
     Get a run-scoped logger that writes to the run's pipeline.log file.
     
     Args:
         run_id: Unique run identifier
-        level: Logging level (default: INFO)
+        logger_name: Name for the logger (default: 'pipeline')
+        log_level: Logging level as string (default: 'INFO')
         
     Returns:
         Configured logger instance
     """
-    logger_name = f"projection_wizard.{run_id}"
-    logger = logging.getLogger(logger_name)
+    # Create a unique logger name that includes run_id to avoid conflicts
+    full_logger_name = f"projection_wizard.{logger_name}.{run_id}"
+    logger = logging.getLogger(full_logger_name)
     
     # Don't add handlers if logger already exists and has handlers
     if logger.handlers:
         return logger
         
-    logger.setLevel(level)
+    # Convert string log level to logging constant
+    numeric_level = getattr(logging, log_level.upper(), logging.INFO)
+    logger.setLevel(numeric_level)
     
-    # Create run directory if it doesn't exist
-    run_dir = RUNS_DIR / run_id
-    run_dir.mkdir(parents=True, exist_ok=True)
+    # Get run directory (creates if necessary)
+    run_dir = storage.get_run_dir(run_id)
     
     # File handler for run-specific log
-    log_file = run_dir / PIPELINE_LOG_FILE
+    log_file = run_dir / PIPELINE_LOG_FILENAME
     file_handler = logging.FileHandler(log_file)
-    file_handler.setLevel(level)
+    file_handler.setLevel(numeric_level)
     
     # Console handler for development
     console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(level)
+    console_handler.setLevel(numeric_level)
     
-    # Create formatter
+    # Create formatter with run_id context
     formatter = logging.Formatter(
-        fmt='%(asctime)s | %(name)s | %(levelname)s | %(message)s',
+        fmt=f'%(asctime)s | {run_id} | %(name)s | %(levelname)s | %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
     
@@ -62,6 +66,7 @@ def get_logger(run_id: str, level: int = logging.INFO) -> logging.Logger:
     return logger
 
 
+# Legacy functions for backward compatibility
 def get_stage_logger(run_id: str, stage: str, level: int = logging.INFO) -> logging.Logger:
     """
     Get a stage-specific logger for a run.
@@ -74,18 +79,8 @@ def get_stage_logger(run_id: str, stage: str, level: int = logging.INFO) -> logg
     Returns:
         Configured logger instance with stage context
     """
-    logger = get_logger(run_id, level)
-    
-    # Create a stage-specific adapter
-    return logging.LoggerAdapter(logger, {'stage': stage})
-
-
-class PipelineLoggerAdapter(logging.LoggerAdapter):
-    """Custom logger adapter that adds pipeline context to log messages."""
-    
-    def process(self, msg, kwargs):
-        stage = self.extra.get('stage', 'unknown')
-        return f"[{stage.upper()}] {msg}", kwargs
+    logger = get_logger(run_id, f"stage.{stage}", logging.getLevelName(level))
+    return logger
 
 
 def setup_root_logger(level: int = logging.WARNING) -> None:

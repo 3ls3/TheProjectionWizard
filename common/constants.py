@@ -12,16 +12,51 @@ DATA_DIR = PROJECT_ROOT / "data"
 RUNS_DIR = DATA_DIR / "runs"
 FIXTURES_DIR = DATA_DIR / "fixtures"
 
-# Pipeline stage names
+# Pipeline stage constants mapped to actual bucket directory names
+INGEST_STAGE = "step_1_ingest"
+SCHEMA_STAGE = "step_2_schema"
+VALIDATION_STAGE = "step_3_validation"
+PREP_STAGE = "step_4_prep"
+AUTOML_STAGE = "step_5_automl"
+EXPLAIN_STAGE = "step_6_explain"
+RESULTS_STAGE = "results"  # UI stage, not a bucket
+
+# Pipeline stage names (using directory-mapped constants)
 PIPELINE_STAGES = [
-    "ingest",
-    "schema", 
-    "validation",
-    "prep",
-    "automl",
-    "explain",
-    "results"
+    INGEST_STAGE,
+    SCHEMA_STAGE,
+    VALIDATION_STAGE,
+    PREP_STAGE,
+    AUTOML_STAGE,
+    EXPLAIN_STAGE,
+    RESULTS_STAGE
 ]
+
+# Mapping for easier lookup and validation
+STAGE_TO_DIRECTORY = {
+    INGEST_STAGE: INGEST_STAGE,
+    SCHEMA_STAGE: SCHEMA_STAGE,
+    VALIDATION_STAGE: VALIDATION_STAGE,
+    PREP_STAGE: PREP_STAGE,
+    AUTOML_STAGE: AUTOML_STAGE,
+    EXPLAIN_STAGE: EXPLAIN_STAGE,
+    RESULTS_STAGE: "ui"  # Results stage maps to UI directory
+}
+
+# Human-readable stage names for UI display
+STAGE_DISPLAY_NAMES = {
+    INGEST_STAGE: "Data Ingestion",
+    SCHEMA_STAGE: "Schema Validation", 
+    VALIDATION_STAGE: "Data Validation",
+    PREP_STAGE: "Data Preparation",
+    AUTOML_STAGE: "Model Training",
+    EXPLAIN_STAGE: "Model Explanation",
+    RESULTS_STAGE: "Results & Downloads"
+}
+
+# Directory names
+DATA_DIR_NAME = "data"
+RUNS_DIR_NAME = "runs"
 
 # File names for run artifacts
 ORIGINAL_DATA_FILE = "original_data.csv"
@@ -30,8 +65,10 @@ METADATA_FILE = "metadata.json"
 STATUS_FILE = "status.json"
 VALIDATION_FILE = "validation.json"
 PIPELINE_LOG_FILE = "pipeline.log"
+PIPELINE_LOG_FILENAME = "pipeline.log"  # Alias for logger compatibility
 PROFILE_REPORT_FILE = "ydata_profile.html"
 RUN_INDEX_FILE = "index.csv"
+RUN_INDEX_FILENAME = "index.csv"  # Alias for storage compatibility
 
 # Model artifacts
 MODEL_DIR = "model"
@@ -106,4 +143,48 @@ CLEANING_STRATEGIES = {
     },
     "duplicates": "drop",
     "outliers": "iqr_cap"  # IQR-based capping
-} 
+}
+
+# Helper functions for stage management
+def get_stage_directory(stage: str) -> str:
+    """
+    Get the directory name for a given stage.
+    
+    Args:
+        stage: Stage name (e.g., 'step_1_ingest')
+        
+    Returns:
+        Directory name for the stage
+        
+    Raises:
+        ValueError: If stage is not recognized
+    """
+    if stage not in STAGE_TO_DIRECTORY:
+        raise ValueError(f"Unknown stage: {stage}. Valid stages: {list(STAGE_TO_DIRECTORY.keys())}")
+    return STAGE_TO_DIRECTORY[stage]
+
+
+def get_stage_display_name(stage: str) -> str:
+    """
+    Get the human-readable display name for a stage.
+    
+    Args:
+        stage: Stage name (e.g., 'step_1_ingest')
+        
+    Returns:
+        Human-readable display name
+    """
+    return STAGE_DISPLAY_NAMES.get(stage, stage)
+
+
+def is_valid_stage(stage: str) -> bool:
+    """
+    Check if a stage name is valid.
+    
+    Args:
+        stage: Stage name to validate
+        
+    Returns:
+        True if stage is valid, False otherwise
+    """
+    return stage in PIPELINE_STAGES 

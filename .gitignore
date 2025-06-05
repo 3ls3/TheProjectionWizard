@@ -166,3 +166,5 @@ logs/
 
 # Python Interactive files
 *.py.ipynb 
+
+.cursor/

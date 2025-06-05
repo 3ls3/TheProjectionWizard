@@ -1,34 +1,23 @@
 """
 Storage utilities for The Projection Wizard.
-Provides atomic file writing operations to prevent corruption of critical files.
+Provides run_id-centric file operations with atomic writing for critical files.
 """
 
 import json
 import tempfile
 import shutil
+import csv
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from datetime import datetime
-import uuid
 
-from .constants import RUNS_DIR, METADATA_FILE, STATUS_FILE
-
-
-def generate_run_id() -> str:
-    """
-    Generate a unique run ID using timestamp and UUID.
-    
-    Returns:
-        Unique run identifier string
-    """
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    unique_id = str(uuid.uuid4())[:8]
-    return f"{timestamp}_{unique_id}"
+from .constants import DATA_DIR_NAME, RUNS_DIR_NAME, RUN_INDEX_FILENAME
+from .schemas import RunIndexEntry
 
 
 def get_run_dir(run_id: str) -> Path:
     """
-    Get the directory path for a specific run.
+    Helper function to consistently construct the run directory path.
+    Ensures the directory exists, creating it if necessary.
     
     Args:
         run_id: Unique run identifier
@@ -36,49 +25,36 @@ def get_run_dir(run_id: str) -> Path:
     Returns:
         Path to the run directory
     """
-    return RUNS_DIR / run_id
-
-
-def create_run_directory(run_id: str) -> Path:
-    """
-    Create the directory structure for a new run.
-    
-    Args:
-        run_id: Unique run identifier
-        
-    Returns:
-        Path to the created run directory
-    """
-    run_dir = get_run_dir(run_id)
+    run_dir = Path(DATA_DIR_NAME) / RUNS_DIR_NAME / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     
-    # Create subdirectories
+    # Create standard subdirectories
     (run_dir / "model").mkdir(exist_ok=True)
     (run_dir / "plots").mkdir(exist_ok=True)
     
     return run_dir
 
 
-def write_json_atomic(filepath: Path, data: Dict[str, Any]) -> None:
+def write_json_atomic(run_id: str, filename: str, data: dict) -> None:
     """
     Write JSON data to file atomically to prevent corruption.
+    Uses get_run_dir(run_id) to determine the base path.
     
     Args:
-        filepath: Target file path
+        run_id: Unique run identifier
+        filename: Name of the JSON file (e.g., 'metadata.json')
         data: Data to write as JSON
         
     Raises:
         IOError: If writing fails
     """
-    filepath = Path(filepath)
-    
-    # Ensure parent directory exists
-    filepath.parent.mkdir(parents=True, exist_ok=True)
+    run_dir = get_run_dir(run_id)
+    filepath = run_dir / filename
     
     # Write to temporary file first
     with tempfile.NamedTemporaryFile(
         mode='w', 
-        dir=filepath.parent, 
+        dir=run_dir, 
         delete=False,
         suffix='.tmp'
     ) as tmp_file:
@@ -95,17 +71,23 @@ def write_json_atomic(filepath: Path, data: Dict[str, Any]) -> None:
         raise IOError(f"Failed to write {filepath}: {e}")
 
 
-def read_json_safe(filepath: Path) -> Optional[Dict[str, Any]]:
+def read_json(run_id: str, filename: str) -> Optional[dict]:
     """
-    Safely read JSON data from file with error handling.
+    Read JSON data from file with error handling.
+    Uses get_run_dir(run_id) to determine the base path.
     
     Args:
-        filepath: File path to read from
+        run_id: Unique run identifier
+        filename: Name of the JSON file (e.g., 'metadata.json')
         
     Returns:
-        JSON data as dictionary, or None if file doesn't exist or is invalid
+        JSON data as dictionary, or None if file doesn't exist
+        
+    Raises:
+        IOError: If file exists but cannot be read or parsed
     """
-    filepath = Path(filepath)
+    run_dir = get_run_dir(run_id)
+    filepath = run_dir / filename
     
     if not filepath.exists():
         return None
@@ -114,64 +96,59 @@ def read_json_safe(filepath: Path) -> Optional[Dict[str, Any]]:
         with open(filepath, 'r') as f:
             return json.load(f)
     except (json.JSONDecodeError, IOError) as e:
-        print(f"Warning: Failed to read {filepath}: {e}")
-        return None
+        raise IOError(f"Failed to read {filepath}: {e}")
 
 
-def write_metadata(run_id: str, metadata: Dict[str, Any]) -> None:
+def append_to_run_index(run_entry_data: dict) -> None:
     """
-    Write metadata.json for a run atomically.
+    Append a new entry to the run index CSV file.
+    Creates the file and header if it doesn't exist.
     
     Args:
-        run_id: Unique run identifier
-        metadata: Metadata dictionary
+        run_entry_data: Dictionary representing a row (keys matching RunIndexEntry fields)
     """
-    run_dir = get_run_dir(run_id)
-    metadata_path = run_dir / METADATA_FILE
-    write_json_atomic(metadata_path, metadata)
-
-
-def read_metadata(run_id: str) -> Optional[Dict[str, Any]]:
-    """
-    Read metadata.json for a run.
+    run_index_path = Path(DATA_DIR_NAME) / RUNS_DIR_NAME / RUN_INDEX_FILENAME
     
-    Args:
-        run_id: Unique run identifier
+    # Ensure parent directory exists
+    run_index_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Check if file exists to determine if we need to write header
+    file_exists = run_index_path.exists()
+    
+    # Get field names from RunIndexEntry model
+    fieldnames = list(RunIndexEntry.model_fields.keys())
+    
+    # Open file in append mode
+    with open(run_index_path, 'a', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         
-    Returns:
-        Metadata dictionary or None if not found
-    """
-    run_dir = get_run_dir(run_id)
-    metadata_path = run_dir / METADATA_FILE
-    return read_json_safe(metadata_path)
-
-
-def write_status(run_id: str, status: Dict[str, Any]) -> None:
-    """
-    Write status.json for a run atomically.
-    
-    Args:
-        run_id: Unique run identifier
-        status: Status dictionary
-    """
-    run_dir = get_run_dir(run_id)
-    status_path = run_dir / STATUS_FILE
-    write_json_atomic(status_path, status)
-
-
-def read_status(run_id: str) -> Optional[Dict[str, Any]]:
-    """
-    Read status.json for a run.
-    
-    Args:
-        run_id: Unique run identifier
+        # Write header if file is new
+        if not file_exists:
+            writer.writeheader()
         
-    Returns:
-        Status dictionary or None if not found
-    """
-    run_dir = get_run_dir(run_id)
-    status_path = run_dir / STATUS_FILE
-    return read_json_safe(status_path)
+        # Write the data row
+        writer.writerow(run_entry_data)
+
+
+# Convenience functions for common operations
+def write_metadata(run_id: str, metadata: dict) -> None:
+    """Write metadata.json for a run."""
+    write_json_atomic(run_id, "metadata.json", metadata)
+
+
+def read_metadata(run_id: str) -> Optional[dict]:
+    """Read metadata.json for a run."""
+    return read_json(run_id, "metadata.json")
+
+
+def write_status(run_id: str, status: dict) -> None:
+    """Write status.json for a run."""
+    write_json_atomic(run_id, "status.json", status)
+
+
+def read_status(run_id: str) -> Optional[dict]:
+    """Read status.json for a run."""
+    return read_json(run_id, "status.json")
 
 
 def list_runs() -> List[str]:
@@ -181,56 +158,11 @@ def list_runs() -> List[str]:
     Returns:
         List of run ID strings
     """
-    if not RUNS_DIR.exists():
+    runs_dir = Path(DATA_DIR_NAME) / RUNS_DIR_NAME
+    if not runs_dir.exists():
         return []
         
-    return [d.name for d in RUNS_DIR.iterdir() if d.is_dir()]
-
-
-def get_latest_run() -> Optional[str]:
-    """
-    Get the most recently created run ID.
-    
-    Returns:
-        Latest run ID or None if no runs exist
-    """
-    runs = list_runs()
-    if not runs:
-        return None
-        
-    # Sort by directory creation time
-    run_dirs = [(run_id, get_run_dir(run_id).stat().st_ctime) for run_id in runs]
-    run_dirs.sort(key=lambda x: x[1], reverse=True)
-    
-    return run_dirs[0][0]
-
-
-def cleanup_run(run_id: str, confirm: bool = False) -> bool:
-    """
-    Delete all artifacts for a run.
-    
-    Args:
-        run_id: Unique run identifier
-        confirm: If True, actually delete the files
-        
-    Returns:
-        True if deletion was successful or would be successful
-    """
-    run_dir = get_run_dir(run_id)
-    
-    if not run_dir.exists():
-        return False
-        
-    if confirm:
-        try:
-            shutil.rmtree(run_dir)
-            return True
-        except Exception as e:
-            print(f"Failed to delete run {run_id}: {e}")
-            return False
-    else:
-        # Dry run - just check if deletion would be possible
-        return True
+    return [d.name for d in runs_dir.iterdir() if d.is_dir()]
 
 
 def get_artifact_path(run_id: str, artifact_name: str) -> Path:

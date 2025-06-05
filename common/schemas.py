@@ -3,11 +3,44 @@ Pydantic data models for The Projection Wizard.
 Defines schemas for metadata.json, status.json, and validation.json.
 """
 
-from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Union, Literal
 from pydantic import BaseModel, Field, validator
 
-from .constants import STATUS_VALUES, TASK_TYPES, ENCODING_ROLES
+from .constants import STATUS_VALUES, TASK_TYPES, ENCODING_ROLES, PIPELINE_STAGES
+
+
+class BaseMetadata(BaseModel):
+    """Base metadata for pipeline runs."""
+    run_id: str
+    timestamp: datetime
+    original_filename: str
+    initial_rows: Optional[int] = None
+    initial_cols: Optional[int] = None
+    initial_dtypes: Optional[Dict[str, str]] = None
+
+
+class StageStatus(BaseModel):
+    """Status information for a specific pipeline stage."""
+    stage: str
+    status: Literal['pending', 'in_progress', 'completed', 'failed']
+    message: Optional[str] = None
+    errors: Optional[List[str]] = None
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    
+    @validator('stage')
+    def validate_stage(cls, v):
+        if v not in PIPELINE_STAGES:
+            raise ValueError(f'stage must be one of {PIPELINE_STAGES}')
+        return v
+
+
+class RunIndexEntry(BaseModel):
+    """Entry for the run index CSV file."""
+    run_id: str
+    timestamp: datetime
+    original_filename: str
+    status: str  # Final status of the run, e.g., 'completed', 'failed_at_validation'
 
 
 class ColumnSchema(BaseModel):

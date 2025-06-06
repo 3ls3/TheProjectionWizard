@@ -1,0 +1,21 @@
+# Python artefacts
+__pycache__/
+*.pyc
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Virtualenvs
+.venv/
+env/
+venv/
+
+# Test artefacts & large local data
+data/
+tests/reports/
+
+# Git
+.git/
+.gitignore 

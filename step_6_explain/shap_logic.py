@@ -9,12 +9,82 @@ import pandas as pd
 import numpy as np
 import logging
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Optional, Union, Callable
 import warnings
 
 # Suppress some warnings that might come from SHAP/matplotlib
 warnings.filterwarnings('ignore', category=FutureWarning, module='shap')
 warnings.filterwarnings('ignore', category=UserWarning, module='matplotlib')
+
+
+def _create_prediction_function(pipeline: Any, task_type: str, logger: Optional[logging.Logger] = None) -> Callable:
+    """
+    Create an appropriate prediction function for SHAP based on available methods.
+    
+    Args:
+        pipeline: The model pipeline
+        task_type: "classification" or "regression"
+        logger: Optional logger
+        
+    Returns:
+        A callable function for SHAP to use for predictions
+    """
+    if logger is None:
+        logger = logging.getLogger(__name__)
+    
+    if task_type == "classification":
+        if hasattr(pipeline, 'predict_proba'):
+            logger.info("Using predict_proba for SHAP classification")
+            return pipeline.predict_proba
+        elif hasattr(pipeline, 'decision_function'):
+            logger.info("Using decision_function wrapper for SHAP classification")
+            
+            def decision_function_wrapper(X):
+                """Convert decision function output to probability-like format"""
+                decision_scores = pipeline.decision_function(X)
+                
+                # Handle different output shapes
+                if decision_scores.ndim == 1:
+                    # Binary classification: convert to 2D probabilities
+                    # Use sigmoid to convert to [0, 1] range
+                    proba_positive = 1 / (1 + np.exp(-decision_scores))
+                    proba_negative = 1 - proba_positive
+                    return np.column_stack([proba_negative, proba_positive])
+                else:
+                    # Multi-class: softmax transformation
+                    exp_scores = np.exp(decision_scores - np.max(decision_scores, axis=1, keepdims=True))
+                    return exp_scores / np.sum(exp_scores, axis=1, keepdims=True)
+            
+            return decision_function_wrapper
+        else:
+            # Fall back to predict and create dummy probabilities
+            logger.warning("Using predict with dummy probabilities for SHAP classification")
+            
+            def predict_wrapper(X):
+                """Convert class predictions to dummy probabilities"""
+                predictions = pipeline.predict(X)
+                # Create dummy probabilities: 0.9 for predicted class, 0.1 for others
+                unique_classes = np.unique(predictions)
+                n_classes = len(unique_classes)
+                n_samples = len(predictions)
+                
+                # Create probability matrix
+                probabilities = np.full((n_samples, n_classes), 0.1 / (n_classes - 1) if n_classes > 1 else 0.5)
+                
+                for i, pred in enumerate(predictions):
+                    class_idx = np.where(unique_classes == pred)[0][0]
+                    probabilities[i, class_idx] = 0.9
+                
+                return probabilities
+            
+            return predict_wrapper
+    
+    else:  # regression
+        if hasattr(pipeline, 'predict'):
+            logger.info("Using predict for SHAP regression")
+            return pipeline.predict
+        else:
+            raise ValueError("Pipeline has no suitable prediction method for regression")
 
 
 def generate_shap_summary_plot(
@@ -77,17 +147,12 @@ def generate_shap_summary_plot(
         logger.info("Creating SHAP explainer...")
         
         try:
-            if task_type == "classification":
-                # For classification, use predict_proba to get probability scores
-                logger.info("Creating SHAP explainer for classification with predict_proba")
-                explainer = shap.Explainer(pycaret_pipeline.predict_proba, X_sample)
-            elif task_type == "regression":
-                # For regression, use predict to get continuous values
-                logger.info("Creating SHAP explainer for regression with predict")
-                explainer = shap.Explainer(pycaret_pipeline.predict, X_sample)
-            else:
-                logger.error(f"Unsupported task type: {task_type}")
-                return False
+            # Get appropriate prediction function
+            prediction_function = _create_prediction_function(pycaret_pipeline, task_type, logger)
+            
+            # Create SHAP explainer
+            logger.info("Creating SHAP explainer with adaptive prediction function")
+            explainer = shap.Explainer(prediction_function, X_sample)
             
             logger.info("SHAP explainer created successfully")
             
@@ -96,16 +161,11 @@ def generate_shap_summary_plot(
             # Try fallback approach with Kernel explainer
             try:
                 logger.info("Attempting fallback with KernelExplainer...")
-                if task_type == "classification":
-                    explainer = shap.KernelExplainer(
-                        pycaret_pipeline.predict_proba, 
-                        shap.sample(X_sample, min(50, len(X_sample)))
-                    )
-                else:
-                    explainer = shap.KernelExplainer(
-                        pycaret_pipeline.predict, 
-                        shap.sample(X_sample, min(50, len(X_sample)))
-                    )
+                prediction_function = _create_prediction_function(pycaret_pipeline, task_type, logger)
+                explainer = shap.KernelExplainer(
+                    prediction_function, 
+                    shap.sample(X_sample, min(50, len(X_sample)))
+                )
                 logger.info("Fallback KernelExplainer created successfully")
             except Exception as e2:
                 logger.error(f"Fallback explainer also failed: {e2}")
@@ -274,8 +334,14 @@ def validate_shap_inputs(
     
     # Check if pipeline has required methods
     if pycaret_pipeline is not None:
-        if task_type == "classification" and not hasattr(pycaret_pipeline, 'predict_proba'):
-            issues.append("Pipeline missing predict_proba method required for classification")
+        if task_type == "classification":
+            # For classification, check for any usable prediction method
+            has_predict_proba = hasattr(pycaret_pipeline, 'predict_proba')
+            has_decision_function = hasattr(pycaret_pipeline, 'decision_function')
+            has_predict = hasattr(pycaret_pipeline, 'predict')
+            
+            if not (has_predict_proba or has_decision_function or has_predict):
+                issues.append("Pipeline missing prediction methods (predict_proba, decision_function, or predict) required for classification")
         elif task_type == "regression" and not hasattr(pycaret_pipeline, 'predict'):
             issues.append("Pipeline missing predict method required for regression")
     
@@ -315,15 +381,20 @@ def test_pipeline_prediction(
         test_sample = X_data_sample.head(min(5, len(X_data_sample)))
         
         if task_type == "classification":
-            # Test predict_proba
-            proba_result = pycaret_pipeline.predict_proba(test_sample)
-            logger.info(f"Prediction test passed - predict_proba shape: {proba_result.shape}")
+            # Test the prediction function that will be used by SHAP
+            try:
+                prediction_function = _create_prediction_function(pycaret_pipeline, task_type, logger)
+                result = prediction_function(test_sample)
+                logger.info(f"Prediction test passed - output shape: {result.shape}")
+                return True
+            except Exception as e:
+                logger.error(f"Classification prediction function test failed: {e}")
+                return False
         else:
-            # Test predict
+            # Test predict for regression
             pred_result = pycaret_pipeline.predict(test_sample)
             logger.info(f"Prediction test passed - predict shape: {pred_result.shape}")
-        
-        return True
+            return True
         
     except Exception as e:
         logger.error(f"Pipeline prediction test failed: {e}")

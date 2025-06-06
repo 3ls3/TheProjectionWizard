@@ -19,6 +19,7 @@ TheProjectionWizard/
 │   ├── runs/              # Run-specific artifacts
 │   └── fixtures/          # Sample data for testing
 ├── requirements.txt
+├── pyproject.toml
 └── README.md
 ```
 
@@ -61,7 +62,7 @@ pip install -r requirements.txt
 
 ### Running the Streamlit App
 ```bash
-streamlit run ui/main.py
+streamlit run app.py
 ```
 
 ### Running the CLI Pipeline (Headless)
@@ -94,11 +95,18 @@ The CLI runner will:
 
 ### Running Tests
 ```bash
-# Run the main smoke test
-python scripts/run_smoke_test.py
+# Run health check (comprehensive project validation)
+python scripts/health_check.py
 
-# Test the CLI runner specifically
+# Test the CLI runner functionality
 python scripts/test_cli_runner.py
+
+# Test common utilities
+python scripts/test_common.py
+
+# Individual component tests (examples)
+python step_1_ingest/test_ingest_logic.py
+python step_3_validation/test_ge_logic.py
 ```
 
 ## Development
@@ -144,12 +152,44 @@ The system maintains a CSV-based run index at `data/runs/index.csv` that logs ke
 
 This index enables tracking of all pipeline executions and can be used for run history analysis.
 
+### Testing Strategy
+
+The project includes multiple levels of testing:
+
+1. **Component Tests**: Individual module tests (e.g., `test_ingest_logic.py`, `test_ge_logic.py`)
+2. **CLI Integration Test**: End-to-end pipeline testing via `test_cli_runner.py`
+3. **Common Utilities Test**: Core functionality testing via `test_common.py`
+
+Each step directory contains its own test files to verify the logic independent of the UI.
+
+## Project Structure Details
+
+### Step Modules
+- `step_1_ingest/`: Handles CSV upload and initial data analysis
+- `step_2_schema/`: Target definition and feature schema confirmation
+- `step_3_validation/`: Great Expectations data validation
+- `step_4_prep/`: Data cleaning and feature encoding
+- `step_5_automl/`: PyCaret model training and evaluation
+- `step_6_explain/`: SHAP-based model explainability
+
+### Common Utilities
+- `common/constants.py`: Project-wide constants and configuration
+- `common/schemas.py`: Pydantic models for data validation
+- `common/storage.py`: File I/O and atomic operations
+- `common/logger.py`: Run-scoped logging utilities
+- `common/utils.py`: General utility functions
+
+### UI Pages
+- `ui/01_upload_page.py` through `ui/08_results_page.py`: Streamlit page components
+- `app.py`: Main Streamlit application entry point
+
 ## Contributing
 
 1. Create feature branches for new functionality
 2. Ensure all tests pass before submitting PRs
 3. Follow the established code style guidelines
 4. Update documentation for new features
+5. Test both UI and CLI interfaces for any changes
 
 ## License
 

@@ -45,10 +45,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/your-org/projection-wizard"
-Documentation = "https://github.com/your-org/projection-wizard#readme"
-Repository = "https://github.com/your-org/projection-wizard.git"
-"Bug Tracker" = "https://github.com/your-org/projection-wizard/issues"
+Homepage = "https://github.com/projection-wizard/projection-wizard"
+Documentation = "https://github.com/projection-wizard/projection-wizard#readme"
+Repository = "https://github.com/projection-wizard/projection-wizard.git"
+"Bug Tracker" = "https://github.com/projection-wizard/projection-wizard/issues"
 
 [tool.black]
 line-length = 88

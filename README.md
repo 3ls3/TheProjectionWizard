@@ -64,9 +64,41 @@ pip install -r requirements.txt
 streamlit run ui/main.py
 ```
 
+### Running the CLI Pipeline (Headless)
+
+The CLI runner allows you to execute the entire pipeline from command line without UI interaction:
+
+```bash
+# Basic usage with auto-detection
+python scripts/run_pipeline_cli.py --csv data/fixtures/sample_classification.csv
+
+# Specify target column and task type
+python scripts/run_pipeline_cli.py --csv data.csv --target price --task regression
+
+# Full specification
+python scripts/run_pipeline_cli.py --csv data.csv --target category --task classification --target-ml-type multiclass_text_labels
+```
+
+**CLI Options:**
+- `--csv`: Path to input CSV file (required)
+- `--target`: Target column name (optional, auto-detected if not provided)
+- `--task`: Task type - `classification` or `regression` (optional, auto-detected)
+- `--target-ml-type`: ML-ready type for target encoding (optional, auto-detected)
+- `--output-dir`: Base directory for outputs (default: `data/runs`)
+
+The CLI runner will:
+1. Execute all pipeline stages sequentially
+2. Generate all standard artifacts (cleaned data, models, reports)
+3. Update the run index with results
+4. Provide detailed progress output and error reporting
+
 ### Running Tests
 ```bash
+# Run the main smoke test
 python scripts/run_smoke_test.py
+
+# Test the CLI runner specifically
+python scripts/test_cli_runner.py
 ```
 
 ## Development
@@ -101,6 +133,16 @@ Each run creates a unique directory under `data/runs/<run_id>/` containing:
 - `validation.json`: Data validation results
 - `model/`: Trained model artifacts
 - `plots/`: Generated visualizations
+
+### Run Index
+
+The system maintains a CSV-based run index at `data/runs/index.csv` that logs key details of each pipeline run:
+- `run_id`: Unique identifier for the run
+- `timestamp`: When the run was initiated
+- `original_filename`: Name of the uploaded CSV file
+- `status`: Final status (e.g., "Completed Successfully", "Failed at AutoML")
+
+This index enables tracking of all pipeline executions and can be used for run history analysis.
 
 ## Contributing
 

@@ -326,7 +326,7 @@ class TestFixtureGenerator:
         # Add validation info (as if validation passed)
         metadata["validation_info"] = {
             "passed": True,
-            "report_path": constants.VALIDATION_FILENAME,
+            "report_filename": constants.VALIDATION_FILENAME,
             "total_expectations_evaluated": 5,
             "successful_expectations": 5
         }
@@ -384,7 +384,7 @@ class TestFixtureGenerator:
         metadata["feature_schemas"] = self.create_feature_schemas(task_type, target_col)
         metadata["validation_info"] = {
             "passed": True,
-            "report_path": constants.VALIDATION_FILENAME,
+            "report_filename": constants.VALIDATION_FILENAME,
             "total_expectations_evaluated": 5,
             "successful_expectations": 5
         }
@@ -460,7 +460,7 @@ class TestFixtureGenerator:
         metadata["feature_schemas"] = self.create_feature_schemas(task_type, target_col)
         metadata["validation_info"] = {
             "passed": True,
-            "report_path": constants.VALIDATION_FILENAME,
+            "report_filename": constants.VALIDATION_FILENAME,
             "total_expectations_evaluated": 5,
             "successful_expectations": 5
         }

@@ -94,7 +94,7 @@ def run_validation_stage(run_id: str) -> bool:
         # Update metadata.json
         validation_info = {
             'passed': validation_summary['overall_success'], 
-            'report_path': constants.VALIDATION_FILENAME,
+            'report_filename': constants.VALIDATION_FILENAME,
             'total_expectations_evaluated': validation_summary['total_expectations'],
             'successful_expectations': validation_summary['successful_expectations']
         }

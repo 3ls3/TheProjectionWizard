@@ -83,7 +83,11 @@ def show_results_page():
             except Exception as e:
                 st.warning(f"Could not parse metadata structure: {e}")
                 # Try to access as plain dict if Pydantic fails
-                metadata = type('obj', (object,), metadata_dict)
+                # Create a simple object that allows attribute access
+                class SimpleNamespace:
+                    def __init__(self, **kwargs):
+                        self.__dict__.update(kwargs)
+                metadata = SimpleNamespace(**metadata_dict)
         
         if status_dict:
             try:

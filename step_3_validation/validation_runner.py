@@ -25,7 +25,7 @@ def run_validation_stage(run_id: str) -> bool:
         True if successful, False otherwise
     """
     # Get Logger
-    logger_instance = logger.get_logger(run_id, "validation_stage")
+    logger_instance = logger.get_stage_logger(run_id, constants.VALIDATION_STAGE)
     
     try:
         logger_instance.info(f"Starting validation stage for run {run_id}")

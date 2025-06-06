@@ -29,7 +29,7 @@ def run_automl_stage(run_id: str) -> bool:
         True if stage completes successfully, False otherwise
     """
     # Get logger for this run and stage
-    log = logger.get_logger(run_id, "automl_stage")
+    log = logger.get_stage_logger(run_id, constants.AUTOML_STAGE)
     
     try:
         # Log stage start
@@ -279,7 +279,7 @@ def _update_status_failed(run_id: str, error_message: str) -> None:
         storage.write_json_atomic(run_id, constants.STATUS_FILENAME, status_data)
     except Exception as e:
         # If we can't even update status, log it but don't raise
-        log = logger.get_logger(run_id, "automl_stage")
+        log = logger.get_stage_logger(run_id, constants.AUTOML_STAGE)
         log.error(f"Could not update status to failed: {e}")
 
 
@@ -293,7 +293,7 @@ def validate_automl_stage_inputs(run_id: str) -> bool:
     Returns:
         True if all inputs are valid, False otherwise
     """
-    log = logger.get_logger(run_id, "automl_stage_validation")
+    log = logger.get_stage_logger(run_id, constants.AUTOML_STAGE)
     
     try:
         # Check if run directory exists

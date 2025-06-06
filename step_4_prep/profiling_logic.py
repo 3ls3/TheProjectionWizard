@@ -11,6 +11,7 @@ import signal
 import time
 
 from common import logger
+from common import constants
 
 
 class TimeoutError(Exception):
@@ -56,7 +57,7 @@ def generate_profile_report_with_timeout(df_final_prepared: pd.DataFrame,
         
     except TimeoutError:
         # Create logger for timeout error
-        log = logger.get_logger("profiling_temp", "profiling")
+        log = logger.get_stage_logger(run_id, constants.PREP_STAGE) if run_id else logger.get_logger("profiling_temp", "profiling")
         log.error(f"Profile generation timed out after {timeout_seconds} seconds")
         
         # Clean up partial file if it exists
@@ -74,7 +75,7 @@ def generate_profile_report_with_timeout(df_final_prepared: pd.DataFrame,
         if hasattr(signal, 'SIGALRM'):
             signal.alarm(0)
         
-        log = logger.get_logger("profiling_temp", "profiling")
+        log = logger.get_stage_logger(run_id, constants.PREP_STAGE) if run_id else logger.get_logger("profiling_temp", "profiling")
         log.error(f"Profile generation failed with exception: {str(e)}")
         return False
     
@@ -108,7 +109,7 @@ def generate_profile_report(df_final_prepared: pd.DataFrame,
                 from pandas_profiling import ProfileReport
             except ImportError:
                 # Create logger for error reporting
-                log = logger.get_logger("profiling_temp", "profiling")
+                log = logger.get_stage_logger(run_id, constants.PREP_STAGE) if run_id else logger.get_logger("profiling_temp", "profiling")
                 log.error("Neither ydata-profiling nor pandas-profiling is installed. "
                          "Please install with: pip install ydata-profiling")
                 return False
@@ -117,7 +118,7 @@ def generate_profile_report(df_final_prepared: pd.DataFrame,
         report_path.parent.mkdir(parents=True, exist_ok=True)
         
         # Create a simple logger for this function since we don't have run_id
-        log = logger.get_logger("profiling_temp", "profiling")
+        log = logger.get_stage_logger(run_id, constants.PREP_STAGE) if run_id else logger.get_logger("profiling_temp", "profiling")
         
         # Log start of profiling
         log.info(f"Starting profile report generation for '{title}'")
@@ -170,7 +171,7 @@ def generate_profile_report(df_final_prepared: pd.DataFrame,
             
     except Exception as e:
         # Create logger in exception handler too
-        log = logger.get_logger("profiling_temp", "profiling")
+        log = logger.get_stage_logger(run_id, constants.PREP_STAGE) if run_id else logger.get_logger("profiling_temp", "profiling")
         log.error(f"Failed to generate profile report: {str(e)}")
         log.error(f"Error type: {type(e).__name__}")
         
@@ -202,7 +203,7 @@ def generate_profile_report_with_fallback(df_final_prepared: pd.DataFrame,
         True if report generation successful, False otherwise
     """
     # Get logger with optional run context
-    log = logger.get_logger(run_id, "prep_profiling_stage") if run_id else logger.get_logger("profiling_temp", "profiling")
+    log = logger.get_stage_logger(run_id, constants.PREP_STAGE) if run_id else logger.get_logger("profiling_temp", "profiling")
     
     # First attempt: Full profile report with timeout protection
     log.info(f"Attempting full profile report generation for '{title}' (with 5-minute timeout)")

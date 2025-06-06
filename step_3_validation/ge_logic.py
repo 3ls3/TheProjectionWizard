@@ -181,7 +181,7 @@ def generate_ge_suite_from_metadata(
         Dictionary representing a Great Expectations expectation suite
     """
     # Initialize logger for this function
-    run_logger = logger.get_logger(run_id, "validation_ge_suite_generation")
+    run_logger = logger.get_stage_logger(run_id, constants.VALIDATION_STAGE)
     
     expectations = []
     
@@ -325,7 +325,7 @@ def run_ge_validation_on_dataframe(df: pd.DataFrame, ge_suite: dict, run_id: str
         Dictionary representing the Great Expectations validation results
     """
     # Initialize logger for this function
-    run_logger = logger.get_logger(run_id, "validation_ge_execution")
+    run_logger = logger.get_stage_logger(run_id, constants.VALIDATION_STAGE)
     
     try:
         # Suppress Great Expectations warnings for cleaner output

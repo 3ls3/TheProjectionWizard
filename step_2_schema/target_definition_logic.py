@@ -119,7 +119,7 @@ def confirm_target_definition(run_id: str, confirmed_target_column: str,
         True if successful, False otherwise
     """
     # Get logger
-    run_logger = logger.get_logger(run_id, "schema_target_stage")
+    run_logger = logger.get_stage_logger(run_id, constants.SCHEMA_STAGE)
     
     # Validate inputs
     if confirmed_task_type not in constants.TASK_TYPES:

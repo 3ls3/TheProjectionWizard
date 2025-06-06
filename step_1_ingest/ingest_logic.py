@@ -30,8 +30,8 @@ def run_ingestion(uploaded_file_object: Union[BinaryIO, object], base_runs_path_
     # Generate run_id
     run_id = utils.generate_run_id()
     
-    # Get logger
-    logger_instance = logger.get_logger(run_id=run_id, logger_name="ingest_stage")
+    # Setup logging for this run
+    logger_instance = logger.get_stage_logger(run_id=run_id, stage=constants.INGEST_STAGE)
     logger_instance.info("Starting data ingestion process")
     
     # Initialize variables for error handling

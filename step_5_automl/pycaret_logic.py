@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import traceback
 
-from common import logger
+from common import logger, constants
 
 
 def run_pycaret_experiment(
@@ -39,7 +39,7 @@ def run_pycaret_experiment(
         Returns (None, None, None) if any step fails
     """
     # Get logger for this run
-    log = logger.get_logger(run_id, "pycaret_logic")
+    log = logger.get_stage_logger(run_id, constants.AUTOML_STAGE)
     
     try:
         log.info(f"Starting PyCaret experiment for {task_type} task")

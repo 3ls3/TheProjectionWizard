@@ -40,7 +40,7 @@ def encode_features(df_cleaned: pd.DataFrame,
     encoders_scalers_info = {}
     
     # Get logger for this run
-    run_logger = logger.get_logger(run_id, "prep_encoding_stage")
+    run_logger = logger.get_stage_logger(run_id, constants.PREP_STAGE)
     
     # Create model artifacts directory
     model_artefacts_dir = storage.get_run_dir(run_id) / constants.MODEL_DIR

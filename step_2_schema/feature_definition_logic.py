@@ -291,7 +291,7 @@ def confirm_feature_schemas(run_id: str, user_confirmed_schemas: Dict[str, Dict[
         True if successful, False otherwise
     """
     # Get logger
-    run_logger = logger.get_logger(run_id, "schema_feature_stage")
+    run_logger = logger.get_stage_logger(run_id, constants.SCHEMA_STAGE)
     
     try:
         # Read existing metadata.json

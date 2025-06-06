@@ -19,7 +19,8 @@ def run_pycaret_experiment(
     pycaret_model_dir: Path,
     session_id: int = 123,
     top_n_models_to_compare: int = 3,
-    allow_lightgbm_and_xgboost: bool = True
+    allow_lightgbm_and_xgboost: bool = True,
+    test_mode: bool = False
 ) -> Tuple[Optional[Any], Optional[dict], Optional[str]]:
     """
     Run PyCaret AutoML experiment for classification or regression.
@@ -33,6 +34,7 @@ def run_pycaret_experiment(
         session_id: Integer for PyCaret reproducibility
         top_n_models_to_compare: How many top models from compare_models to consider
         allow_lightgbm_and_xgboost: Flag to include/exclude potentially problematic models
+        test_mode: Flag to allow AutoML to work with very small datasets for testing purposes
         
     Returns:
         Tuple of (final_pycaret_pipeline, performance_metrics, best_model_name_str)
@@ -48,8 +50,10 @@ def run_pycaret_experiment(
         log.info(f"Session ID: {session_id}")
         log.info(f"Top N models to compare: {top_n_models_to_compare}")
         log.info(f"Allow LightGBM/XGBoost: {allow_lightgbm_and_xgboost}")
+        if test_mode:
+            log.warning("TEST MODE ENABLED - allowing very small datasets")
         
-        # Validate inputs
+        # Basic validation (always performed)
         if df_ml_ready.empty:
             log.error("Input DataFrame is empty")
             return None, None, None
@@ -62,6 +66,22 @@ def run_pycaret_experiment(
         if task_type not in ["classification", "regression"]:
             log.error(f"Invalid task_type: {task_type}. Must be 'classification' or 'regression'")
             return None, None, None
+        
+        # Full validation (unless in test mode)
+        if not test_mode:
+            is_valid, validation_issues = validate_pycaret_inputs(
+                df_ml_ready=df_ml_ready,
+                target_column_name=target_column_name,
+                task_type=task_type
+            )
+            
+            if not is_valid:
+                log.error("Input validation failed for PyCaret:")
+                for issue in validation_issues:
+                    log.error(f"  - {issue}")
+                return None, None, None
+        else:
+            log.warning("Skipping dataset size validation due to test mode")
         
         # Check for missing values in target
         target_nulls = df_ml_ready[target_column_name].isnull().sum()
@@ -130,33 +150,58 @@ def run_pycaret_experiment(
                 exclude_models = ['lightgbm', 'xgboost']
                 log.info(f"Excluding models: {exclude_models}")
             
+            # Adjust cross-validation folds based on dataset size
+            n_rows = len(df_ml_ready)
+            if test_mode and n_rows < 30:
+                cv_folds = 2  # 2-fold for very small test datasets
+                log.warning(f"Using minimal {cv_folds}-fold CV in test mode for {n_rows} rows")
+            elif n_rows < 50:
+                cv_folds = 3  # 3-fold for small datasets
+            elif n_rows < 100:
+                cv_folds = 5  # Default 5-fold for medium datasets
+            else:
+                cv_folds = 5  # 5-fold for larger datasets
+            
+            log.info(f"Using {cv_folds}-fold cross-validation for dataset with {n_rows} rows")
+            
             # Compare models to find the best ones
             if exclude_models:
                 top_models = compare_models(
                     n_select=top_n_models_to_compare,
                     exclude=exclude_models,
                     verbose=False,
-                    fold=5
+                    fold=cv_folds
                 )
             else:
                 top_models = compare_models(
                     n_select=top_n_models_to_compare,
                     verbose=False,
-                    fold=5
+                    fold=cv_folds
                 )
             
             log.info(f"Model comparison completed, got {len(top_models) if isinstance(top_models, list) else 1} model(s)")
             
             # Handle single model vs list of models
             if not isinstance(top_models, list):
-                best_initial_model = top_models
-                log.info("Single model returned from compare_models")
+                if top_models is None:
+                    log.error("No models returned from compare_models - creating fallback model")
+                    # Create a simple fallback model
+                    best_initial_model = _create_fallback_model(task_type, log)
+                    if best_initial_model is None:
+                        return None, None, None
+                else:
+                    best_initial_model = top_models
+                    log.info("Single model returned from compare_models")
             else:
                 if len(top_models) == 0:
-                    log.error("No models returned from compare_models")
-                    return None, None, None
-                best_initial_model = top_models[0]
-                log.info(f"Using first model from {len(top_models)} compared models")
+                    log.error("No models returned from compare_models - creating fallback model")
+                    # Create a simple fallback model
+                    best_initial_model = _create_fallback_model(task_type, log)
+                    if best_initial_model is None:
+                        return None, None, None
+                else:
+                    best_initial_model = top_models[0]
+                    log.info(f"Using first model from {len(top_models)} compared models")
             
             # Get model name
             try:
@@ -341,8 +386,9 @@ def validate_pycaret_inputs(
         issues.append(f"Invalid task_type: {task_type}")
     
     # Check for minimum rows
-    if len(df_ml_ready) < 10:
-        issues.append(f"Dataset too small: {len(df_ml_ready)} rows (minimum 10 required)")
+    MIN_ROWS_FOR_ML = 30  # Increased from 10 to 30 for reliable cross-validation
+    if len(df_ml_ready) < MIN_ROWS_FOR_ML:
+        issues.append(f"Dataset too small: {len(df_ml_ready)} rows (minimum {MIN_ROWS_FOR_ML} required for reliable AutoML)")
     
     # Check for minimum features
     if len(df_ml_ready.columns) < 2:
@@ -364,3 +410,35 @@ def validate_pycaret_inputs(
             issues.append(f"Target column has insufficient variability: {unique_targets} unique values")
     
     return len(issues) == 0, issues 
+
+
+def _create_fallback_model(task_type: str, log):
+    """
+    Create a simple fallback model when PyCaret's compare_models fails.
+    
+    Args:
+        task_type: "classification" or "regression"
+        log: Logger instance
+        
+    Returns:
+        A simple model or None if creation fails
+    """
+    try:
+        log.info(f"Creating fallback model for {task_type}")
+        
+        if task_type == "classification":
+            from pycaret.classification import create_model
+            # Use a simple, robust classifier
+            fallback_model = create_model('lr')  # Logistic Regression
+            log.info("Created fallback Logistic Regression model")
+        else:  # regression
+            from pycaret.regression import create_model
+            # Use a simple, robust regressor
+            fallback_model = create_model('lr')  # Linear Regression
+            log.info("Created fallback Linear Regression model")
+        
+        return fallback_model
+        
+    except Exception as e:
+        log.error(f"Failed to create fallback model: {e}")
+        return None

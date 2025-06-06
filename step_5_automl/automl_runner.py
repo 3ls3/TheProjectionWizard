@@ -12,7 +12,7 @@ from common import logger, storage, constants, schemas
 from . import pycaret_logic
 
 
-def run_automl_stage(run_id: str) -> bool:
+def run_automl_stage(run_id: str, test_mode: bool = False) -> bool:
     """
     Execute the complete AutoML stage for a given run.
     
@@ -24,6 +24,7 @@ def run_automl_stage(run_id: str) -> bool:
     
     Args:
         run_id: Unique run identifier
+        test_mode: Flag to allow AutoML to work with very small datasets for testing purposes
         
     Returns:
         True if stage completes successfully, False otherwise
@@ -123,28 +124,31 @@ def run_automl_stage(run_id: str) -> bool:
         # =============================
         # 2. VALIDATE INPUTS FOR PYCARET
         # =============================
-        log.info("Validating inputs for PyCaret...")
-        
-        try:
-            is_valid, validation_issues = pycaret_logic.validate_pycaret_inputs(
-                df_ml_ready=df_ml_ready,
-                target_column_name=target_info.name,
-                task_type=target_info.task_type
-            )
+        if not test_mode:
+            log.info("Validating inputs for PyCaret...")
             
-            if not is_valid:
-                log.error("Input validation failed for PyCaret:")
-                for issue in validation_issues:
-                    log.error(f"  - {issue}")
-                _update_status_failed(run_id, f"Input validation failed: {'; '.join(validation_issues)}")
+            try:
+                is_valid, validation_issues = pycaret_logic.validate_pycaret_inputs(
+                    df_ml_ready=df_ml_ready,
+                    target_column_name=target_info.name,
+                    task_type=target_info.task_type
+                )
+                
+                if not is_valid:
+                    log.error("Input validation failed for PyCaret:")
+                    for issue in validation_issues:
+                        log.error(f"  - {issue}")
+                    _update_status_failed(run_id, f"Input validation failed: {'; '.join(validation_issues)}")
+                    return False
+                
+                log.info("Input validation passed for PyCaret")
+                
+            except Exception as e:
+                log.error(f"Input validation error: {e}")
+                _update_status_failed(run_id, f"Input validation error: {str(e)}")
                 return False
-            
-            log.info("Input validation passed for PyCaret")
-            
-        except Exception as e:
-            log.error(f"Input validation error: {e}")
-            _update_status_failed(run_id, f"Input validation error: {str(e)}")
-            return False
+        else:
+            log.warning("Skipping PyCaret input validation due to test mode")
         
         # =============================
         # 3. RUN PYCARET AUTOML EXPERIMENT
@@ -164,7 +168,8 @@ def run_automl_stage(run_id: str) -> bool:
                 pycaret_model_dir=pycaret_model_dir,
                 session_id=session_id,
                 top_n_models_to_compare=3,  # Can be configured later
-                allow_lightgbm_and_xgboost=True  # Allow all models by default
+                allow_lightgbm_and_xgboost=True,  # Allow all models by default
+                test_mode=test_mode
             )
             
         except Exception as e:

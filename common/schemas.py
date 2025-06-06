@@ -148,9 +148,26 @@ class AutoMLInfo(BaseModel):
     dataset_shape_for_training: Optional[List[int]] = None
 
 
+class ExplainInfo(BaseModel):
+    """Information about the explainability stage results."""
+    tool_used: str = Field(..., description="Explainability tool used (e.g., 'SHAP')")
+    explanation_type: str = Field(..., description="Type of explanation generated (e.g., 'global_summary')")
+    shap_summary_plot_path: Optional[str] = None  # Path relative to run_dir, e.g., "plots/shap_summary.png"
+    explain_completed_at: Optional[str] = None
+    target_column: Optional[str] = None  # For display convenience
+    task_type: Optional[str] = None      # For display convenience
+    features_explained: Optional[int] = None
+    samples_used_for_explanation: Optional[int] = None
+
+
 class MetadataWithAutoML(MetadataWithFullSchema):
     """Metadata model that includes AutoML information in addition to prep results."""
     automl_info: Optional[AutoMLInfo] = None
+
+
+class MetadataWithExplain(MetadataWithAutoML):
+    """Metadata model that includes explainability information in addition to AutoML results."""
+    explain_info: Optional[ExplainInfo] = None
 
 
 class DetailedTargetInfo(BaseModel):

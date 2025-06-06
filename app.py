@@ -19,6 +19,7 @@ schema_page_module = importlib.import_module('ui.03_schema_page')
 validation_page_module = importlib.import_module('ui.04_validation_page')
 prep_page_module = importlib.import_module('ui.05_prep_page')
 automl_page_module = importlib.import_module('ui.06_automl_page')
+explain_page_module = importlib.import_module('ui.07_explain_page')
 
 
 def get_page_config():
@@ -140,7 +141,22 @@ def show_navigation_sidebar():
     else:
         st.sidebar.button("📊 Model Explanation", disabled=True, help="Complete model training first")
     
-    st.sidebar.button("📈 Results", disabled=True, help="Complete model explanation first")
+    # Check if explainability analysis is complete
+    explain_complete = False
+    if 'run_id' in st.session_state:
+        try:
+            from common import storage, constants
+            status_data = storage.read_json(st.session_state['run_id'], constants.STATUS_FILENAME)
+            explain_complete = (status_data and 
+                              status_data.get('stage') == constants.EXPLAIN_STAGE and 
+                              status_data.get('status') == 'completed')
+        except:
+            explain_complete = False
+    
+    if explain_complete:
+        st.sidebar.button("📈 Results", use_container_width=True)
+    else:
+        st.sidebar.button("📈 Results", disabled=True, help="Complete model explanation first")
 
 
 def route_to_page():
@@ -164,6 +180,8 @@ def route_to_page():
         prep_page_module.show_prep_page()
     elif current_page == 'automl':
         automl_page_module.show_automl_page()
+    elif current_page == 'explain':
+        explain_page_module.show_explain_page()
     else:
         st.error(f"Page '{current_page}' is not yet implemented.")
         st.info("Please use the navigation sidebar to go to an available page.")

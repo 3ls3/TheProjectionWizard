@@ -1,0 +1,437 @@
+"""
+Explainability Stage Runner for The Projection Wizard.
+Orchestrates the complete model explainability stage using SHAP for global explanations.
+"""
+
+import pandas as pd
+import joblib
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional, Tuple
+
+from common import logger, storage, constants, schemas
+from . import shap_logic
+
+
+def run_explainability_stage(run_id: str) -> bool:
+    """
+    Execute the complete explainability stage for a given run.
+    
+    This function orchestrates:
+    1. Loading inputs (metadata.json, pycaret_pipeline.pkl, cleaned_data.csv)
+    2. Running SHAP analysis to generate global summary plot
+    3. Saving plot and updating metadata with explainability info
+    4. Updating pipeline status
+    
+    Args:
+        run_id: Unique run identifier
+        
+    Returns:
+        True if stage completes successfully, False otherwise
+    """
+    # Get logger for this run and stage
+    log = logger.get_logger(run_id, "explainability_stage")
+    
+    try:
+        # Log stage start
+        log.info(f"Starting explainability stage for run {run_id}")
+        log.info("="*50)
+        log.info("EXPLAINABILITY STAGE - SHAP GLOBAL ANALYSIS")
+        log.info("="*50)
+        
+        # Update status to running
+        try:
+            status_data = {
+                "stage": constants.EXPLAIN_STAGE,
+                "status": "running",
+                "message": "Model explainability analysis in progress..."
+            }
+            storage.write_json_atomic(run_id, constants.STATUS_FILENAME, status_data)
+        except Exception as e:
+            log.warning(f"Could not update status to running: {e}")
+        
+        # =============================
+        # 1. LOAD AND VALIDATE INPUTS
+        # =============================
+        log.info("Loading inputs: metadata, model pipeline, and cleaned data")
+        
+        # Load metadata.json
+        try:
+            metadata_dict = storage.read_json(run_id, constants.METADATA_FILENAME)
+        except Exception as e:
+            log.error(f"Failed to load metadata.json: {e}")
+            _update_status_failed(run_id, f"Failed to load metadata: {str(e)}")
+            return False
+        
+        if not metadata_dict:
+            log.error("metadata.json is empty or invalid")
+            _update_status_failed(run_id, "Empty or invalid metadata")
+            return False
+        
+        # Get run directory
+        run_dir = storage.get_run_dir(run_id)
+        
+        # Validate required metadata components
+        validation_success, metadata_components = _validate_metadata_for_explainability(
+            metadata_dict, log
+        )
+        if not validation_success:
+            _update_status_failed(run_id, "Invalid metadata for explainability stage")
+            return False
+        
+        target_info, automl_info = metadata_components
+        
+        # Load PyCaret pipeline
+        try:
+            pycaret_pipeline_path = run_dir / automl_info.pycaret_pipeline_path
+            
+            if not pycaret_pipeline_path.exists():
+                log.error(f"PyCaret pipeline not found: {pycaret_pipeline_path}")
+                _update_status_failed(run_id, "PyCaret pipeline file not found")
+                return False
+            
+            log.info(f"Loading PyCaret pipeline from: {pycaret_pipeline_path}")
+            pycaret_pipeline = joblib.load(pycaret_pipeline_path)
+            log.info("PyCaret pipeline loaded successfully")
+            
+        except Exception as e:
+            log.error(f"Failed to load PyCaret pipeline: {e}")
+            _update_status_failed(run_id, f"Failed to load model pipeline: {str(e)}")
+            return False
+        
+        # Load cleaned data
+        try:
+            cleaned_data_path = run_dir / constants.CLEANED_DATA_FILE
+            
+            if not cleaned_data_path.exists():
+                log.error(f"Cleaned data file not found: {cleaned_data_path}")
+                _update_status_failed(run_id, "Cleaned data file not found")
+                return False
+            
+            df_ml_ready = pd.read_csv(cleaned_data_path)
+            log.info(f"Loaded cleaned data: shape {df_ml_ready.shape}")
+            
+            if df_ml_ready.empty:
+                log.error("Cleaned data is empty")
+                _update_status_failed(run_id, "Cleaned data file is empty")
+                return False
+            
+        except Exception as e:
+            log.error(f"Failed to load cleaned data: {e}")
+            _update_status_failed(run_id, f"Failed to read cleaned data: {str(e)}")
+            return False
+        
+        # Prepare feature data (remove target column)
+        target_column = target_info.name
+        if target_column not in df_ml_ready.columns:
+            log.error(f"Target column '{target_column}' not found in cleaned data")
+            _update_status_failed(run_id, f"Target column '{target_column}' not found")
+            return False
+        
+        X_data = df_ml_ready.drop(columns=[target_column])
+        log.info(f"Feature data prepared: {X_data.shape} (removed target column '{target_column}')")
+        
+        # =============================
+        # 2. VALIDATE INPUTS FOR SHAP
+        # =============================
+        log.info("Validating inputs for SHAP analysis...")
+        
+        try:
+            is_valid, validation_issues = shap_logic.validate_shap_inputs(
+                pycaret_pipeline=pycaret_pipeline,
+                X_data_sample=X_data,
+                task_type=target_info.task_type,
+                logger=log
+            )
+            
+            if not is_valid:
+                log.error("SHAP input validation failed:")
+                for issue in validation_issues:
+                    log.error(f"  - {issue}")
+                _update_status_failed(run_id, f"SHAP validation failed: {'; '.join(validation_issues)}")
+                return False
+            
+            log.info("SHAP input validation passed")
+            
+        except Exception as e:
+            log.error(f"SHAP input validation error: {e}")
+            _update_status_failed(run_id, f"SHAP validation error: {str(e)}")
+            return False
+        
+        # Test pipeline prediction capability
+        log.info("Testing pipeline prediction capability...")
+        try:
+            if not shap_logic.test_pipeline_prediction(
+                pycaret_pipeline, X_data, target_info.task_type, log
+            ):
+                log.error("Pipeline prediction test failed")
+                _update_status_failed(run_id, "Model pipeline prediction test failed")
+                return False
+            
+            log.info("Pipeline prediction test passed")
+            
+        except Exception as e:
+            log.error(f"Pipeline prediction test error: {e}")
+            _update_status_failed(run_id, f"Pipeline prediction test error: {str(e)}")
+            return False
+        
+        # =============================
+        # 3. GENERATE SHAP SUMMARY PLOT
+        # =============================
+        log.info("Generating SHAP summary plot...")
+        
+        # Create plots directory and define plot path
+        plots_dir = run_dir / constants.PLOTS_DIR
+        plots_dir.mkdir(exist_ok=True)
+        plot_save_path = plots_dir / constants.SHAP_SUMMARY_PLOT
+        
+        log.info(f"SHAP plot will be saved to: {plot_save_path}")
+        
+        try:
+            # Generate SHAP summary plot
+            plot_success = shap_logic.generate_shap_summary_plot(
+                pycaret_pipeline=pycaret_pipeline,
+                X_data_sample=X_data,
+                plot_save_path=plot_save_path,
+                task_type=target_info.task_type,
+                logger=log
+            )
+            
+            if not plot_success:
+                log.error("SHAP summary plot generation failed")
+                _update_status_failed(run_id, "SHAP plot generation failed")
+                return False
+            
+            log.info("SHAP summary plot generated successfully")
+            
+        except Exception as e:
+            log.error(f"SHAP plot generation error: {e}")
+            _update_status_failed(run_id, f"SHAP plot generation error: {str(e)}")
+            return False
+        
+        # =============================
+        # 4. UPDATE METADATA WITH EXPLAINABILITY INFO
+        # =============================
+        log.info("Updating metadata with explainability results...")
+        
+        try:
+            # Create explainability info
+            explain_info = {
+                'tool_used': 'SHAP',
+                'explanation_type': 'global_summary',
+                'shap_summary_plot_path': str(Path(constants.PLOTS_DIR) / constants.SHAP_SUMMARY_PLOT),
+                'explain_completed_at': datetime.utcnow().isoformat(),
+                'target_column': target_info.name,
+                'task_type': target_info.task_type,
+                'features_explained': len(X_data.columns),
+                'samples_used_for_explanation': len(X_data)
+            }
+            
+            # Update metadata with explainability info
+            metadata_dict['explain_info'] = explain_info
+            storage.write_json_atomic(run_id, constants.METADATA_FILENAME, metadata_dict)
+            
+            log.info("Metadata updated with explainability information")
+            
+        except Exception as e:
+            log.error(f"Failed to update metadata: {e}")
+            _update_status_failed(run_id, f"Failed to update metadata: {str(e)}")
+            return False
+        
+        # =============================
+        # 5. UPDATE PIPELINE STATUS
+        # =============================
+        log.info("Updating pipeline status to completed...")
+        
+        try:
+            status_data = {
+                "stage": constants.EXPLAIN_STAGE,
+                "status": "completed",
+                "message": "Model explainability analysis completed successfully"
+            }
+            storage.write_json_atomic(run_id, constants.STATUS_FILENAME, status_data)
+            
+        except Exception as e:
+            log.warning(f"Could not update final status: {e}")
+        
+        log.info("="*50)
+        log.info("EXPLAINABILITY STAGE COMPLETED SUCCESSFULLY")
+        log.info("="*50)
+        log.info(f"SHAP summary plot saved to: {plot_save_path}")
+        log.info(f"Features explained: {len(X_data.columns)}")
+        log.info(f"Samples used: {len(X_data)}")
+        
+        return True
+        
+    except Exception as e:
+        log.error(f"Unexpected error in explainability stage: {e}")
+        _update_status_failed(run_id, f"Unexpected error: {str(e)}")
+        return False
+
+
+def _validate_metadata_for_explainability(
+    metadata_dict: dict, 
+    log: logger.logging.Logger
+) -> Tuple[bool, Optional[Tuple[schemas.TargetInfo, schemas.AutoMLInfo]]]:
+    """
+    Validate that metadata contains required information for explainability stage.
+    
+    Args:
+        metadata_dict: Loaded metadata dictionary
+        log: Logger instance
+        
+    Returns:
+        Tuple of (is_valid, (target_info, automl_info) or None)
+    """
+    try:
+        # Check for target_info
+        target_info_dict = metadata_dict.get('target_info')
+        if not target_info_dict:
+            log.error("No target_info found in metadata")
+            return False, None
+        
+        try:
+            target_info = schemas.TargetInfo(**target_info_dict)
+            log.info(f"Target info loaded: column='{target_info.name}', task_type='{target_info.task_type}'")
+        except Exception as e:
+            log.error(f"Failed to parse target_info: {e}")
+            return False, None
+        
+        # Check for automl_info
+        automl_info_dict = metadata_dict.get('automl_info')
+        if not automl_info_dict:
+            log.error("No automl_info found in metadata - AutoML stage must be completed first")
+            return False, None
+        
+        try:
+            automl_info = schemas.AutoMLInfo(**automl_info_dict)
+            log.info(f"AutoML info loaded: tool='{automl_info.tool_used}', model='{automl_info.best_model_name}'")
+        except Exception as e:
+            log.error(f"Failed to parse automl_info: {e}")
+            return False, None
+        
+        # Validate pipeline path exists in automl_info
+        if not automl_info.pycaret_pipeline_path:
+            log.error("No pycaret_pipeline_path found in automl_info")
+            return False, None
+        
+        log.info("Metadata validation passed for explainability stage")
+        return True, (target_info, automl_info)
+        
+    except Exception as e:
+        log.error(f"Metadata validation error: {e}")
+        return False, None
+
+
+def _update_status_failed(run_id: str, error_message: str) -> None:
+    """
+    Update pipeline status to failed with error message.
+    
+    Args:
+        run_id: Unique run identifier
+        error_message: Error message to include in status
+    """
+    try:
+        status_data = {
+            "stage": constants.EXPLAIN_STAGE,
+            "status": "failed",
+            "message": error_message
+        }
+        storage.write_json_atomic(run_id, constants.STATUS_FILENAME, status_data)
+    except Exception as e:
+        # If we can't even update status, log it but don't fail further
+        print(f"Warning: Could not update failed status for run {run_id}: {e}")
+
+
+def validate_explainability_stage_inputs(run_id: str) -> bool:
+    """
+    Validate that all required inputs exist for the explainability stage.
+    
+    Args:
+        run_id: Unique run identifier
+        
+    Returns:
+        True if all inputs are valid, False otherwise
+    """
+    try:
+        # Check metadata
+        metadata_dict = storage.read_json(run_id, constants.METADATA_FILENAME)
+        if not metadata_dict:
+            return False
+        
+        # Validate metadata components
+        validation_success, _ = _validate_metadata_for_explainability(
+            metadata_dict, logger.get_logger(run_id, "validation")
+        )
+        if not validation_success:
+            return False
+        
+        # Check files exist
+        run_dir = storage.get_run_dir(run_id)
+        
+        # Check cleaned data
+        cleaned_data_path = run_dir / constants.CLEANED_DATA_FILE
+        if not cleaned_data_path.exists():
+            return False
+        
+        # Check PyCaret pipeline
+        automl_info_dict = metadata_dict.get('automl_info', {})
+        pipeline_path = automl_info_dict.get('pycaret_pipeline_path')
+        if not pipeline_path:
+            return False
+        
+        pycaret_pipeline_path = run_dir / pipeline_path
+        if not pycaret_pipeline_path.exists():
+            return False
+        
+        return True
+        
+    except Exception:
+        return False
+
+
+def get_explainability_stage_summary(run_id: str) -> Optional[dict]:
+    """
+    Get summary information about the explainability stage results.
+    
+    Args:
+        run_id: Unique run identifier
+        
+    Returns:
+        Dictionary with explainability stage summary, or None if not completed
+    """
+    try:
+        metadata_dict = storage.read_json(run_id, constants.METADATA_FILENAME)
+        if not metadata_dict:
+            return None
+        
+        explain_info = metadata_dict.get('explain_info')
+        if not explain_info:
+            return None
+        
+        # Get additional context
+        target_info_dict = metadata_dict.get('target_info', {})
+        automl_info_dict = metadata_dict.get('automl_info', {})
+        
+        run_dir = storage.get_run_dir(run_id)
+        plot_path = run_dir / explain_info.get('shap_summary_plot_path', '')
+        
+        summary = {
+            'explain_completed': True,
+            'tool_used': explain_info.get('tool_used', 'SHAP'),
+            'explanation_type': explain_info.get('explanation_type', 'global_summary'),
+            'target_column': explain_info.get('target_column'),
+            'task_type': explain_info.get('task_type'),
+            'features_explained': explain_info.get('features_explained'),
+            'samples_used': explain_info.get('samples_used_for_explanation'),
+            'completed_at': explain_info.get('explain_completed_at'),
+            'plot_file_exists': plot_path.exists() if plot_path else False,
+            'plot_path': str(plot_path) if plot_path and plot_path.exists() else None,
+            'best_model_name': automl_info_dict.get('best_model_name'),
+            'performance_metrics': automl_info_dict.get('performance_metrics', {})
+        }
+        
+        return summary
+        
+    except Exception:
+        return None 

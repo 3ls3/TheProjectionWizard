@@ -138,6 +138,7 @@ checkpoints/
 
 # Data files (but keep fixtures)
 data/runs/
+data/test_runs/
 !data/runs/.gitkeep
 !data/fixtures/
 
@@ -166,5 +167,9 @@ logs/
 
 # Python Interactive files
 *.py.ipynb 
+
+# Test data
+tests/data/
+tests/data/
 
 *.cursor

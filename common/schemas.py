@@ -136,6 +136,23 @@ class MetadataWithFullSchema(MetadataWithTarget):
     validation_info: Optional[ValidationInfo] = None
 
 
+class AutoMLInfo(BaseModel):
+    """Information about the AutoML stage results."""
+    tool_used: str = Field(..., description="AutoML tool used (e.g., 'PyCaret')")
+    best_model_name: Optional[str] = None
+    pycaret_pipeline_path: Optional[str] = None  # Path relative to run_dir, e.g., "model/pycaret_pipeline.pkl"
+    performance_metrics: Optional[Dict[str, float]] = None
+    automl_completed_at: Optional[str] = None
+    target_column: Optional[str] = None
+    task_type: Optional[str] = None
+    dataset_shape_for_training: Optional[List[int]] = None
+
+
+class MetadataWithAutoML(MetadataWithFullSchema):
+    """Metadata model that includes AutoML information in addition to prep results."""
+    automl_info: Optional[AutoMLInfo] = None
+
+
 class DetailedTargetInfo(BaseModel):
     """Detailed information about the target variable for later stages."""
     column_name: str

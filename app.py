@@ -20,6 +20,7 @@ validation_page_module = importlib.import_module('ui.04_validation_page')
 prep_page_module = importlib.import_module('ui.05_prep_page')
 automl_page_module = importlib.import_module('ui.06_automl_page')
 explain_page_module = importlib.import_module('ui.07_explain_page')
+results_page_module = importlib.import_module('ui.08_results_page')
 
 
 def get_page_config():
@@ -154,7 +155,9 @@ def show_navigation_sidebar():
             explain_complete = False
     
     if explain_complete:
-        st.sidebar.button("📈 Results", use_container_width=True)
+        if st.sidebar.button("📈 Results", use_container_width=True):
+            st.session_state['current_page'] = 'results'
+            st.rerun()
     else:
         st.sidebar.button("📈 Results", disabled=True, help="Complete model explanation first")
 
@@ -182,6 +185,8 @@ def route_to_page():
         automl_page_module.show_automl_page()
     elif current_page == 'explain':
         explain_page_module.show_explain_page()
+    elif current_page == 'results':
+        results_page_module.show_results_page()
     else:
         st.error(f"Page '{current_page}' is not yet implemented.")
         st.info("Please use the navigation sidebar to go to an available page.")

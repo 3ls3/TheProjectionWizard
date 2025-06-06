@@ -74,6 +74,17 @@ PROFILE_REPORT_FILE = "ydata_profile.html"
 RUN_INDEX_FILE = "index.csv"
 RUN_INDEX_FILENAME = "index.csv"  # Alias for storage compatibility
 
+# Stage-specific log filenames
+STAGE_LOG_FILENAMES = {
+    INGEST_STAGE: "ingestion.log",
+    SCHEMA_STAGE: "schema.log", 
+    VALIDATION_STAGE: "validation.log",
+    PREP_STAGE: "prep.log",
+    AUTOML_STAGE: "automl.log",
+    EXPLAIN_STAGE: "explain.log",
+    RESULTS_STAGE: "results.log"
+}
+
 # Model artifacts
 MODEL_DIR = "model"
 MODEL_FILE = "model.joblib"

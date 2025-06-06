@@ -1,7 +1,7 @@
 ---
 description: 
 globs: 
-alwaysApply: true
+alwaysApply: false
 ---
 Okay, here's a high-level Product Requirements Document (PRD) draft for the Projection Wizard refactor, incorporating our discussions.
 

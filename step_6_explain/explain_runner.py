@@ -8,20 +8,27 @@ import joblib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Tuple
+import warnings
 
-from common import logger, storage, constants, schemas
+from common import storage, constants, schemas, logger
 from . import shap_logic
+
+# Suppress warnings during SHAP processing
+warnings.filterwarnings('ignore', category=FutureWarning)
+warnings.filterwarnings('ignore', category=UserWarning)
+warnings.filterwarnings('ignore', category=RuntimeWarning)
 
 
 def run_explainability_stage(run_id: str) -> bool:
     """
-    Execute the complete explainability stage for a given run.
+    Execute the explainability stage to generate SHAP global feature importance analysis.
     
-    This function orchestrates:
-    1. Loading inputs (metadata.json, pycaret_pipeline.pkl, cleaned_data.csv)
-    2. Running SHAP analysis to generate global summary plot
-    3. Saving plot and updating metadata with explainability info
-    4. Updating pipeline status
+    This stage:
+    1. Loads the trained PyCaret pipeline and metadata
+    2. Loads the cleaned ML-ready data
+    3. Validates inputs for SHAP analysis
+    4. Generates and saves a SHAP summary plot
+    5. Updates metadata with explainability results
     
     Args:
         run_id: Unique run identifier
@@ -29,8 +36,8 @@ def run_explainability_stage(run_id: str) -> bool:
     Returns:
         True if stage completes successfully, False otherwise
     """
-    # Get logger for this run and stage
-    log = logger.get_logger(run_id, "explainability_stage")
+    # Get stage-specific logger for this run
+    log = logger.get_stage_logger(run_id, constants.EXPLAIN_STAGE)
     
     try:
         # Log stage start

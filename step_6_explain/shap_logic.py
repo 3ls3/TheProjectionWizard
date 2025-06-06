@@ -140,6 +140,24 @@ def generate_shap_summary_plot(
                 if not np.issubdtype(dtype, np.number):
                     logger.warning(f"  Non-numeric column '{col}': {dtype}")
         
+        # Convert boolean columns to integers to prevent SHAP isfinite errors
+        bool_columns = X_sample.select_dtypes(include=['bool']).columns
+        if len(bool_columns) > 0:
+            logger.info(f"Converting {len(bool_columns)} boolean columns to integers for SHAP compatibility")
+            X_sample = X_sample.copy()
+            X_sample[bool_columns] = X_sample[bool_columns].astype(int)
+            logger.info("Boolean to integer conversion completed")
+        
+        # Final validation that all columns are numeric
+        non_numeric_cols = []
+        for col in X_sample.columns:
+            if not np.issubdtype(X_sample[col].dtype, np.number):
+                non_numeric_cols.append(f"{col} ({X_sample[col].dtype})")
+        
+        if non_numeric_cols:
+            logger.error(f"Still have non-numeric columns after conversion: {non_numeric_cols}")
+            return False
+        
         # =====================================
         # 2. CREATE SHAP EXPLAINER
         # =====================================

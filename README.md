@@ -65,6 +65,57 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
+### Docker Deployment
+
+The project includes Docker support for containerized deployment to Google Cloud Run.
+
+#### Local Docker Testing
+```bash
+# Build and run locally
+make run-docker
+# Opens at http://localhost:8501
+```
+
+#### Cloud Deployment
+1. **Setup GCP Project** (one-time):
+```bash
+# Initialize GCP project and enable APIs
+make gcp-init
+```
+
+2. **Configure Docker authentication** (one-time):
+```bash
+gcloud auth configure-docker ${REGION}-docker.pkg.dev
+```
+
+3. **Push image to Artifact Registry**:
+```bash
+# Push with default tag (wizard:latest)
+make push-image
+
+# Push with custom tag
+IMAGE_TAG=wizard:v1.2.3 make push-image
+```
+
+4. **Deploy to Cloud Run**:
+```bash
+# Deploy the pushed image to Cloud Run
+make deploy
+```
+This will deploy your application as a public web service with:
+- 1 CPU, 2Gi memory
+- 15 minute timeout
+- Max 2 instances 
+- Public access (no authentication required)
+
+#### Environment Configuration
+Copy `.env.example` to `.env` and set your GCP project details:
+```bash
+PROJECT_ID=your-gcp-project-id
+REGION=europe-west1
+IMAGE_TAG=wizard:v0.1  # Optional, defaults to wizard:latest
+```
+
 ### Running the CLI Pipeline (Headless)
 
 The CLI runner allows you to execute the entire pipeline from command line without UI interaction:

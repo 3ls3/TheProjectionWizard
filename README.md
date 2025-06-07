@@ -6,15 +6,26 @@ A modular end-to-end machine learning pipeline for tabular data analysis and mod
 
 ```
 TheProjectionWizard/
-├── step_1_ingest/          # Data ingestion and initial processing
-├── step_2_schema/          # Schema validation and target confirmation
-├── step_3_validation/      # Data validation with Great Expectations
-├── step_4_prep/            # Data preparation and cleaning
-├── step_5_automl/          # AutoML model training with PyCaret
-├── step_6_explain/         # Model explainability with SHAP
-├── ui/                     # Streamlit UI pages
+├── pipeline/               # Data processing pipeline
+│   ├── step_1_ingest/      # Data ingestion and initial processing
+│   ├── step_2_schema/      # Schema validation and target confirmation
+│   ├── step_3_validation/  # Data validation with Great Expectations
+│   ├── step_4_prep/        # Data preparation and cleaning
+│   ├── step_5_automl/      # AutoML model training with PyCaret
+│   └── step_6_explain/     # Model explainability with SHAP
+├── app/                    # Streamlit application
+│   ├── pages/              # Streamlit UI pages
+│   └── main.py             # Main application entry point
 ├── common/                 # Shared utilities and schemas
 ├── scripts/                # Automation and testing scripts
+│   ├── bash/               # Shell scripts for deployment
+│   └── python/             # Python scripts for testing and CLI
+├── tests/                  # Test suite
+│   ├── unit/               # Unit tests for individual stages
+│   ├── integration/        # Integration tests for full pipeline
+│   ├── fixtures/           # Test fixtures and data
+│   ├── data/               # Test data
+│   └── reports/            # Test reports
 ├── data/
 │   ├── runs/              # Run-specific artifacts
 │   └── fixtures/          # Sample data for testing
@@ -62,7 +73,7 @@ pip install -r requirements.txt
 
 ### Running the Streamlit App
 ```bash
-streamlit run app.py
+streamlit run app/main.py
 ```
 
 ### Docker Deployment
@@ -122,13 +133,13 @@ The CLI runner allows you to execute the entire pipeline from command line witho
 
 ```bash
 # Basic usage with auto-detection
-python scripts/run_pipeline_cli.py --csv data/fixtures/sample_classification.csv
+python scripts/python/run_pipeline_cli.py --csv data/fixtures/sample_classification.csv
 
 # Specify target column and task type
-python scripts/run_pipeline_cli.py --csv data.csv --target price --task regression
+python scripts/python/run_pipeline_cli.py --csv data.csv --target price --task regression
 
 # Full specification
-python scripts/run_pipeline_cli.py --csv data.csv --target category --task classification --target-ml-type multiclass_text_labels
+python scripts/python/run_pipeline_cli.py --csv data.csv --target category --task classification --target-ml-type multiclass_text_labels
 ```
 
 **CLI Options:**
@@ -147,17 +158,17 @@ The CLI runner will:
 ### Running Tests
 ```bash
 # Run health check (comprehensive project validation)
-python scripts/health_check.py
+python scripts/python/health_check.py
 
 # Test the CLI runner functionality
-python scripts/test_cli_runner.py
+python scripts/python/test_cli_runner.py
 
 # Test common utilities
-python scripts/test_common.py
+python scripts/python/test_common.py
 
 # Individual component tests (examples)
-python step_1_ingest/test_ingest_logic.py
-python step_3_validation/test_ge_logic.py
+python pipeline/step_1_ingest/test_ingest_logic.py
+python pipeline/step_3_validation/test_ge_logic.py
 ```
 
 ## Development
@@ -216,12 +227,12 @@ Each step directory contains its own test files to verify the logic independent 
 ## Project Structure Details
 
 ### Step Modules
-- `step_1_ingest/`: Handles CSV upload and initial data analysis
-- `step_2_schema/`: Target definition and feature schema confirmation
-- `step_3_validation/`: Great Expectations data validation
-- `step_4_prep/`: Data cleaning and feature encoding
-- `step_5_automl/`: PyCaret model training and evaluation
-- `step_6_explain/`: SHAP-based model explainability
+- `pipeline/step_1_ingest/`: Handles CSV upload and initial data analysis
+- `pipeline/step_2_schema/`: Target definition and feature schema confirmation
+- `pipeline/step_3_validation/`: Great Expectations data validation
+- `pipeline/step_4_prep/`: Data cleaning and feature encoding
+- `pipeline/step_5_automl/`: PyCaret model training and evaluation
+- `pipeline/step_6_explain/`: SHAP-based model explainability
 
 ### Common Utilities
 - `common/constants.py`: Project-wide constants and configuration
@@ -231,8 +242,8 @@ Each step directory contains its own test files to verify the logic independent 
 - `common/utils.py`: General utility functions
 
 ### UI Pages
-- `ui/01_upload_page.py` through `ui/08_results_page.py`: Streamlit page components
-- `app.py`: Main Streamlit application entry point
+- `app/pages/01_upload_page.py` through `app/pages/08_results_page.py`: Streamlit page components
+- `app/main.py`: Main Streamlit application entry point
 
 ## Contributing
 

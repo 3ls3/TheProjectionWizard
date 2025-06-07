@@ -137,10 +137,12 @@ def run_automl_stage(run_id: str, test_mode: bool = False) -> bool:
         
         try:
             # Run PyCaret AutoML
-            best_model, model_name, metrics = pycaret_logic.run_pycaret_automl(
-                df=df_ml_ready,
-                target_column=target_info.name,
+            best_model, metrics, model_name = pycaret_logic.run_pycaret_experiment(
+                df_ml_ready=df_ml_ready,
+                target_column_name=target_info.name,
                 task_type=target_info.task_type,
+                run_id=run_id,
+                pycaret_model_dir=storage.get_run_dir(run_id) / constants.MODEL_DIR,
                 test_mode=test_mode
             )
             
@@ -186,28 +188,27 @@ def run_automl_stage(run_id: str, test_mode: bool = False) -> bool:
         log.info("Saving trained model...")
         
         try:
-            # Create model directory
+            # Verify model was saved by the pycaret_experiment function
             run_dir = storage.get_run_dir(run_id)
             model_dir = run_dir / constants.MODEL_DIR
-            model_dir.mkdir(exist_ok=True)
+            model_path = model_dir / "pycaret_pipeline.pkl"
             
-            # Save PyCaret pipeline
-            model_path = model_dir / "pycaret_pipeline.pkl" 
-            pycaret_logic.save_pycaret_pipeline(best_model, model_path)
-            
-            log.info(f"Model saved to: {model_path}")
-            
-            # Structured log: Model saved
-            logger.log_structured_event(
-                structured_log,
-                "model_saved",
-                {
-                    "model_path": str(model_path.relative_to(run_dir)),
-                    "model_name": model_name,
-                    "file_size_bytes": model_path.stat().st_size if model_path.exists() else None
-                },
-                f"Model saved: {model_path.name}"
-            )
+            if model_path.exists():
+                log.info(f"Model verified saved at: {model_path}")
+                
+                # Structured log: Model saved
+                logger.log_structured_event(
+                    structured_log,
+                    "model_saved",
+                    {
+                        "model_path": str(model_path.relative_to(run_dir)),
+                        "model_name": model_name,
+                        "file_size_bytes": model_path.stat().st_size
+                    },
+                    f"Model saved: {model_path.name}"
+                )
+            else:
+                raise FileNotFoundError(f"Model was not saved at expected location: {model_path}")
             
         except Exception as e:
             log.error(f"Failed to save model: {e}")

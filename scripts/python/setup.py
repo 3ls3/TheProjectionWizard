@@ -114,7 +114,7 @@ def main():
         print("   source venv/bin/activate")
         
     print("2. Run the application:")
-    print("   streamlit run ui/main.py")
+    print("   streamlit run app/main.py")
     
     return 0
 

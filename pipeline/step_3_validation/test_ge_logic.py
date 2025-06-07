@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from step_3_validation.ge_logic import generate_ge_suite_from_metadata, run_ge_validation_on_dataframe
+from pipeline.step_3_validation.ge_logic import generate_ge_suite_from_metadata, run_ge_validation_on_dataframe
 from common.schemas import TargetInfo
 
 

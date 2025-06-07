@@ -12,7 +12,7 @@ from pathlib import Path
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from step_6_explain import explain_runner
+from pipeline.step_6_explain import explain_runner
 from common import constants, storage, schemas
 
 
@@ -362,7 +362,7 @@ def show_explain_page():
                         
                         # Show log file location
                         run_dir_path = storage.get_run_dir(run_id)
-                        log_path = run_dir_path / constants.PIPELINE_LOG_FILENAME
+                        log_path = run_dir_path / constants.STAGE_LOG_FILENAMES[constants.EXPLAIN_STAGE]
                         st.info(f"Check log file for more details: `{log_path}`")
                 
                 except Exception as e:

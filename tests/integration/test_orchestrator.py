@@ -19,7 +19,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from common import constants, logger
 from tests.fixtures.fixture_generator import TestFixtureGenerator, create_all_stage_fixtures
-from tests.stage_tests.base_stage_test import TestResult
+from tests.unit.stage_tests.base_stage_test import TestResult
 
 
 class TestOrchestrator:
@@ -67,7 +67,7 @@ class TestOrchestrator:
             # Create fixture for the stage
             if stage_name == "ingestion":
                 test_run_id = self.fixture_generator.setup_stage_1_ingestion(task_type)
-                from tests.stage_tests.test_ingestion import run_ingestion_test
+                from tests.unit.stage_tests.test_ingestion import run_ingestion_test
                 result = run_ingestion_test(test_run_id)
             
             elif stage_name == "schema":
@@ -201,8 +201,8 @@ class TestOrchestrator:
                     # Import and run the stage function
                     if stage_name == "ingestion":
                         # Special handling for ingestion
-                        from tests.stage_tests.test_ingestion import MockUploadedFile
-                        from step_1_ingest.ingest_logic import run_ingestion
+                        from tests.unit.stage_tests.test_ingestion import MockUploadedFile
+                        from pipeline.step_1_ingest.ingest_logic import run_ingestion
                         
                         csv_path = Path(__file__).parent.parent / "data" / "test_runs" / test_run_id / constants.ORIGINAL_DATA_FILENAME
                         mock_file = MockUploadedFile(csv_path)

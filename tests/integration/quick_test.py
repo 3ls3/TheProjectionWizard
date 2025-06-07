@@ -13,8 +13,8 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 from tests.fixtures.fixture_generator import TestFixtureGenerator, create_all_stage_fixtures
-from tests.stage_tests.test_ingestion import run_ingestion_test
-from tests.test_orchestrator import TestOrchestrator
+from tests.unit.stage_tests.test_ingestion import run_ingestion_test
+from tests.integration.test_orchestrator import TestOrchestrator
 
 
 def demo_fixture_generation():

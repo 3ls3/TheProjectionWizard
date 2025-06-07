@@ -11,8 +11,8 @@ import sys
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from common import constants
-from step_1_ingest.ingest_logic import run_ingestion
-from tests.stage_tests.base_stage_test import BaseStageTest, TestResult
+from pipeline.step_1_ingest.ingest_logic import run_ingestion
+from tests.unit.stage_tests.base_stage_test import BaseStageTest, TestResult
 
 
 class MockUploadedFile:
@@ -85,7 +85,7 @@ class IngestionStageTest(BaseStageTest):
             # So we'll test the ingestion logic components directly
             
             # Import and test the ingestion logic directly
-            from step_1_ingest.ingest_logic import run_ingestion
+            from pipeline.step_1_ingest.ingest_logic import run_ingestion
             
             # For testing, we'll modify the approach to work with our test directory
             stage_success, actual_run_id = self.run_ingestion_with_controlled_id()
@@ -165,7 +165,7 @@ class IngestionStageTest(BaseStageTest):
             mock_file = MockUploadedFile(self.original_csv_path)
             
             # We'll use the actual ingestion function but point it to our test area
-            from step_1_ingest.ingest_logic import run_ingestion
+            from pipeline.step_1_ingest.ingest_logic import run_ingestion
             
             # Since run_ingestion creates its own run_id, we'll use it as-is
             # and then copy the results to our test directory for validation

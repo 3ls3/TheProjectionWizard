@@ -6,7 +6,7 @@ Implements the UI for Key Feature Schema Assist & Confirmation.
 import streamlit as st
 import pandas as pd
 from pathlib import Path
-from step_2_schema import feature_definition_logic, target_definition_logic
+from pipeline.step_2_schema import feature_definition_logic, target_definition_logic
 from common import constants, storage, utils
 
 
@@ -348,8 +348,8 @@ def show_schema_page():
                         st.error("❌ Failed to save feature schemas. Check logs for details.")
                         
                         # Show log file location
-                        log_path = run_dir_path / constants.PIPELINE_LOG_FILENAME
-                        st.error(f"Check log file: `{log_path}`")
+                        log_path = run_dir_path / constants.STAGE_LOG_FILENAMES[constants.SCHEMA_STAGE]
+                        st.error(f"Check log file for more details: `{log_path}`")
         
         with col2:
             if st.button("← Back", use_container_width=True):

@@ -7,20 +7,21 @@ import streamlit as st
 from pathlib import Path
 import sys
 
-# Add project root to path
-sys.path.append(str(Path(__file__).parent))
+# Add project root and app directory to path
+sys.path.append(str(Path(__file__).parent.parent))  # Project root
+sys.path.append(str(Path(__file__).parent))  # App directory
 
 import importlib
 
 # Import page modules
-upload_page_module = importlib.import_module('ui.01_upload_page')
-target_page_module = importlib.import_module('ui.02_target_page')
-schema_page_module = importlib.import_module('ui.03_schema_page')
-validation_page_module = importlib.import_module('ui.04_validation_page')
-prep_page_module = importlib.import_module('ui.05_prep_page')
-automl_page_module = importlib.import_module('ui.06_automl_page')
-explain_page_module = importlib.import_module('ui.07_explain_page')
-results_page_module = importlib.import_module('ui.08_results_page')
+upload_page_module = importlib.import_module('pages.01_upload_page')
+target_page_module = importlib.import_module('pages.02_target_page')
+schema_page_module = importlib.import_module('pages.03_schema_page')
+validation_page_module = importlib.import_module('pages.04_validation_page')
+prep_page_module = importlib.import_module('pages.05_prep_page')
+automl_page_module = importlib.import_module('pages.06_automl_page')
+explain_page_module = importlib.import_module('pages.07_explain_page')
+results_page_module = importlib.import_module('pages.08_results_page')
 
 
 def get_page_config():

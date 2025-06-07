@@ -13,7 +13,7 @@ from io import BytesIO
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from step_1_ingest.ingest_logic import run_ingestion
+from pipeline.step_1_ingest.ingest_logic import run_ingestion
 from common import storage, constants
 from common.storage import read_json
 

@@ -12,7 +12,7 @@ from pathlib import Path
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from step_4_prep import prep_runner
+from pipeline.step_4_prep import prep_runner
 from common import constants, storage, schemas
 
 
@@ -375,7 +375,7 @@ def show_prep_page():
                         
                         # Show log file location
                         run_dir_path = storage.get_run_dir(run_id)
-                        log_path = run_dir_path / constants.PIPELINE_LOG_FILENAME
+                        log_path = run_dir_path / constants.STAGE_LOG_FILENAMES[constants.PREP_STAGE]
                         st.info(f"Check log file for more details: `{log_path}`")
                 
                 except Exception as e:

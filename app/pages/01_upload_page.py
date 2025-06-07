@@ -5,7 +5,7 @@ Implements the UI for CSV file upload with the exact specifications required.
 
 import streamlit as st
 from pathlib import Path
-from step_1_ingest import ingest_logic
+from pipeline.step_1_ingest import ingest_logic
 from common import constants
 from common.schemas import StageStatus
 from common.storage import read_json
@@ -46,7 +46,7 @@ def show_upload_page():
                 st.rerun()
             
             else:
-                st.error(f"File upload or initial processing failed for Run ID: {run_id}. Check logs in data/runs/{run_id}/{constants.PIPELINE_LOG_FILE}.")
+                st.error(f"File upload or initial processing failed for Run ID: {run_id}. Check logs in data/runs/{run_id}/{constants.STAGE_LOG_FILENAMES[constants.INGEST_STAGE]}.")
                 
                 # Display error message from status.json if available
                 if status_data:

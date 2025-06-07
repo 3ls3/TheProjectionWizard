@@ -17,4 +17,4 @@ RUN pip install --no-cache-dir --upgrade pip \
 # ── Streamlit runtime settings ─────────────────────────────────────────────
 ENV PORT=8501
 EXPOSE $PORT
-CMD streamlit run app.py --server.port=$PORT --server.address=0.0.0.0 
+CMD streamlit run app/main.py --server.port=$PORT --server.address=0.0.0.0 

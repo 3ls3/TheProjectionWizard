@@ -10,7 +10,7 @@ from pathlib import Path
 from importlib import import_module
 
 # Add project root to path
-project_root = Path(__file__).parent.parent
+project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 
@@ -19,17 +19,18 @@ def check_project_structure():
     print("🔍 Checking project structure...")
     
     required_dirs = [
-        "common", "data", "data/fixtures", "data/runs", 
-        "step_1_ingest", "step_2_schema", "step_3_validation",
-        "step_4_prep", "step_5_automl", "step_6_explain",
-        "ui", "scripts"
+        "common", "data", "data/fixtures", "data/runs",
+        "pipeline", "pipeline/step_1_ingest", "pipeline/step_2_schema", "pipeline/step_3_validation",
+        "pipeline/step_4_prep", "pipeline/step_5_automl", "pipeline/step_6_explain",
+        "app", "app/pages", "scripts", "scripts/bash", "scripts/python",
+        "tests", "tests/unit", "tests/integration"
     ]
     
     required_files = [
-        "app.py", "README.md", "requirements.txt", "pyproject.toml",
+        "app/main.py", "README.md", "requirements.txt", "pyproject.toml",
         "common/__init__.py", "common/constants.py", "common/schemas.py",
         "common/storage.py", "common/logger.py", "common/utils.py",
-        "scripts/run_pipeline_cli.py", "scripts/test_cli_runner.py",
+        "scripts/python/run_pipeline_cli.py", "scripts/python/test_cli_runner.py",
         "data/fixtures/sample_classification.csv", "data/fixtures/sample_regression.csv"
     ]
     
@@ -66,9 +67,9 @@ def check_imports():
         "common.storage",
         "common.logger",
         "common.utils",
-        "step_1_ingest.ingest_logic",
-        "step_2_schema.target_definition_logic",
-        "step_2_schema.feature_definition_logic"
+        "pipeline.step_1_ingest.ingest_logic",
+        "pipeline.step_2_schema.target_definition_logic",
+        "pipeline.step_2_schema.feature_definition_logic"
     ]
     
     failed_imports = []
@@ -261,8 +262,8 @@ def main():
     if passed == total:
         print("🎉 Project is healthy and ready to use!")
         print("\n💡 Next steps:")
-        print("   - Run: streamlit run app.py")
-        print("   - Or test CLI: python scripts/test_cli_runner.py")
+        print("   - Run: streamlit run app/main.py")
+        print("   - Or test CLI: python scripts/python/test_cli_runner.py")
         return 0
     else:
         print("⚠️ Some issues found. Please address them before proceeding.")

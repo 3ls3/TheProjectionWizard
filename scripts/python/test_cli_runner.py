@@ -60,7 +60,7 @@ def run_cli_test(csv_path: Path, target: str, task: str, target_ml_type: str) ->
     """
     cmd = [
         sys.executable, 
-        'scripts/run_pipeline_cli.py',
+        'scripts/python/run_pipeline_cli.py',
         '--csv', str(csv_path),
         '--target', target,
         '--task', task,

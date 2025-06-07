@@ -6,20 +6,20 @@ This script executes the entire data pipeline from data ingestion through model
 explainability, producing all standard artefacts without UI interaction.
 
 Usage:
-    python scripts/run_pipeline_cli.py --csv path/to/data.csv [options]
+    python scripts/python/run_pipeline_cli.py --csv path/to/data.csv [options]
     
     Or as a module:
     python -m scripts.run_pipeline_cli --csv path/to/data.csv [options]
 
 Examples:
     # Basic usage with auto-detection
-    python scripts/run_pipeline_cli.py --csv data/fixtures/sample.csv
+    python scripts/python/run_pipeline_cli.py --csv data/fixtures/sample.csv
     
     # Specify target column and task type
-    python scripts/run_pipeline_cli.py --csv data.csv --target price --task regression
+    python scripts/python/run_pipeline_cli.py --csv data.csv --target price --task regression
     
     # Full specification
-    python scripts/run_pipeline_cli.py --csv data.csv --target category --task classification --target-ml-type multiclass_text_labels
+    python scripts/python/run_pipeline_cli.py --csv data.csv --target category --task classification --target-ml-type multiclass_text_labels
 """
 
 import argparse
@@ -34,13 +34,13 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 # Import pipeline stage functions
-from step_1_ingest.ingest_logic import run_ingestion
-from step_2_schema.target_definition_logic import suggest_target_and_task, confirm_target_definition
-from step_2_schema.feature_definition_logic import suggest_initial_feature_schemas, confirm_feature_schemas
-from step_3_validation.validation_runner import run_validation_stage
-from step_4_prep.prep_runner import run_preparation_stage
-from step_5_automl.automl_runner import run_automl_stage
-from step_6_explain.explain_runner import run_explainability_stage
+from pipeline.step_1_ingest.ingest_logic import run_ingestion
+from pipeline.step_2_schema.target_definition_logic import suggest_target_and_task, confirm_target_definition
+from pipeline.step_2_schema.feature_definition_logic import suggest_initial_feature_schemas, confirm_feature_schemas
+from pipeline.step_3_validation.validation_runner import run_validation_stage
+from pipeline.step_4_prep.prep_runner import run_preparation_stage
+from pipeline.step_5_automl.automl_runner import run_automl_stage
+from pipeline.step_6_explain.explain_runner import run_explainability_stage
 
 # Import common modules
 from common import constants, utils, storage, logger, schemas

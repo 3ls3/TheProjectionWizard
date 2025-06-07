@@ -9,6 +9,7 @@ import shutil
 import csv
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+import pandas as pd
 
 from .constants import DATA_DIR_NAME, RUNS_DIR_NAME, RUN_INDEX_FILENAME
 from .schemas import RunIndexEntry
@@ -177,6 +178,33 @@ def read_original_data(run_id: str) -> Optional["pd.DataFrame"]:
         return pd.read_csv(filepath)
     except Exception as e:
         raise IOError(f"Failed to read original data from {filepath}: {e}")
+
+
+def read_cleaned_data(run_id: str) -> Optional["pd.DataFrame"]:
+    """
+    Read the cleaned data CSV file for a run.
+    
+    Args:
+        run_id: Unique run identifier
+        
+    Returns:
+        pandas DataFrame with the cleaned data, or None if file doesn't exist
+        
+    Raises:
+        IOError: If file exists but cannot be read or parsed
+    """
+    from .constants import CLEANED_DATA_FILE
+    
+    run_dir = get_run_dir(run_id)
+    filepath = run_dir / CLEANED_DATA_FILE
+    
+    if not filepath.exists():
+        return None
+        
+    try:
+        return pd.read_csv(filepath)
+    except Exception as e:
+        raise IOError(f"Failed to read cleaned data from {filepath}: {e}")
 
 
 def get_run_dir_path(run_id: str) -> Path:

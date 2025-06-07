@@ -220,6 +220,9 @@ def main():
         print("STARTING PROJECTION WIZARD CLI PIPELINE")
         print("="*80)
         
+        # Track total pipeline duration
+        start_time = datetime.now()
+        
         # ========================================
         # Stage 1: Data Ingestion
         # ========================================
@@ -562,23 +565,23 @@ def main():
         end_time = datetime.now()
         total_duration = (end_time - start_time).total_seconds()
         
-        log.info("="*50)
-        log.info("PIPELINE COMPLETED SUCCESSFULLY!")
-        log.info("="*50)
-        log.info(f"Total execution time: {total_duration:.2f} seconds")
-        log.info(f"Run ID: {run_id}")
-        log.info(f"Generated artifacts in: data/runs/{run_id}/")
-        log.info("")
-        log.info("Artifacts created:")
-        log.info(f"  • {constants.ORIGINAL_DATA_FILENAME} - Raw uploaded data")
-        log.info(f"  • {constants.CLEANED_DATA_FILE} - ML-ready processed data")
-        log.info(f"  • {constants.METADATA_FILENAME} - Complete pipeline metadata")
-        log.info(f"  • {constants.PIPELINE_LOG_FILENAME} - Human-readable execution log")
-        log.info(f"  • pipeline_structured.jsonl - Machine-parseable events")
-        log.info(f"  • *_structured.jsonl - Stage-specific JSON logs")
-        log.info(f"  • model/ - Trained ML model artifacts")
-        log.info(f"  • plots/ - Model explainability visualizations")
-        log.info("="*50)
+        cli_logger.info("="*50)
+        cli_logger.info("PIPELINE COMPLETED SUCCESSFULLY!")
+        cli_logger.info("="*50)
+        cli_logger.info(f"Total execution time: {total_duration:.2f} seconds")
+        cli_logger.info(f"Run ID: {run_id}")
+        cli_logger.info(f"Generated artifacts in: data/runs/{run_id}/")
+        cli_logger.info("")
+        cli_logger.info("Artifacts created:")
+        cli_logger.info(f"  • {constants.ORIGINAL_DATA_FILENAME} - Raw uploaded data")
+        cli_logger.info(f"  • {constants.CLEANED_DATA_FILE} - ML-ready processed data")
+        cli_logger.info(f"  • {constants.METADATA_FILENAME} - Complete pipeline metadata")
+        cli_logger.info(f"  • {constants.PIPELINE_LOG_FILENAME} - Human-readable execution log")
+        cli_logger.info(f"  • pipeline_structured.jsonl - Machine-parseable events")
+        cli_logger.info(f"  • *_structured.jsonl - Stage-specific JSON logs")
+        cli_logger.info(f"  • model/ - Trained ML model artifacts")
+        cli_logger.info(f"  • plots/ - Model explainability visualizations")
+        cli_logger.info("="*50)
         
         # High-level summary for users
         summary_logger.log_pipeline_completion(success=True)

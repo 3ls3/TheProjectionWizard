@@ -27,7 +27,8 @@ def timeout_handler(signum, frame):
 def generate_profile_report_with_timeout(df_final_prepared: pd.DataFrame, 
                                        report_path: Path, 
                                        title: str,
-                                       timeout_seconds: int = 300) -> bool:
+                                       timeout_seconds: int = 300,
+                                       run_id: Optional[str] = None) -> bool:
     """
     Generate profile report with timeout protection.
     
@@ -47,7 +48,7 @@ def generate_profile_report_with_timeout(df_final_prepared: pd.DataFrame,
             signal.alarm(timeout_seconds)
         
         # Generate the profile
-        result = generate_profile_report(df_final_prepared, report_path, title)
+        result = generate_profile_report(df_final_prepared, report_path, title, run_id)
         
         # Cancel the alarm if we succeeded
         if hasattr(signal, 'SIGALRM'):
@@ -87,7 +88,8 @@ def generate_profile_report_with_timeout(df_final_prepared: pd.DataFrame,
 
 def generate_profile_report(df_final_prepared: pd.DataFrame, 
                           report_path: Path, 
-                          title: str) -> bool:
+                          title: str,
+                          run_id: Optional[str] = None) -> bool:
     """
     Generate a ydata-profiling HTML report for the prepared DataFrame.
     
@@ -207,7 +209,7 @@ def generate_profile_report_with_fallback(df_final_prepared: pd.DataFrame,
     
     # First attempt: Full profile report with timeout protection
     log.info(f"Attempting full profile report generation for '{title}' (with 5-minute timeout)")
-    success = generate_profile_report_with_timeout(df_final_prepared, report_path, title, timeout_seconds=300)
+    success = generate_profile_report_with_timeout(df_final_prepared, report_path, title, timeout_seconds=300, run_id=run_id)
     
     if success:
         return True

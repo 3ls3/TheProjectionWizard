@@ -6,6 +6,7 @@ Orchestrates the complete data preparation stage including cleaning, encoding, a
 import pandas as pd
 from pathlib import Path
 from typing import Optional
+from datetime import datetime
 
 from common import logger, storage, constants, schemas
 from . import cleaning_logic, encoding_logic, profiling_logic
@@ -28,12 +29,24 @@ def run_preparation_stage(run_id: str) -> bool:
     Returns:
         True if stage completes successfully, False otherwise
     """
-    # Get logger for this run and stage
+    # Get loggers for this run and stage
     log = logger.get_stage_logger(run_id, constants.PREP_STAGE)
+    structured_log = logger.get_stage_structured_logger(run_id, constants.PREP_STAGE)
+    
+    # Track timing
+    start_time = datetime.now()
     
     try:
         # Log stage start
         log.info(f"Starting data preparation stage for run {run_id}")
+        
+        # Structured log: Stage started
+        logger.log_structured_event(
+            structured_log,
+            "stage_started",
+            {"stage": constants.PREP_STAGE},
+            "Data preparation stage started"
+        )
         
         # Update status to running
         try:
@@ -56,11 +69,23 @@ def run_preparation_stage(run_id: str) -> bool:
             metadata_dict = storage.read_json(run_id, constants.METADATA_FILENAME)
         except Exception as e:
             log.error(f"Failed to load metadata.json: {e}")
+            logger.log_structured_error(
+                structured_log,
+                "metadata_load_failed",
+                f"Failed to load metadata.json: {str(e)}",
+                {"stage": constants.PREP_STAGE}
+            )
             _update_status_failed(run_id, f"Failed to load metadata: {str(e)}")
             return False
         
         if not metadata_dict:
             log.error("metadata.json is empty or invalid")
+            logger.log_structured_error(
+                structured_log,
+                "metadata_empty",
+                "metadata.json is empty or invalid",
+                {"stage": constants.PREP_STAGE}
+            )
             _update_status_failed(run_id, "Empty or invalid metadata")
             return False
         
@@ -68,6 +93,12 @@ def run_preparation_stage(run_id: str) -> bool:
         target_info_dict = metadata_dict.get('target_info')
         if not target_info_dict:
             log.error("No target_info found in metadata")
+            logger.log_structured_error(
+                structured_log,
+                "target_info_missing",
+                "No target_info found in metadata",
+                {"stage": constants.PREP_STAGE}
+            )
             _update_status_failed(run_id, "Missing target information in metadata")
             return False
         
@@ -76,6 +107,12 @@ def run_preparation_stage(run_id: str) -> bool:
             log.info(f"Loaded target info: column='{target_info.name}', ml_type='{target_info.ml_type}'")
         except Exception as e:
             log.error(f"Failed to parse target_info: {e}")
+            logger.log_structured_error(
+                structured_log,
+                "target_info_parse_failed",
+                f"Failed to parse target_info: {str(e)}",
+                {"stage": constants.PREP_STAGE}
+            )
             _update_status_failed(run_id, f"Invalid target info format: {str(e)}")
             return False
         
@@ -93,6 +130,12 @@ def run_preparation_stage(run_id: str) -> bool:
                 log.info(f"Loaded feature schemas for {len(feature_schemas_obj)} columns")
             except Exception as e:
                 log.error(f"Failed to parse feature_schemas: {e}")
+                logger.log_structured_error(
+                    structured_log,
+                    "feature_schemas_parse_failed",
+                    f"Failed to parse feature_schemas: {str(e)}",
+                    {"stage": constants.PREP_STAGE}
+                )
                 _update_status_failed(run_id, f"Invalid feature schemas format: {str(e)}")
                 return False
         
@@ -101,6 +144,12 @@ def run_preparation_stage(run_id: str) -> bool:
             original_data_path = storage.get_run_dir(run_id) / constants.ORIGINAL_DATA_FILENAME
             if not original_data_path.exists():
                 log.error(f"Original data file not found: {original_data_path}")
+                logger.log_structured_error(
+                    structured_log,
+                    "original_data_not_found",
+                    f"Original data file not found: {original_data_path}",
+                    {"stage": constants.PREP_STAGE}
+                )
                 _update_status_failed(run_id, "Original data file not found")
                 return False
                 
@@ -109,11 +158,35 @@ def run_preparation_stage(run_id: str) -> bool:
             
             if df_orig.empty:
                 log.error("Original data is empty")
+                logger.log_structured_error(
+                    structured_log,
+                    "original_data_empty",
+                    "Original data file is empty",
+                    {"stage": constants.PREP_STAGE}
+                )
                 _update_status_failed(run_id, "Original data file is empty")
                 return False
+            
+            # Structured log: Data loaded
+            logger.log_structured_event(
+                structured_log,
+                "data_loaded",
+                {
+                    "data_shape": {"rows": df_orig.shape[0], "columns": df_orig.shape[1]},
+                    "target_column": target_info.name,
+                    "feature_schemas_count": len(feature_schemas_obj)
+                },
+                f"Original data loaded: {df_orig.shape}"
+            )
                 
         except Exception as e:
             log.error(f"Failed to load original data: {e}")
+            logger.log_structured_error(
+                structured_log,
+                "data_load_failed",
+                f"Failed to load original data: {str(e)}",
+                {"stage": constants.PREP_STAGE}
+            )
             _update_status_failed(run_id, f"Failed to read original data: {str(e)}")
             return False
         
@@ -133,9 +206,28 @@ def run_preparation_stage(run_id: str) -> bool:
             log.info(f"Cleaning steps performed: {len(cleaning_steps)}")
             for step in cleaning_steps:
                 log.info(f"  - {step}")
+            
+            # Structured log: Cleaning completed
+            logger.log_structured_event(
+                structured_log,
+                "cleaning_completed",
+                {
+                    "input_shape": {"rows": df_orig.shape[0], "columns": df_orig.shape[1]},
+                    "output_shape": {"rows": df_cleaned.shape[0], "columns": df_cleaned.shape[1]},
+                    "cleaning_steps": cleaning_steps,
+                    "rows_removed": df_orig.shape[0] - df_cleaned.shape[0]
+                },
+                f"Data cleaning completed: {df_orig.shape} → {df_cleaned.shape}"
+            )
                 
         except Exception as e:
             log.error(f"Data cleaning failed: {e}")
+            logger.log_structured_error(
+                structured_log,
+                "cleaning_failed",
+                f"Data cleaning failed: {str(e)}",
+                {"stage": constants.PREP_STAGE}
+            )
             _update_status_failed(run_id, f"Data cleaning failed: {str(e)}")
             return False
         
@@ -155,9 +247,29 @@ def run_preparation_stage(run_id: str) -> bool:
             log.info(f"Encoders/scalers saved: {len(encoders_info)}")
             for encoder_name in encoders_info.keys():
                 log.info(f"  - {encoder_name}")
+            
+            # Structured log: Encoding completed
+            logger.log_structured_event(
+                structured_log,
+                "encoding_completed",
+                {
+                    "input_shape": {"rows": df_cleaned.shape[0], "columns": df_cleaned.shape[1]},
+                    "output_shape": {"rows": df_encoded.shape[0], "columns": df_encoded.shape[1]},
+                    "encoders_count": len(encoders_info),
+                    "encoder_types": list(encoders_info.keys()),
+                    "columns_added": df_encoded.shape[1] - df_cleaned.shape[1]
+                },
+                f"Feature encoding completed: {df_cleaned.shape} → {df_encoded.shape}"
+            )
                 
         except Exception as e:
             log.error(f"Feature encoding failed: {e}")
+            logger.log_structured_error(
+                structured_log,
+                "encoding_failed",
+                f"Feature encoding failed: {str(e)}",
+                {"stage": constants.PREP_STAGE}
+            )
             _update_status_failed(run_id, f"Feature encoding failed: {str(e)}")
             return False
         
@@ -172,8 +284,26 @@ def run_preparation_stage(run_id: str) -> bool:
             log.info(f"Cleaned data saved to: {cleaned_data_path}")
             log.info(f"Final data shape: {df_encoded.shape}")
             
+            # Structured log: Data saved
+            logger.log_structured_event(
+                structured_log,
+                "cleaned_data_saved",
+                {
+                    "file_path": constants.CLEANED_DATA_FILE,
+                    "file_size_bytes": cleaned_data_path.stat().st_size if cleaned_data_path.exists() else None,
+                    "final_shape": {"rows": df_encoded.shape[0], "columns": df_encoded.shape[1]}
+                },
+                f"Cleaned data saved: {constants.CLEANED_DATA_FILE}"
+            )
+            
         except Exception as e:
             log.error(f"Failed to save cleaned data: {e}")
+            logger.log_structured_error(
+                structured_log,
+                "save_cleaned_data_failed",
+                f"Failed to save cleaned data: {str(e)}",
+                {"stage": constants.PREP_STAGE}
+            )
             _update_status_failed(run_id, f"Failed to save cleaned data: {str(e)}")
             return False
         
@@ -195,12 +325,34 @@ def run_preparation_stage(run_id: str) -> bool:
             
             if profiling_success:
                 log.info(f"Profiling report generated: {profile_report_path}")
+                # Structured log: Profiling completed
+                logger.log_structured_event(
+                    structured_log,
+                    "profiling_completed",
+                    {
+                        "report_path": profile_report_path.name,
+                        "file_size_bytes": profile_report_path.stat().st_size if profile_report_path.exists() else None
+                    },
+                    f"Profiling report generated: {profile_report_path.name}"
+                )
             else:
                 log.warning("Profiling report generation failed, but continuing...")
+                logger.log_structured_event(
+                    structured_log,
+                    "profiling_failed",
+                    {"non_critical": True},
+                    "Profiling report generation failed (non-critical)"
+                )
                 
         except Exception as e:
             log.warning(f"Profiling report failed (non-critical): {e}")
             profiling_success = False
+            logger.log_structured_event(
+                structured_log,
+                "profiling_error",
+                {"error": str(e), "non_critical": True},
+                f"Profiling report error (non-critical): {str(e)}"
+            )
         
         # =============================
         # 6. UPDATE METADATA
@@ -224,8 +376,26 @@ def run_preparation_stage(run_id: str) -> bool:
             storage.write_json_atomic(run_id, constants.METADATA_FILENAME, metadata_dict)
             log.info("Metadata updated with prep results")
             
+            # Structured log: Metadata updated
+            logger.log_structured_event(
+                structured_log,
+                "metadata_updated",
+                {
+                    "prep_info_keys": list(prep_info.keys()),
+                    "cleaning_steps_count": len(cleaning_steps),
+                    "encoders_count": len(encoders_info)
+                },
+                "Metadata updated with prep results"
+            )
+            
         except Exception as e:
             log.error(f"Failed to update metadata: {e}")
+            logger.log_structured_error(
+                structured_log,
+                "metadata_update_failed",
+                f"Failed to update metadata: {str(e)}",
+                {"stage": constants.PREP_STAGE}
+            )
             _update_status_failed(run_id, f"Failed to update metadata: {str(e)}")
             return False
         

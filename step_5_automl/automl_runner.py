@@ -29,170 +29,196 @@ def run_automl_stage(run_id: str, test_mode: bool = False) -> bool:
     Returns:
         True if stage completes successfully, False otherwise
     """
-    # Get logger for this run and stage
+    # Get loggers for this run and stage
     log = logger.get_stage_logger(run_id, constants.AUTOML_STAGE)
+    structured_log = logger.get_stage_structured_logger(run_id, constants.AUTOML_STAGE)
+    
+    # Get pipeline summary logger
+    summary_logger = logger.get_pipeline_summary_logger(run_id)
+    
+    # Track timing for summary
+    start_time = datetime.now()
     
     try:
-        # Log stage start
-        log.info(f"Starting AutoML stage for run {run_id}")
-        log.info("="*50)
-        log.info("AUTOML STAGE - PYCARET MODEL TRAINING")
-        log.info("="*50)
+        # =============================
+        # 1. VALIDATE INPUTS
+        # =============================
+        log.info("Starting AutoML stage validation...")
         
-        # Update status to running
-        try:
-            status_data = {
-                "stage": constants.AUTOML_STAGE,
-                "status": "running",
-                "message": "AutoML training in progress..."
-            }
-            storage.write_json_atomic(run_id, constants.STATUS_FILENAME, status_data)
-        except Exception as e:
-            log.warning(f"Could not update status to running: {e}")
+        # Structured log: Stage started
+        logger.log_structured_event(
+            structured_log,
+            "stage_started",
+            {"stage": constants.AUTOML_STAGE, "test_mode": test_mode},
+            "AutoML stage validation started"
+        )
+        
+        if not validate_automl_stage_inputs(run_id):
+            log.error("AutoML stage input validation failed")
+            logger.log_structured_error(
+                structured_log,
+                "input_validation_failed",
+                "AutoML stage input validation failed",
+                {"stage": constants.AUTOML_STAGE}
+            )
+            _update_status_failed(run_id, "Input validation failed")
+            return False
+        
+        log.info("AutoML stage inputs validated successfully")
+        
+        # Structured log: Validation passed
+        logger.log_structured_event(
+            structured_log,
+            "input_validation_passed",
+            {"stage": constants.AUTOML_STAGE},
+            "AutoML stage input validation passed"
+        )
         
         # =============================
-        # 1. LOAD INPUTS
+        # 2. LOAD METADATA AND DATA
         # =============================
-        log.info("Loading inputs: metadata and cleaned data")
+        log.info("Loading metadata and cleaned data...")
         
-        # Load metadata.json
         try:
+            # Load metadata
             metadata_dict = storage.read_json(run_id, constants.METADATA_FILENAME)
-        except Exception as e:
-            log.error(f"Failed to load metadata.json: {e}")
-            _update_status_failed(run_id, f"Failed to load metadata: {str(e)}")
-            return False
-        
-        if not metadata_dict:
-            log.error("metadata.json is empty or invalid")
-            _update_status_failed(run_id, "Empty or invalid metadata")
-            return False
-        
-        # Convert target_info dict to Pydantic object (Critical: Task 6 learnings)
-        target_info_dict = metadata_dict.get('target_info')
-        if not target_info_dict:
-            log.error("No target_info found in metadata")
-            _update_status_failed(run_id, "Missing target information in metadata")
-            return False
-        
-        try:
+            target_info_dict = metadata_dict['target_info']
             target_info = schemas.TargetInfo(**target_info_dict)
-            log.info(f"Loaded target info: column='{target_info.name}', task_type='{target_info.task_type}', ml_type='{target_info.ml_type}'")
-        except Exception as e:
-            log.error(f"Failed to parse target_info: {e}")
-            _update_status_failed(run_id, f"Invalid target info format: {str(e)}")
-            return False
-        
-        # Check for prep_info (this should exist after prep stage)
-        prep_info_dict = metadata_dict.get('prep_info')
-        if not prep_info_dict:
-            log.error("No prep_info found in metadata - prep stage must be completed first")
-            _update_status_failed(run_id, "Missing prep_info - data preparation stage required")
-            return False
-        
-        log.info(f"Found prep_info: final_shape={prep_info_dict.get('final_shape_after_prep')}")
-        
-        # Load cleaned data
-        try:
-            cleaned_data_path = storage.get_run_dir(run_id) / constants.CLEANED_DATA_FILE
-            if not cleaned_data_path.exists():
-                log.error(f"Cleaned data file not found: {cleaned_data_path}")
-                _update_status_failed(run_id, "Cleaned data file not found - data preparation stage required")
-                return False
-                
-            df_ml_ready = pd.read_csv(cleaned_data_path)
-            log.info(f"Loaded cleaned data: shape {df_ml_ready.shape}")
             
-            if df_ml_ready.empty:
-                log.error("Cleaned data is empty")
-                _update_status_failed(run_id, "Cleaned data file is empty")
-                return False
-                
-        except Exception as e:
-            log.error(f"Failed to load cleaned data: {e}")
-            _update_status_failed(run_id, f"Failed to read cleaned data: {str(e)}")
-            return False
-        
-        # Define PyCaret model directory (should already exist from prep stage)
-        pycaret_model_dir = storage.get_run_dir(run_id) / constants.MODEL_DIR
-        if not pycaret_model_dir.exists():
-            log.warning(f"Model directory does not exist, creating: {pycaret_model_dir}")
-            pycaret_model_dir.mkdir(parents=True, exist_ok=True)
-        
-        log.info(f"PyCaret model directory: {pycaret_model_dir}")
-        
-        # =============================
-        # 2. VALIDATE INPUTS FOR PYCARET
-        # =============================
-        if not test_mode:
-            log.info("Validating inputs for PyCaret...")
+            log.info(f"Target info loaded: column='{target_info.name}', task_type='{target_info.task_type}'")
             
-            try:
-                is_valid, validation_issues = pycaret_logic.validate_pycaret_inputs(
-                    df_ml_ready=df_ml_ready,
-                    target_column_name=target_info.name,
-                    task_type=target_info.task_type
-                )
-                
-                if not is_valid:
-                    log.error("Input validation failed for PyCaret:")
-                    for issue in validation_issues:
-                        log.error(f"  - {issue}")
-                    _update_status_failed(run_id, f"Input validation failed: {'; '.join(validation_issues)}")
-                    return False
-                
-                log.info("Input validation passed for PyCaret")
-                
-            except Exception as e:
-                log.error(f"Input validation error: {e}")
-                _update_status_failed(run_id, f"Input validation error: {str(e)}")
-                return False
-        else:
-            log.warning("Skipping PyCaret input validation due to test mode")
-        
-        # =============================
-        # 3. RUN PYCARET AUTOML EXPERIMENT
-        # =============================
-        log.info("Starting PyCaret AutoML experiment...")
-        
-        try:
-            # Use configuration from constants
-            automl_config = constants.AUTOML_CONFIG
-            session_id = automl_config.get('session_id', 123)
+            # Load cleaned data
+            df_ml_ready = storage.read_cleaned_data(run_id)
+            if df_ml_ready is None:
+                raise Exception("Could not load cleaned data")
             
-            final_pipeline, metrics, model_name = pycaret_logic.run_pycaret_experiment(
-                df_ml_ready=df_ml_ready,
-                target_column_name=target_info.name,
-                task_type=target_info.task_type,
-                run_id=run_id,
-                pycaret_model_dir=pycaret_model_dir,
-                session_id=session_id,
-                top_n_models_to_compare=3,  # Can be configured later
-                allow_lightgbm_and_xgboost=True,  # Allow all models by default
-                test_mode=test_mode
+            log.info(f"Cleaned data loaded: shape={df_ml_ready.shape}")
+            
+            # Structured log: Data loaded
+            logger.log_structured_event(
+                structured_log,
+                "data_loaded",
+                {
+                    "target_column": target_info.name,
+                    "task_type": target_info.task_type,
+                    "data_shape": {"rows": df_ml_ready.shape[0], "columns": df_ml_ready.shape[1]}
+                },
+                f"Training data loaded: {df_ml_ready.shape}"
             )
             
         except Exception as e:
-            log.error(f"PyCaret experiment failed with exception: {e}")
-            _update_status_failed(run_id, f"PyCaret experiment failed: {str(e)}")
+            log.error(f"Failed to load inputs: {e}")
+            logger.log_structured_error(
+                structured_log,
+                "data_loading_failed",
+                f"Failed to load inputs: {str(e)}",
+                {"stage": constants.AUTOML_STAGE}
+            )
+            _update_status_failed(run_id, f"Failed to load inputs: {str(e)}")
             return False
         
         # =============================
-        # 4. HANDLE PYCARET RESULTS
+        # 3. RUN AUTOML
         # =============================
-        log.info("Processing PyCaret experiment results...")
+        log.info("Starting PyCaret AutoML experiment...")
         
-        if final_pipeline is None or metrics is None or model_name is None:
-            log.error("PyCaret experiment failed - returned None values")
-            log.error(f"Pipeline: {final_pipeline}")
-            log.error(f"Metrics: {metrics}")
-            log.error(f"Model name: {model_name}")
-            _update_status_failed(run_id, "AutoML (PyCaret) experiment failed")
+        # Structured log: Training started
+        logger.log_structured_event(
+            structured_log,
+            "training_started",
+            {
+                "tool": "PyCaret",
+                "dataset_shape": {"rows": df_ml_ready.shape[0], "columns": df_ml_ready.shape[1]},
+                "target_column": target_info.name,
+                "task_type": target_info.task_type
+            },
+            "AutoML training started with PyCaret"
+        )
+        
+        try:
+            # Run PyCaret AutoML
+            best_model, model_name, metrics = pycaret_logic.run_pycaret_automl(
+                df=df_ml_ready,
+                target_column=target_info.name,
+                task_type=target_info.task_type,
+                test_mode=test_mode
+            )
+            
+            log.info(f"AutoML experiment completed. Best model: {model_name}")
+            log.info(f"Performance metrics: {metrics}")
+            
+            # Structured log: Training completed with metrics
+            logger.log_structured_event(
+                structured_log,
+                "training_completed",
+                {
+                    "model_name": model_name,
+                    "metrics": metrics,
+                    "tool": "PyCaret"
+                },
+                f"AutoML training completed: {model_name}"
+            )
+            
+            # Log individual metrics as structured events
+            for metric_name, metric_value in metrics.items():
+                logger.log_structured_metric(
+                    structured_log,
+                    metric_name,
+                    metric_value,
+                    "performance",
+                    {"model_name": model_name, "task_type": target_info.task_type}
+                )
+            
+        except Exception as e:
+            log.error(f"PyCaret AutoML failed: {e}")
+            logger.log_structured_error(
+                structured_log,
+                "training_failed",
+                f"PyCaret AutoML failed: {str(e)}",
+                {"tool": "PyCaret", "stage": constants.AUTOML_STAGE}
+            )
+            _update_status_failed(run_id, f"AutoML training failed: {str(e)}")
             return False
         
-        log.info("PyCaret experiment completed successfully!")
-        log.info(f"Best model: {model_name}")
-        log.info(f"Performance metrics: {len(metrics)} metrics extracted")
+        # =============================
+        # 4. SAVE MODEL
+        # =============================
+        log.info("Saving trained model...")
+        
+        try:
+            # Create model directory
+            run_dir = storage.get_run_dir(run_id)
+            model_dir = run_dir / constants.MODEL_DIR
+            model_dir.mkdir(exist_ok=True)
+            
+            # Save PyCaret pipeline
+            model_path = model_dir / "pycaret_pipeline.pkl" 
+            pycaret_logic.save_pycaret_pipeline(best_model, model_path)
+            
+            log.info(f"Model saved to: {model_path}")
+            
+            # Structured log: Model saved
+            logger.log_structured_event(
+                structured_log,
+                "model_saved",
+                {
+                    "model_path": str(model_path.relative_to(run_dir)),
+                    "model_name": model_name,
+                    "file_size_bytes": model_path.stat().st_size if model_path.exists() else None
+                },
+                f"Model saved: {model_path.name}"
+            )
+            
+        except Exception as e:
+            log.error(f"Failed to save model: {e}")
+            logger.log_structured_error(
+                structured_log,
+                "model_save_failed",
+                f"Failed to save model: {str(e)}",
+                {"stage": constants.AUTOML_STAGE}
+            )
+            _update_status_failed(run_id, f"Failed to save model: {str(e)}")
+            return False
         
         # =============================
         # 5. UPDATE METADATA WITH AUTOML INFO
@@ -219,8 +245,22 @@ def run_automl_stage(run_id: str, test_mode: bool = False) -> bool:
             storage.write_json_atomic(run_id, constants.METADATA_FILENAME, metadata_dict)
             log.info("Metadata updated with AutoML results")
             
+            # Structured log: Metadata updated
+            logger.log_structured_event(
+                structured_log,
+                "metadata_updated",
+                {"automl_info_keys": list(automl_info.keys())},
+                "Metadata updated with AutoML results"
+            )
+            
         except Exception as e:
             log.error(f"Failed to update metadata: {e}")
+            logger.log_structured_error(
+                structured_log,
+                "metadata_update_failed",
+                f"Failed to update metadata: {str(e)}",
+                {"stage": constants.AUTOML_STAGE}
+            )
             _update_status_failed(run_id, f"Failed to update metadata: {str(e)}")
             return False
         
@@ -236,12 +276,24 @@ def run_automl_stage(run_id: str, test_mode: bool = False) -> bool:
             storage.write_json_atomic(run_id, constants.STATUS_FILENAME, status_data)
             log.info("Status updated to completed")
             
+            # Structured log: Status updated
+            logger.log_structured_event(
+                structured_log,
+                "status_updated",
+                {"status": "completed", "stage": constants.AUTOML_STAGE},
+                "AutoML stage status updated to completed"
+            )
+            
         except Exception as e:
             log.warning(f"Could not update final status: {e}")
         
         # =============================
-        # 7. LOG COMPLETION
+        # 7. LOG COMPLETION SUMMARY
         # =============================
+        end_time = datetime.now()
+        training_duration = (end_time - start_time).total_seconds()
+        
+        # Log detailed completion for technical log
         log.info("="*50)
         log.info("AUTOML STAGE COMPLETED SUCCESSFULLY")
         log.info("="*50)
@@ -258,11 +310,44 @@ def run_automl_stage(run_id: str, test_mode: bool = False) -> bool:
         log.info(f"  - {constants.STATUS_FILENAME} (updated)")
         log.info("="*50)
         
+        # Structured log: Stage completed
+        logger.log_structured_event(
+            structured_log,
+            "stage_completed",
+            {
+                "stage": constants.AUTOML_STAGE,
+                "duration_seconds": training_duration,
+                "model_name": model_name,
+                "metrics_count": len(metrics),
+                "completed_at": end_time.isoformat()
+            },
+            f"AutoML stage completed successfully in {training_duration:.1f}s"
+        )
+        
+        # Log high-level summary for pipeline summary
+        summary_logger.log_automl_summary(
+            model_name=model_name,
+            task_type=target_info.task_type,
+            target_column=target_info.name,
+            training_shape=df_ml_ready.shape,
+            metrics=metrics,
+            training_duration=training_duration
+        )
+        
         return True
         
     except Exception as e:
         log.error(f"Unexpected error in AutoML stage: {e}")
         log.error("Full traceback:", exc_info=True)
+        
+        # Structured log: Unexpected error
+        logger.log_structured_error(
+            structured_log,
+            "unexpected_error",
+            f"Unexpected error in AutoML stage: {str(e)}",
+            {"stage": constants.AUTOML_STAGE}
+        )
+        
         _update_status_failed(run_id, f"Unexpected error: {str(e)}")
         return False
 

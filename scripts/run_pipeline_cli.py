@@ -230,8 +230,13 @@ def main():
             with MockUploadedFile(csv_path) as mock_file:
                 run_id = run_ingestion(mock_file, args.output_dir)
             
-            # Get logger for this run
+            # Get loggers for this run
             cli_logger = logger.get_logger(run_id=run_id, logger_name="cli_runner")
+            summary_logger = logger.get_pipeline_summary_logger(run_id)
+            
+            # Log pipeline start
+            summary_logger.log_pipeline_start(csv_path.name)
+            
             cli_logger.info(f"CLI Pipeline started for file: {csv_path}")
             cli_logger.info(f"Generated run_id: {run_id}")
             
@@ -240,8 +245,19 @@ def main():
             # Check ingestion status
             if not check_stage_status(run_id, constants.INGEST_STAGE, cli_logger):
                 cli_logger.error("Ingestion stage failed")
+                summary_logger.log_pipeline_completion(success=False, error_message="Ingestion failed")
                 update_run_index_entry(run_id, "Failed at Ingestion", cli_logger)
                 return 1
+                
+            # Log ingestion summary
+            import pandas as pd
+            df = storage.read_original_data(run_id)
+            if df is not None:
+                summary_logger.log_ingestion_summary(
+                    rows=df.shape[0],
+                    cols=df.shape[1], 
+                    filename=csv_path.name
+                )
                 
         except Exception as e:
             print(f"✗ Ingestion failed: {e}")
@@ -310,6 +326,7 @@ def main():
         except Exception as e:
             cli_logger.error(f"Target definition failed: {e}")
             print(f"✗ Target definition failed: {e}")
+            summary_logger.log_pipeline_completion(success=False, error_message=f"Target definition failed: {e}")
             update_run_index_entry(run_id, "Failed at Target Definition", cli_logger)
             return 1
         
@@ -351,9 +368,25 @@ def main():
             print(f"✓ Feature schemas confirmed")
             cli_logger.info("Feature schema definition stage completed")
             
+            # Count features for summary
+            categorical_count = sum(1 for schema in user_confirmed_schemas.values() 
+                                  if 'categorical' in schema['final_encoding_role'])
+            numeric_count = sum(1 for schema in user_confirmed_schemas.values() 
+                              if 'numeric' in schema['final_encoding_role'])
+            
+            # Log schema summary
+            summary_logger.log_schema_summary(
+                target_column=target_column,
+                task_type=task_type,
+                feature_count=len(user_confirmed_schemas) - 1,  # Exclude target
+                categorical_count=categorical_count,
+                numeric_count=numeric_count
+            )
+            
         except Exception as e:
             cli_logger.error(f"Feature schema definition failed: {e}")
             print(f"✗ Feature schema definition failed: {e}")
+            summary_logger.log_pipeline_completion(success=False, error_message=f"Feature schema failed: {e}")
             update_run_index_entry(run_id, "Failed at Feature Schema", cli_logger)
             return 1
         
@@ -373,9 +406,18 @@ def main():
             print(f"✓ Data validation completed")
             cli_logger.info("Data validation stage completed")
             
+            # Try to log validation summary
+            try:
+                validation_data = storage.read_json(run_id, constants.VALIDATION_FILENAME)
+                if validation_data:
+                    summary_logger.log_validation_summary(validation_data)
+            except Exception as e:
+                cli_logger.warning(f"Could not log validation summary: {e}")
+            
         except Exception as e:
             cli_logger.error(f"Data validation failed: {e}")
             print(f"✗ Data validation failed: {e}")
+            summary_logger.log_pipeline_completion(success=False, error_message=f"Validation failed: {e}")
             update_run_index_entry(run_id, "Failed at Validation", cli_logger)
             return 1
         
@@ -386,6 +428,11 @@ def main():
         
         try:
             cli_logger.info("Starting data preparation stage")
+            
+            # Get input shape for summary
+            input_df = storage.read_original_data(run_id)
+            input_shape = input_df.shape if input_df is not None else (0, 0)
+            
             success = run_preparation_stage(run_id)
             
             if not success:
@@ -395,9 +442,30 @@ def main():
             print(f"✓ Data preparation completed")
             cli_logger.info("Data preparation stage completed")
             
+            # Log preparation summary
+            try:
+                output_df = storage.read_cleaned_data(run_id)
+                output_shape = output_df.shape if output_df is not None else (0, 0)
+                
+                # Get prep info from metadata
+                metadata = storage.read_json(run_id, constants.METADATA_FILENAME)
+                prep_info = metadata.get('prep_info', {})
+                cleaning_steps = prep_info.get('cleaning_steps_performed', [])
+                encoding_steps = prep_info.get('encoding_steps_performed', [])
+                
+                summary_logger.log_preparation_summary(
+                    input_shape=input_shape,
+                    output_shape=output_shape,
+                    cleaning_steps=cleaning_steps,
+                    encoding_steps=encoding_steps
+                )
+            except Exception as e:
+                cli_logger.warning(f"Could not log preparation summary: {e}")
+            
         except Exception as e:
             cli_logger.error(f"Data preparation failed: {e}")
             print(f"✗ Data preparation failed: {e}")
+            summary_logger.log_pipeline_completion(success=False, error_message=f"Preparation failed: {e}")
             update_run_index_entry(run_id, "Failed at Preparation", cli_logger)
             return 1
         
@@ -420,6 +488,7 @@ def main():
         except Exception as e:
             cli_logger.error(f"AutoML training failed: {e}")
             print(f"✗ AutoML training failed: {e}")
+            summary_logger.log_pipeline_completion(success=False, error_message=f"AutoML failed: {e}")
             update_run_index_entry(run_id, "Failed at AutoML", cli_logger)
             return 1
         
@@ -439,9 +508,17 @@ def main():
             print(f"✓ Model explainability completed")
             cli_logger.info("Model explainability stage completed")
             
+            # Log explainability summary
+            try:
+                plots_generated = ["SHAP Summary Plot"]  # Could be read from metadata
+                summary_logger.log_explainability_summary(plots_generated=plots_generated)
+            except Exception as e:
+                cli_logger.warning(f"Could not log explainability summary: {e}")
+            
         except Exception as e:
             cli_logger.error(f"Model explainability failed: {e}")
             print(f"✗ Model explainability failed: {e}")
+            summary_logger.log_pipeline_completion(success=False, error_message=f"Explainability failed: {e}")
             update_run_index_entry(run_id, "Failed at Explainability", cli_logger)
             return 1
         
@@ -476,7 +553,57 @@ def main():
                 print(f"  ✗ {artifact} (missing)")
         
         cli_logger.info("CLI pipeline completed successfully")
+        summary_logger.log_pipeline_completion(success=True)
         update_run_index_entry(run_id, "Completed Successfully", cli_logger)
+        
+        # =============================
+        # COMPLETION AND SUMMARY
+        # =============================
+        end_time = datetime.now()
+        total_duration = (end_time - start_time).total_seconds()
+        
+        log.info("="*50)
+        log.info("PIPELINE COMPLETED SUCCESSFULLY!")
+        log.info("="*50)
+        log.info(f"Total execution time: {total_duration:.2f} seconds")
+        log.info(f"Run ID: {run_id}")
+        log.info(f"Generated artifacts in: data/runs/{run_id}/")
+        log.info("")
+        log.info("Artifacts created:")
+        log.info(f"  • {constants.ORIGINAL_DATA_FILENAME} - Raw uploaded data")
+        log.info(f"  • {constants.CLEANED_DATA_FILE} - ML-ready processed data")
+        log.info(f"  • {constants.METADATA_FILENAME} - Complete pipeline metadata")
+        log.info(f"  • {constants.PIPELINE_LOG_FILENAME} - Human-readable execution log")
+        log.info(f"  • pipeline_structured.jsonl - Machine-parseable events")
+        log.info(f"  • *_structured.jsonl - Stage-specific JSON logs")
+        log.info(f"  • model/ - Trained ML model artifacts")
+        log.info(f"  • plots/ - Model explainability visualizations")
+        log.info("="*50)
+        
+        # High-level summary for users
+        summary_logger.log_pipeline_completion(success=True)
+        
+        # Structured event for automation/monitoring
+        structured_log = logger.get_structured_logger(run_id, "pipeline")
+        logger.log_structured_event(
+            structured_log,
+            "pipeline_completed",
+            {
+                "success": True,
+                "total_duration_seconds": total_duration,
+                "completed_at": end_time.isoformat(),
+                "artifacts_created": [
+                    constants.ORIGINAL_DATA_FILENAME,
+                    constants.CLEANED_DATA_FILE,
+                    constants.METADATA_FILENAME,
+                    "model/",
+                    "plots/",
+                    "*.log",
+                    "*_structured.jsonl"
+                ]
+            },
+            f"Complete pipeline execution finished successfully in {total_duration:.1f}s"
+        )
         
         return 0
         

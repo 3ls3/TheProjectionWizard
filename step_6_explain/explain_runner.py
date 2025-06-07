@@ -36,8 +36,12 @@ def run_explainability_stage(run_id: str) -> bool:
     Returns:
         True if stage completes successfully, False otherwise
     """
-    # Get stage-specific logger for this run
+    # Get stage-specific loggers for this run
     log = logger.get_stage_logger(run_id, constants.EXPLAIN_STAGE)
+    structured_log = logger.get_stage_structured_logger(run_id, constants.EXPLAIN_STAGE)
+    
+    # Track timing
+    start_time = datetime.now()
     
     try:
         # Log stage start
@@ -45,6 +49,14 @@ def run_explainability_stage(run_id: str) -> bool:
         log.info("="*50)
         log.info("EXPLAINABILITY STAGE - SHAP GLOBAL ANALYSIS")
         log.info("="*50)
+        
+        # Structured log: Stage started
+        logger.log_structured_event(
+            structured_log,
+            "stage_started",
+            {"stage": constants.EXPLAIN_STAGE},
+            "Explainability stage started"
+        )
         
         # Update status to running
         try:
@@ -54,8 +66,23 @@ def run_explainability_stage(run_id: str) -> bool:
                 "message": "Model explainability analysis in progress..."
             }
             storage.write_json_atomic(run_id, constants.STATUS_FILENAME, status_data)
+            
+            # Structured log: Status updated
+            logger.log_structured_event(
+                structured_log,
+                "status_updated",
+                {"status": "running", "stage": constants.EXPLAIN_STAGE},
+                "Status updated to running"
+            )
+            
         except Exception as e:
             log.warning(f"Could not update status to running: {e}")
+            logger.log_structured_error(
+                structured_log,
+                "status_update_failed",
+                f"Could not update status to running: {e}",
+                {"stage": constants.EXPLAIN_STAGE}
+            )
         
         # =============================
         # 1. LOAD AND VALIDATE INPUTS
@@ -67,26 +94,69 @@ def run_explainability_stage(run_id: str) -> bool:
             metadata_dict = storage.read_json(run_id, constants.METADATA_FILENAME)
         except Exception as e:
             log.error(f"Failed to load metadata.json: {e}")
+            logger.log_structured_error(
+                structured_log,
+                "metadata_load_failed",
+                f"Failed to load metadata.json: {e}",
+                {"stage": constants.EXPLAIN_STAGE}
+            )
             _update_status_failed(run_id, f"Failed to load metadata: {str(e)}")
             return False
         
         if not metadata_dict:
             log.error("metadata.json is empty or invalid")
+            logger.log_structured_error(
+                structured_log,
+                "metadata_invalid",
+                "metadata.json is empty or invalid",
+                {"stage": constants.EXPLAIN_STAGE}
+            )
             _update_status_failed(run_id, "Empty or invalid metadata")
             return False
         
         # Get run directory
         run_dir = storage.get_run_dir(run_id)
         
+        # Structured log: Metadata loaded
+        logger.log_structured_event(
+            structured_log,
+            "metadata_loaded",
+            {
+                "file": constants.METADATA_FILENAME,
+                "metadata_keys": list(metadata_dict.keys()),
+                "run_directory": str(run_dir)
+            },
+            "Metadata loaded successfully"
+        )
+        
         # Validate required metadata components
         validation_success, metadata_components = _validate_metadata_for_explainability(
             metadata_dict, log
         )
         if not validation_success:
+            logger.log_structured_error(
+                structured_log,
+                "metadata_validation_failed",
+                "Invalid metadata for explainability stage",
+                {"stage": constants.EXPLAIN_STAGE}
+            )
             _update_status_failed(run_id, "Invalid metadata for explainability stage")
             return False
         
         target_info, automl_info = metadata_components
+        
+        # Structured log: Metadata validated
+        logger.log_structured_event(
+            structured_log,
+            "metadata_validated",
+            {
+                "target_column": target_info.name,
+                "task_type": target_info.task_type,
+                "model_name": automl_info.best_model_name,
+                "pipeline_path": automl_info.pycaret_pipeline_path
+            },
+            f"Metadata validation passed: {target_info.name} ({target_info.task_type})"
+        )
         
         # Load PyCaret pipeline
         try:
@@ -94,6 +164,12 @@ def run_explainability_stage(run_id: str) -> bool:
             
             if not pycaret_pipeline_path.exists():
                 log.error(f"PyCaret pipeline not found: {pycaret_pipeline_path}")
+                logger.log_structured_error(
+                    structured_log,
+                    "pipeline_file_not_found",
+                    f"PyCaret pipeline not found: {pycaret_pipeline_path}",
+                    {"stage": constants.EXPLAIN_STAGE, "pipeline_path": str(pycaret_pipeline_path)}
+                )
                 _update_status_failed(run_id, "PyCaret pipeline file not found")
                 return False
             
@@ -101,8 +177,25 @@ def run_explainability_stage(run_id: str) -> bool:
             pycaret_pipeline = joblib.load(pycaret_pipeline_path)
             log.info("PyCaret pipeline loaded successfully")
             
+            # Structured log: Pipeline loaded
+            logger.log_structured_event(
+                structured_log,
+                "pipeline_loaded",
+                {
+                    "pipeline_path": str(pycaret_pipeline_path),
+                    "model_name": automl_info.best_model_name
+                },
+                f"PyCaret pipeline loaded: {automl_info.best_model_name}"
+            )
+            
         except Exception as e:
             log.error(f"Failed to load PyCaret pipeline: {e}")
+            logger.log_structured_error(
+                structured_log,
+                "pipeline_load_failed",
+                f"Failed to load PyCaret pipeline: {e}",
+                {"stage": constants.EXPLAIN_STAGE, "pipeline_path": str(pycaret_pipeline_path)}
+            )
             _update_status_failed(run_id, f"Failed to load model pipeline: {str(e)}")
             return False
         
@@ -112,6 +205,12 @@ def run_explainability_stage(run_id: str) -> bool:
             
             if not cleaned_data_path.exists():
                 log.error(f"Cleaned data file not found: {cleaned_data_path}")
+                logger.log_structured_error(
+                    structured_log,
+                    "cleaned_data_not_found",
+                    f"Cleaned data file not found: {cleaned_data_path}",
+                    {"stage": constants.EXPLAIN_STAGE, "data_path": str(cleaned_data_path)}
+                )
                 _update_status_failed(run_id, "Cleaned data file not found")
                 return False
             
@@ -120,11 +219,34 @@ def run_explainability_stage(run_id: str) -> bool:
             
             if df_ml_ready.empty:
                 log.error("Cleaned data is empty")
+                logger.log_structured_error(
+                    structured_log,
+                    "cleaned_data_empty",
+                    "Cleaned data is empty",
+                    {"stage": constants.EXPLAIN_STAGE}
+                )
                 _update_status_failed(run_id, "Cleaned data file is empty")
                 return False
             
+            # Structured log: Data loaded
+            logger.log_structured_event(
+                structured_log,
+                "data_loaded",
+                {
+                    "data_shape": {"rows": df_ml_ready.shape[0], "columns": df_ml_ready.shape[1]},
+                    "data_file": constants.CLEANED_DATA_FILE
+                },
+                f"Cleaned data loaded: {df_ml_ready.shape}"
+            )
+            
         except Exception as e:
             log.error(f"Failed to load cleaned data: {e}")
+            logger.log_structured_error(
+                structured_log,
+                "data_load_failed",
+                f"Failed to load cleaned data: {e}",
+                {"stage": constants.EXPLAIN_STAGE, "data_path": str(cleaned_data_path)}
+            )
             _update_status_failed(run_id, f"Failed to read cleaned data: {str(e)}")
             return False
         
@@ -132,11 +254,29 @@ def run_explainability_stage(run_id: str) -> bool:
         target_column = target_info.name
         if target_column not in df_ml_ready.columns:
             log.error(f"Target column '{target_column}' not found in cleaned data")
+            logger.log_structured_error(
+                structured_log,
+                "target_column_missing",
+                f"Target column '{target_column}' not found in cleaned data",
+                {"stage": constants.EXPLAIN_STAGE, "target_column": target_column, "available_columns": list(df_ml_ready.columns)}
+            )
             _update_status_failed(run_id, f"Target column '{target_column}' not found")
             return False
         
         X_data = df_ml_ready.drop(columns=[target_column])
         log.info(f"Feature data prepared: {X_data.shape} (removed target column '{target_column}')")
+        
+        # Structured log: Feature data prepared
+        logger.log_structured_event(
+            structured_log,
+            "feature_data_prepared",
+            {
+                "feature_shape": {"rows": X_data.shape[0], "columns": X_data.shape[1]},
+                "target_column": target_column,
+                "feature_columns": list(X_data.columns)
+            },
+            f"Feature data prepared: {X_data.shape} features"
+        )
         
         # =============================
         # 2. VALIDATE INPUTS FOR SHAP
@@ -155,13 +295,33 @@ def run_explainability_stage(run_id: str) -> bool:
                 log.error("SHAP input validation failed:")
                 for issue in validation_issues:
                     log.error(f"  - {issue}")
+                logger.log_structured_error(
+                    structured_log,
+                    "shap_validation_failed",
+                    f"SHAP validation failed: {'; '.join(validation_issues)}",
+                    {"stage": constants.EXPLAIN_STAGE, "validation_issues": validation_issues}
+                )
                 _update_status_failed(run_id, f"SHAP validation failed: {'; '.join(validation_issues)}")
                 return False
             
             log.info("SHAP input validation passed")
             
+            # Structured log: SHAP validation passed
+            logger.log_structured_event(
+                structured_log,
+                "shap_validation_passed",
+                {"validation_issues_count": 0},
+                "SHAP input validation passed"
+            )
+            
         except Exception as e:
             log.error(f"SHAP input validation error: {e}")
+            logger.log_structured_error(
+                structured_log,
+                "shap_validation_error",
+                f"SHAP input validation error: {e}",
+                {"stage": constants.EXPLAIN_STAGE}
+            )
             _update_status_failed(run_id, f"SHAP validation error: {str(e)}")
             return False
         
@@ -172,13 +332,33 @@ def run_explainability_stage(run_id: str) -> bool:
                 pycaret_pipeline, X_data, target_info.task_type, log
             ):
                 log.error("Pipeline prediction test failed")
+                logger.log_structured_error(
+                    structured_log,
+                    "pipeline_prediction_test_failed",
+                    "Model pipeline prediction test failed",
+                    {"stage": constants.EXPLAIN_STAGE}
+                )
                 _update_status_failed(run_id, "Model pipeline prediction test failed")
                 return False
             
             log.info("Pipeline prediction test passed")
             
+            # Structured log: Pipeline test passed
+            logger.log_structured_event(
+                structured_log,
+                "pipeline_test_passed",
+                {"test_type": "prediction_capability"},
+                "Pipeline prediction test passed"
+            )
+            
         except Exception as e:
             log.error(f"Pipeline prediction test error: {e}")
+            logger.log_structured_error(
+                structured_log,
+                "pipeline_test_error",
+                f"Pipeline prediction test error: {e}",
+                {"stage": constants.EXPLAIN_STAGE}
+            )
             _update_status_failed(run_id, f"Pipeline prediction test error: {str(e)}")
             return False
         
@@ -194,6 +374,18 @@ def run_explainability_stage(run_id: str) -> bool:
         
         log.info(f"SHAP plot will be saved to: {plot_save_path}")
         
+        # Structured log: Plot generation started
+        logger.log_structured_event(
+            structured_log,
+            "plot_generation_started",
+            {
+                "plot_type": "shap_summary",
+                "plots_directory": str(plots_dir),
+                "plot_file": constants.SHAP_SUMMARY_PLOT
+            },
+            "SHAP summary plot generation started"
+        )
+        
         try:
             # Generate SHAP summary plot
             plot_success = shap_logic.generate_shap_summary_plot(
@@ -206,13 +398,37 @@ def run_explainability_stage(run_id: str) -> bool:
             
             if not plot_success:
                 log.error("SHAP summary plot generation failed")
+                logger.log_structured_error(
+                    structured_log,
+                    "plot_generation_failed",
+                    "SHAP summary plot generation failed",
+                    {"stage": constants.EXPLAIN_STAGE}
+                )
                 _update_status_failed(run_id, "SHAP plot generation failed")
                 return False
             
             log.info("SHAP summary plot generated successfully")
             
+            # Structured log: Plot generated
+            logger.log_structured_event(
+                structured_log,
+                "plot_generated",
+                {
+                    "plot_type": "shap_summary",
+                    "plots_directory": str(plots_dir),
+                    "plot_file": constants.SHAP_SUMMARY_PLOT
+                },
+                "SHAP summary plot generated successfully"
+            )
+            
         except Exception as e:
             log.error(f"SHAP plot generation error: {e}")
+            logger.log_structured_error(
+                structured_log,
+                "plot_generation_error",
+                f"SHAP plot generation error: {e}",
+                {"stage": constants.EXPLAIN_STAGE}
+            )
             _update_status_failed(run_id, f"SHAP plot generation error: {str(e)}")
             return False
         
@@ -240,8 +456,26 @@ def run_explainability_stage(run_id: str) -> bool:
             
             log.info("Metadata updated with explainability information")
             
+            # Structured log: Metadata updated
+            logger.log_structured_event(
+                structured_log,
+                "metadata_updated",
+                {
+                    "file": constants.METADATA_FILENAME,
+                    "metadata_keys": list(metadata_dict.keys()),
+                    "run_directory": str(run_dir)
+                },
+                "Metadata updated with explainability information"
+            )
+            
         except Exception as e:
             log.error(f"Failed to update metadata: {e}")
+            logger.log_structured_error(
+                structured_log,
+                "metadata_update_failed",
+                f"Failed to update metadata: {e}",
+                {"stage": constants.EXPLAIN_STAGE}
+            )
             _update_status_failed(run_id, f"Failed to update metadata: {str(e)}")
             return False
         
@@ -258,8 +492,26 @@ def run_explainability_stage(run_id: str) -> bool:
             }
             storage.write_json_atomic(run_id, constants.STATUS_FILENAME, status_data)
             
+            # Structured log: Status updated
+            logger.log_structured_event(
+                structured_log,
+                "status_updated",
+                {"status": "completed", "stage": constants.EXPLAIN_STAGE},
+                "Status updated to completed"
+            )
+            
         except Exception as e:
             log.warning(f"Could not update final status: {e}")
+            logger.log_structured_error(
+                structured_log,
+                "final_status_update_failed",
+                f"Could not update final status: {e}",
+                {"stage": constants.EXPLAIN_STAGE}
+            )
+        
+        # Calculate stage duration
+        end_time = datetime.now()
+        stage_duration = (end_time - start_time).total_seconds()
         
         log.info("="*50)
         log.info("EXPLAINABILITY STAGE COMPLETED SUCCESSFULLY")
@@ -268,10 +520,32 @@ def run_explainability_stage(run_id: str) -> bool:
         log.info(f"Features explained: {len(X_data.columns)}")
         log.info(f"Samples used: {len(X_data)}")
         
+        # Structured log: Stage completed
+        logger.log_structured_event(
+            structured_log,
+            "stage_completed",
+            {
+                "stage": constants.EXPLAIN_STAGE,
+                "success": True,
+                "duration_seconds": stage_duration,
+                "completed_at": end_time.isoformat(),
+                "plots_generated": [constants.SHAP_SUMMARY_PLOT],
+                "features_explained": len(X_data.columns),
+                "samples_used": len(X_data)
+            },
+            f"Explainability stage completed successfully in {stage_duration:.1f}s"
+        )
+        
         return True
         
     except Exception as e:
         log.error(f"Unexpected error in explainability stage: {e}")
+        logger.log_structured_error(
+            structured_log,
+            "unexpected_error",
+            f"Unexpected error in explainability stage: {e}",
+            {"stage": constants.EXPLAIN_STAGE}
+        )
         _update_status_failed(run_id, f"Unexpected error: {str(e)}")
         return False
 

@@ -118,23 +118,65 @@ def confirm_target_definition(run_id: str, confirmed_target_column: str,
     Returns:
         True if successful, False otherwise
     """
-    # Get logger
+    # Get loggers
     run_logger = logger.get_stage_logger(run_id, constants.SCHEMA_STAGE)
+    structured_log = logger.get_stage_structured_logger(run_id, constants.SCHEMA_STAGE)
     
     # Validate inputs
     if confirmed_task_type not in constants.TASK_TYPES:
-        run_logger.error(f"Invalid task type: {confirmed_task_type}. Must be one of {constants.TASK_TYPES}")
+        error_msg = f"Invalid task type: {confirmed_task_type}. Must be one of {constants.TASK_TYPES}"
+        run_logger.error(error_msg)
+        logger.log_structured_error(
+            structured_log,
+            "invalid_task_type",
+            error_msg,
+            {
+                "provided_task_type": confirmed_task_type,
+                "valid_task_types": constants.TASK_TYPES,
+                "stage": constants.SCHEMA_STAGE
+            }
+        )
         return False
         
     if confirmed_target_ml_type not in constants.TARGET_ML_TYPES:
-        run_logger.error(f"Invalid target ML type: {confirmed_target_ml_type}. Must be one of {constants.TARGET_ML_TYPES}")
+        error_msg = f"Invalid target ML type: {confirmed_target_ml_type}. Must be one of {constants.TARGET_ML_TYPES}"
+        run_logger.error(error_msg)
+        logger.log_structured_error(
+            structured_log,
+            "invalid_target_ml_type",
+            error_msg,
+            {
+                "provided_ml_type": confirmed_target_ml_type,
+                "valid_ml_types": constants.TARGET_ML_TYPES,
+                "stage": constants.SCHEMA_STAGE
+            }
+        )
         return False
     
     try:
+        # Structured log: Target definition started
+        logger.log_structured_event(
+            structured_log,
+            "target_definition_started",
+            {
+                "target_column": confirmed_target_column,
+                "task_type": confirmed_task_type,
+                "ml_type": confirmed_target_ml_type
+            },
+            f"Target definition confirmation started for column '{confirmed_target_column}'"
+        )
+        
         # Read existing metadata.json
         metadata_dict = storage.read_metadata(run_id)
         if metadata_dict is None:
-            run_logger.error(f"Could not read metadata.json for run {run_id}")
+            error_msg = f"Could not read metadata.json for run {run_id}"
+            run_logger.error(error_msg)
+            logger.log_structured_error(
+                structured_log,
+                "metadata_load_failed",
+                error_msg,
+                {"stage": constants.SCHEMA_STAGE}
+            )
             return False
         
         # Update metadata dictionary with target information
@@ -151,6 +193,19 @@ def confirm_target_definition(run_id: str, confirmed_target_column: str,
         # Write updated metadata.json
         storage.write_metadata(run_id, metadata_dict)
         
+        # Structured log: Target definition completed
+        logger.log_structured_event(
+            structured_log,
+            "target_definition_completed",
+            {
+                "target_column": confirmed_target_column,
+                "task_type": confirmed_task_type,
+                "ml_type": confirmed_target_ml_type,
+                "metadata_updated": True
+            },
+            f"Target definition completed: {confirmed_target_column} ({confirmed_task_type})"
+        )
+        
         # Update status.json
         status_data = {
             'stage': constants.SCHEMA_STAGE,
@@ -162,13 +217,38 @@ def confirm_target_definition(run_id: str, confirmed_target_column: str,
         
         storage.write_status(run_id, status_data)
         
+        # Structured log: Status updated
+        logger.log_structured_event(
+            structured_log,
+            "status_updated",
+            {
+                "status": "completed",
+                "stage": constants.SCHEMA_STAGE,
+                "message": f"Target '{confirmed_target_column}' confirmed"
+            },
+            "Target definition status updated to completed"
+        )
+        
         run_logger.info(f"Target definition confirmed: column='{confirmed_target_column}', "
                        f"task='{confirmed_task_type}', ml_type='{confirmed_target_ml_type}'")
         
         return True
         
     except Exception as e:
-        run_logger.error(f"Failed to confirm target definition: {str(e)}")
+        error_msg = f"Failed to confirm target definition: {str(e)}"
+        run_logger.error(error_msg)
+        
+        # Structured log: Target definition failed
+        logger.log_structured_error(
+            structured_log,
+            "target_definition_failed",
+            error_msg,
+            {
+                "stage": constants.SCHEMA_STAGE,
+                "target_column": confirmed_target_column,
+                "task_type": confirmed_task_type
+            }
+        )
         
         # Update status.json with error
         try:

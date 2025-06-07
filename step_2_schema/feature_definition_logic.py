@@ -290,14 +290,34 @@ def confirm_feature_schemas(run_id: str, user_confirmed_schemas: Dict[str, Dict[
     Returns:
         True if successful, False otherwise
     """
-    # Get logger
+    # Get loggers
     run_logger = logger.get_stage_logger(run_id, constants.SCHEMA_STAGE)
+    structured_log = logger.get_stage_structured_logger(run_id, constants.SCHEMA_STAGE)
     
     try:
+        # Structured log: Feature schema confirmation started
+        logger.log_structured_event(
+            structured_log,
+            "feature_schema_confirmation_started",
+            {
+                "total_columns": len(all_initial_schemas),
+                "user_confirmed_count": len(user_confirmed_schemas),
+                "system_default_count": len(all_initial_schemas) - len(user_confirmed_schemas)
+            },
+            f"Feature schema confirmation started for {len(all_initial_schemas)} columns"
+        )
+        
         # Read existing metadata.json
         metadata_dict = storage.read_metadata(run_id)
         if metadata_dict is None:
-            run_logger.error(f"Could not read metadata.json for run {run_id}")
+            error_msg = f"Could not read metadata.json for run {run_id}"
+            run_logger.error(error_msg)
+            logger.log_structured_error(
+                structured_log,
+                "metadata_load_failed",
+                error_msg,
+                {"stage": constants.SCHEMA_STAGE}
+            )
             return False
         
         # Construct final feature schemas
@@ -321,12 +341,48 @@ def confirm_feature_schemas(run_id: str, user_confirmed_schemas: Dict[str, Dict[
                 'source': source
             }
         
+        # Analyze feature schema distribution for structured logging
+        encoding_role_counts = {}
+        source_counts = {"user_confirmed": 0, "system_defaulted": 0}
+        
+        for schema_info in final_feature_schemas.values():
+            role = schema_info['encoding_role']
+            source = schema_info['source']
+            
+            encoding_role_counts[role] = encoding_role_counts.get(role, 0) + 1
+            source_counts[source] += 1
+        
+        # Structured log: Feature schemas processed
+        logger.log_structured_event(
+            structured_log,
+            "feature_schemas_processed",
+            {
+                "total_features": len(final_feature_schemas),
+                "encoding_role_distribution": encoding_role_counts,
+                "source_distribution": source_counts,
+                "user_confirmed_count": source_counts["user_confirmed"],
+                "system_defaulted_count": source_counts["system_defaulted"]
+            },
+            f"Feature schemas processed: {len(final_feature_schemas)} columns configured"
+        )
+        
         # Update metadata with feature schemas
         metadata_dict['feature_schemas'] = final_feature_schemas
         metadata_dict['feature_schemas_confirmed_at'] = datetime.now(timezone.utc).isoformat()
         
         # Write updated metadata.json
         storage.write_metadata(run_id, metadata_dict)
+        
+        # Structured log: Metadata updated
+        logger.log_structured_event(
+            structured_log,
+            "metadata_updated",
+            {
+                "feature_schemas_count": len(final_feature_schemas),
+                "metadata_keys_added": ["feature_schemas", "feature_schemas_confirmed_at"]
+            },
+            f"Metadata updated with {len(final_feature_schemas)} feature schemas"
+        )
         
         # Update status.json
         status_data = {
@@ -339,14 +395,53 @@ def confirm_feature_schemas(run_id: str, user_confirmed_schemas: Dict[str, Dict[
         
         storage.write_status(run_id, status_data)
         
+        # Structured log: Status updated
+        logger.log_structured_event(
+            structured_log,
+            "status_updated",
+            {
+                "status": "completed",
+                "stage": constants.SCHEMA_STAGE,
+                "feature_count": len(final_feature_schemas)
+            },
+            "Feature schema confirmation status updated to completed"
+        )
+        
         run_logger.info(f"Feature schemas confirmed for {len(final_feature_schemas)} columns. "
                        f"User confirmed: {len(user_confirmed_schemas)}, "
                        f"System defaulted: {len(final_feature_schemas) - len(user_confirmed_schemas)}")
         
+        # Structured log: Feature schema confirmation completed
+        logger.log_structured_event(
+            structured_log,
+            "feature_schema_confirmation_completed",
+            {
+                "success": True,
+                "total_columns": len(final_feature_schemas),
+                "user_confirmed": len(user_confirmed_schemas),
+                "system_defaulted": len(final_feature_schemas) - len(user_confirmed_schemas),
+                "encoding_roles": list(encoding_role_counts.keys())
+            },
+            f"Feature schema confirmation completed successfully for {len(final_feature_schemas)} columns"
+        )
+        
         return True
         
     except Exception as e:
-        run_logger.error(f"Failed to confirm feature schemas: {str(e)}")
+        error_msg = f"Failed to confirm feature schemas: {str(e)}"
+        run_logger.error(error_msg)
+        
+        # Structured log: Feature schema confirmation failed
+        logger.log_structured_error(
+            structured_log,
+            "feature_schema_confirmation_failed",
+            error_msg,
+            {
+                "stage": constants.SCHEMA_STAGE,
+                "total_columns": len(all_initial_schemas),
+                "user_confirmed_count": len(user_confirmed_schemas)
+            }
+        )
         
         # Update status.json with error
         try:

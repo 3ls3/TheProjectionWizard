@@ -16,7 +16,7 @@ import sys
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from common import constants, storage, schemas
+from common import constants, storage, schemas, utils
 
 
 def create_download_button(label: str, data_bytes: bytes, file_name: str, mime_type: str, key_suffix: str, run_id: str):
@@ -46,6 +46,12 @@ def show_results_page():
         return
     
     run_id = st.session_state['run_id']
+    
+    # Display Current Run ID
+    st.info(f"**Current Run ID:** {run_id}")
+    
+    # Introductory text
+    st.write("This page provides a comprehensive summary of your completed pipeline run, including key metrics, generated artifacts, and download links.")
     
     # Load Run Information and Artifacts
     try:
@@ -81,7 +87,10 @@ def show_results_page():
                 # Use the most comprehensive metadata model available
                 metadata = schemas.MetadataWithExplain(**metadata_dict)
             except Exception as e:
-                st.warning(f"Could not parse metadata structure: {e}")
+                st.warning(f"Could not parse metadata structure. Some details might be unavailable.")
+                is_dev_mode = st.session_state.get("developer_mode_active", False)
+                if is_dev_mode:  # Only show detailed error in dev mode
+                    utils.display_page_error(e, run_id=run_id, stage_name="Metadata Parsing", dev_mode=is_dev_mode)
                 # Try to access as plain dict if Pydantic fails
                 # Create a simple object that allows attribute access
                 class SimpleNamespace:
@@ -275,7 +284,7 @@ def show_results_page():
                     st.image(
                         str(shap_plot_full_path), 
                         caption="SHAP Global Feature Importance Summary",
-                        use_column_width=True
+                        use_container_width=True
                     )
                     
                     # Show plot file info
@@ -524,13 +533,11 @@ def show_results_page():
                 st.session_state['current_page'] = 'upload'
                 st.rerun()
 
-        # Display Current Run ID (sidebar or footer)
-        st.divider()
-        st.info(f"📋 **Current Run ID:** `{run_id}` - Keep this ID to reference this analysis later.")
+
 
     except Exception as e:
-        st.error(f"❌ Error loading run information: {str(e)}")
-        st.exception(e)
+        is_dev_mode = st.session_state.get("developer_mode_active", False)
+        utils.display_page_error(e, run_id=st.session_state.get('run_id'), stage_name="Results Display", dev_mode=is_dev_mode)
         
         # Still provide option to start new run
         st.divider()

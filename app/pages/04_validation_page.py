@@ -13,7 +13,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 from pipeline.step_3_validation import validation_runner
-from common import constants, storage, schemas
+from common import constants, storage, schemas, utils
 
 
 def show_validation_page():
@@ -35,31 +35,13 @@ def show_validation_page():
     # Display Current Run ID
     st.info(f"**Current Run ID:** {run_id}")
     
-    # Debug info (can be removed later)
-    if st.checkbox("🔧 Show Debug Info", value=False):
-        st.write("**Session State:**")
-        st.write(f"- force_validation_rerun: {st.session_state.get('force_validation_rerun', 'Not set')}")
-        st.write(f"- current_page: {st.session_state.get('current_page', 'Not set')}")
-        
-        # Check validation file timestamp
-        try:
-            validation_file_path = storage.get_run_dir(run_id) / constants.VALIDATION_FILENAME
-            if validation_file_path.exists():
-                import os
-                mtime = os.path.getmtime(validation_file_path)
-                from datetime import datetime
-                last_modified = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
-                st.write(f"- validation.json last modified: {last_modified}")
-            else:
-                st.write("- validation.json: Not found")
-        except Exception as e:
-            st.write(f"- validation.json: Error checking ({e})")
+    # Introductory text
+    st.write("This step validates your data against the confirmed schema and data quality expectations using Great Expectations. Review the results before proceeding.")
+    
+
     
     # Display Existing Results (if page is revisited)
     st.subheader("Validation Status")
-    
-    # Check if user requested a re-run
-    force_rerun = st.session_state.get('force_validation_rerun', False)
     
     try:
         # Check validation status from status.json first
@@ -68,7 +50,7 @@ def show_validation_page():
                            status_data.get('stage') == constants.VALIDATION_STAGE and 
                            status_data.get('status') == 'failed')
         
-        if validation_failed and not force_rerun:
+        if validation_failed:
             # Show validation failure banner
             st.error("🚫 **Pipeline Stopped: Data Validation Failed**")
             st.error("Critical data quality issues were found that prevent safe model training.")
@@ -100,26 +82,18 @@ def show_validation_page():
             st.info("2. **Re-upload corrected data** - Start a new run with the fixed dataset")
             st.info("3. **Review data requirements** - Ensure your data meets ML modeling standards")
             
-            # Action buttons
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("🔄 Start Over with New Data", type="primary", use_container_width=True):
-                    # Clear session and go back to upload
-                    if 'run_id' in st.session_state:
-                        del st.session_state['run_id']
-                    st.session_state['current_page'] = 'upload'
-                    st.rerun()
-            
-            with col2:
-                if st.button("🔄 Re-run Validation", use_container_width=True):
-                    # Set session state to force re-run and refresh page
-                    st.session_state['force_validation_rerun'] = True
-                    st.rerun()
+            # Action button
+            if st.button("🔄 Start Over with New Data", type="primary", use_container_width=True):
+                # Clear session and go back to upload
+                if 'run_id' in st.session_state:
+                    del st.session_state['run_id']
+                st.session_state['current_page'] = 'upload'
+                st.rerun()
             
             return  # Exit early, don't show normal validation content
         
-        # Try to read existing validation.json (unless force rerun)
-        validation_report_data = None if force_rerun else storage.read_json(run_id, constants.VALIDATION_FILENAME)
+        # Try to read existing validation.json
+        validation_report_data = storage.read_json(run_id, constants.VALIDATION_FILENAME)
         
         if validation_report_data is not None:
             st.success("✅ Data validation has already been completed for this run.")
@@ -247,57 +221,86 @@ def show_validation_page():
                         else:
                             st.info("No detailed failure information available.")
                 
-                # Navigation to next step (only show if validation is already complete)
-                st.subheader("Next Steps")
-                col_nav1, col_nav2 = st.columns([3, 1])
+                # Continue button (only show if validation allows proceeding and validation not just completed)
+                success_rate = (validation_summary.successful_expectations / validation_summary.total_expectations * 100) if validation_summary.total_expectations > 0 else 0
+                can_proceed = validation_summary.overall_success or success_rate >= 95.0
+                validation_just_completed = st.session_state.get('validation_run_complete', False)
                 
-                with col_nav1:
-                    if st.button("🚀 Proceed to Data Preparation", type="primary", use_container_width=True):
-                        st.session_state['current_page'] = 'prep'
-                        st.rerun()
-                
-                with col_nav2:
-                    if st.button("🔄 Re-run", use_container_width=True):
-                        # Set session state to force re-run and refresh page
-                        st.session_state['force_validation_rerun'] = True
-                        st.rerun()
+                if not validation_just_completed:
+                    if can_proceed:
+                        if st.button("➡️ Continue to Data Preparation", type="primary", use_container_width=True, key="continue_to_prep"):
+                            st.session_state['current_page'] = 'prep'
+                            st.rerun()
+                    else:
+                        # Show disabled button with explanation when validation failed
+                        st.button("➡️ Continue to Data Preparation", type="primary", use_container_width=True, disabled=True, 
+                                help="Cannot proceed - validation failed with critical issues. Fix your data and start a new run.")
+                        st.warning("⚠️ **Cannot proceed to data preparation.** Validation found critical issues that must be resolved first.")
                 
             except Exception as e:
-                st.error(f"Error parsing validation results: {str(e)}")
-                st.json(validation_report_data)  # Show raw data for debugging
+                is_dev_mode = st.session_state.get("developer_mode_active", False)
+                utils.display_page_error(e, run_id=run_id, stage_name=constants.VALIDATION_STAGE, dev_mode=is_dev_mode)
+                if is_dev_mode:
+                    st.json(validation_report_data)  # Show raw data for debugging in dev mode
         
         else:
             st.info("⏳ Data validation has not been run yet for this run.")
     
     except Exception as e:
-        st.error(f"Error checking validation status: {str(e)}")
+        is_dev_mode = st.session_state.get("developer_mode_active", False)
+        utils.display_page_error(e, run_id=run_id, stage_name=constants.VALIDATION_STAGE, dev_mode=is_dev_mode)
         validation_report_data = None
     
-    # Run Validation Button (show if no existing results or user wants to re-run)
+    # Show continue button if validation was just completed
+    if st.session_state.get('validation_run_complete', False):
+        # Check if the just-completed validation allows proceeding
+        try:
+            validation_report_data = storage.read_json(run_id, constants.VALIDATION_FILENAME)
+            if validation_report_data:
+                validation_summary = schemas.ValidationReportSummary(**validation_report_data)
+                success_rate = (validation_summary.successful_expectations / validation_summary.total_expectations * 100) if validation_summary.total_expectations > 0 else 0
+                can_proceed = validation_summary.overall_success or success_rate >= 95.0
+                
+                if can_proceed:
+                    if st.button("➡️ Continue to Data Preparation", type="primary", use_container_width=True, key="continue_after_run"):
+                        st.session_state['current_page'] = 'prep'
+                        st.session_state.pop('validation_run_complete', None)
+                        st.rerun()
+                else:
+                    # Show disabled button when validation failed
+                    st.button("➡️ Continue to Data Preparation", type="primary", use_container_width=True, disabled=True, 
+                            help="Cannot proceed - validation failed with critical issues. Fix your data and start a new run.")
+                    st.warning("⚠️ **Cannot proceed to data preparation.** Validation found critical issues that must be resolved first.")
+                    
+                    # Provide option to start over
+                    if st.button("🔄 Start Over with New Data", type="secondary", use_container_width=True):
+                        # Clear session and go back to upload
+                        if 'run_id' in st.session_state:
+                            del st.session_state['run_id']
+                        st.session_state.pop('validation_run_complete', None)
+                        st.session_state['current_page'] = 'upload'
+                        st.rerun()
+        except Exception:
+            # If we can't read validation results, don't show continue button
+            st.error("Error reading validation results. Cannot determine if proceeding is safe.")
+    
+    # Run Validation Button (show if no existing results)
     if validation_report_data is None:
-        if force_rerun:
-            st.subheader("Re-run Data Validation")
-            st.info("⚠️ **Re-running validation** - This will overwrite previous results.")
-        else:
-            st.subheader("Run Data Validation")
-            st.write("This step will validate your data against the confirmed schema using Great Expectations.")
+        st.subheader("Run Data Validation")
+        st.write("This step will validate your data against the confirmed schema using Great Expectations.")
         
         # Check if validation is already running to prevent multiple runs
         validation_running = st.session_state.get('validation_running', False)
         
         if validation_running:
             st.warning("⏳ Validation is currently running. Please wait...")
-            st.button("Run Data Validation Checks", type="primary", use_container_width=True, disabled=True)
-        elif st.button("Run Data Validation Checks", type="primary", use_container_width=True):
+            st.button("🚀 Start Data Validation", type="primary", use_container_width=True, disabled=True)
+        elif st.button("🚀 Start Data Validation", type="primary", use_container_width=True):
             # Set running flag
             st.session_state['validation_running'] = True
             
             with st.spinner("Running validation..."):
                 try:
-                    # Clear the force rerun flag before running
-                    if 'force_validation_rerun' in st.session_state:
-                        del st.session_state['force_validation_rerun']
-                    
                     # Call the validation runner
                     stage_success = validation_runner.run_validation_stage(run_id)
                     
@@ -334,19 +337,16 @@ def show_validation_page():
                                 with col3:
                                     st.metric("Failed", validation_summary.failed_expectations)
                                 
-                                # Auto-navigate to next step immediately
+                                # Set completion flag and refresh page to show continue button
                                 st.balloons()
-                                st.success("🚀 Proceeding to Data Preparation...")
-                                st.session_state['current_page'] = 'prep'
+                                st.session_state['validation_run_complete'] = True
                                 st.rerun()
                                 
-                                # Clear running flag on successful completion
-                                if 'validation_running' in st.session_state:
-                                    del st.session_state['validation_running']
-                                
                             except Exception as e:
-                                st.error(f"Error parsing validation results: {str(e)}")
-                                st.json(validation_report_data)
+                                is_dev_mode = st.session_state.get("developer_mode_active", False)
+                                utils.display_page_error(e, run_id=run_id, stage_name=constants.VALIDATION_STAGE, dev_mode=is_dev_mode)
+                                if is_dev_mode:
+                                    st.json(validation_report_data)
                         else:
                             st.error("Validation completed but results could not be loaded.")
                     
@@ -389,28 +389,20 @@ def show_validation_page():
                                     for error in status_data['errors']:
                                         st.code(error)
                         except:
-                            st.error("❌ Validation stage execution failed. Check logs.")
-                        
-                        # Show log file location
-                        run_dir_path = storage.get_run_dir(run_id)
-                        log_path = run_dir_path / constants.STAGE_LOG_FILENAMES[constants.VALIDATION_STAGE]
-                        st.info(f"Check log file for more details: `{log_path}`")
+                            # Regular execution error - use standardized error handling
+                            execution_error = Exception("Validation stage execution failed.")
+                            is_dev_mode = st.session_state.get("developer_mode_active", False)
+                            utils.display_page_error(execution_error, run_id=run_id, stage_name=constants.VALIDATION_STAGE, dev_mode=is_dev_mode)
                 
                 except Exception as e:
-                    st.error(f"❌ An error occurred during validation: {str(e)}")
-                    st.exception(e)
+                    is_dev_mode = st.session_state.get("developer_mode_active", False)
+                    utils.display_page_error(e, run_id=run_id, stage_name=constants.VALIDATION_STAGE, dev_mode=is_dev_mode)
                 finally:
                     # Always clear the running flag
                     if 'validation_running' in st.session_state:
                         del st.session_state['validation_running']
     
-    # Navigation section (only show if validation not yet run)
-    if validation_report_data is None:
-        st.divider()
-        
-        if st.button("← Back to Schema Confirmation", use_container_width=True):
-            st.session_state['current_page'] = 'schema_confirmation'
-            st.rerun()
+
 
 
 if __name__ == "__main__":

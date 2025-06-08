@@ -173,7 +173,6 @@ logs/
 *.py.ipynb 
 
 # Test data
-tests/data/
-tests/data/
+tests/data/runs/
 
 *.cursor

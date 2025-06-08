@@ -1,0 +1,101 @@
+applicant_age,annual_income,credit_score,employment_years,loan_amount,debt_to_income_ratio,education_level,property_type,approved
+21,88197,734,1.3,70364,0.234,Bachelors,Single Family,1
+46,25000,578,6.9,98696,0.206,Masters,Single Family,0
+38,91992,850,7.5,151630,0.282,PhD,Single Family,1
+18,285238,732,1.1,218293,0.242,High School,Single Family,1
+28,59119,649,8.6,107797,0.06,Bachelors,Single Family,1
+54,61241,625,3.1,362916,0.061,Masters,Single Family,1
+18,66824,639,7.6,244566,0.295,Masters,Single Family,1
+29,25000,540,1.4,114718,0.298,High School,Single Family,0
+50,77480,638,2.0,407284,0.386,Masters,Single Family,1
+24,25000,683,15.4,506321,0.357,High School,Townhouse,1
+26,46420,719,5.4,184817,0.214,Masters,Townhouse,1
+33,126477,719,7.4,168398,0.269,High School,Single Family,1
+52,38598,617,5.8,50000,0.21,Masters,Single Family,0
+27,81052,480,1.1,144359,0.128,PhD,Multi-family,1
+29,110165,569,3.2,158398,0.182,Bachelors,Single Family,1
+29,70922,843,8.3,243379,0.086,High School,Condo,1
+61,26358,757,5.6,174788,0.283,Bachelors,Condo,1
+61,49149,694,0.0,243116,0.117,Bachelors,Single Family,1
+47,194414,558,0.5,682381,0.216,Bachelors,Single Family,1
+39,25000,650,2.1,130893,0.389,High School,Multi-family,1
+43,50849,499,14.4,135035,0.061,Masters,Single Family,1
+52,43080,583,3.4,70174,0.103,Bachelors,Single Family,1
+23,64508,620,1.6,198619,0.155,High School,Single Family,0
+49,93998,606,2.2,436927,0.38,Bachelors,Single Family,1
+19,157521,764,1.2,50000,0.368,High School,Townhouse,1
+27,51019,479,2.7,117405,0.107,High School,Single Family,0
+45,97685,546,1.2,205833,0.393,Bachelors,Single Family,1
+18,80978,485,9.3,394808,0.313,Masters,Single Family,1
+33,79754,501,3.0,271676,0.239,Masters,Townhouse,1
+24,42776,664,1.6,259482,0.376,High School,Multi-family,1
+31,32981,457,13.5,167145,0.358,Bachelors,Single Family,0
+18,31010,740,1.9,294069,0.187,Masters,Condo,1
+18,38110,620,12.0,450230,0.28,High School,Single Family,1
+26,72773,658,0.2,50964,0.277,PhD,Condo,1
+46,94718,688,6.1,358219,0.164,High School,Single Family,1
+32,72851,597,3.3,184806,0.113,High School,Townhouse,1
+35,43162,773,2.9,130885,0.213,Bachelors,Single Family,1
+43,177314,626,0.2,50000,0.142,Bachelors,Townhouse,1
+24,149256,721,0.2,66289,0.174,High School,Single Family,1
+38,48518,626,2.0,778029,0.384,Bachelors,Single Family,0
+25,36608,684,14.7,115293,0.211,Bachelors,Condo,1
+18,64875,683,4.8,83973,0.29,Masters,Single Family,1
+30,128345,679,2.3,138819,0.168,Masters,Single Family,1
+41,73259,533,4.7,110189,0.399,High School,Single Family,1
+39,83786,702,1.2,220920,0.281,High School,Multi-family,1
+34,52830,611,0.9,673101,0.119,Bachelors,Single Family,1
+63,78894,725,2.2,125088,0.084,Masters,Condo,1
+39,151573,391,10.0,226274,0.38,Bachelors,Single Family,1
+46,51963,474,3.6,79880,0.381,Bachelors,Single Family,1
+61,65387,693,1.8,674823,0.267,Bachelors,Single Family,0
+19,69869,850,15.0,232653,0.056,Masters,Multi-family,1
+22,71135,750,8.5,84171,0.129,Bachelors,Condo,1
+55,25718,568,2.0,412304,0.33,Masters,Single Family,0
+25,25000,446,17.9,522334,0.356,Masters,Single Family,0
+35,32542,739,21.9,227575,0.209,Masters,Single Family,0
+47,66361,640,2.6,53882,0.178,Masters,Single Family,1
+45,83651,720,5.3,834182,0.146,High School,Single Family,1
+56,43638,663,2.6,256317,0.091,Bachelors,Townhouse,0
+52,137098,653,1.5,510137,0.091,High School,Condo,1
+47,55060,850,0.4,128715,0.383,Bachelors,Single Family,1
+25,60735,649,1.5,145389,0.333,Bachelors,Multi-family,1
+44,53408,630,1.6,218476,0.108,Masters,Single Family,0
+38,65024,635,2.5,487377,0.122,High School,Single Family,1
+19,91563,579,1.0,224238,0.279,Masters,Single Family,1
+52,89455,768,15.4,73174,0.318,Bachelors,Condo,1
+44,34997,607,0.5,246634,0.334,Masters,Townhouse,0
+35,149686,726,4.9,736526,0.107,Bachelors,Condo,1
+32,31103,684,2.9,210811,0.394,Bachelors,Multi-family,0
+20,62921,796,2.8,221811,0.13,Bachelors,Condo,1
+37,50892,700,2.3,72841,0.256,PhD,Townhouse,0
+40,31974,504,10.1,65100,0.256,Masters,Single Family,0
+25,57355,490,1.6,120080,0.389,Bachelors,Condo,1
+48,38469,819,0.1,154023,0.28,High School,Condo,1
+21,62682,576,12.5,217362,0.255,Masters,Single Family,1
+18,76416,491,10.0,228396,0.232,High School,Townhouse,1
+47,145111,569,1.6,720426,0.318,Bachelors,Condo,1
+30,72152,801,3.7,209613,0.087,Masters,Single Family,1
+33,41579,479,0.6,468649,0.051,High School,Single Family,0
+24,47435,546,0.5,193805,0.383,High School,Single Family,0
+18,65256,569,9.1,637427,0.225,Masters,Single Family,1
+50,63460,499,2.6,50000,0.165,Masters,Single Family,0
+26,144041,507,5.4,123882,0.179,Bachelors,Single Family,1
+54,138595,467,14.3,439107,0.331,High School,Condo,1
+44,48374,594,1.4,174345,0.184,High School,Single Family,0
+31,43170,607,0.1,421382,0.32,PhD,Single Family,1
+21,25000,568,0.1,272154,0.204,Masters,Condo,0
+26,43163,451,6.2,426246,0.345,Masters,Condo,0
+20,33365,800,12.9,326611,0.077,Bachelors,Condo,1
+60,48494,490,3.1,342830,0.218,High School,Single Family,0
+36,75890,683,2.4,660027,0.213,High School,Single Family,0
+48,66730,521,3.9,440317,0.143,Bachelors,Single Family,0
+19,58930,730,9.8,442908,0.38,Masters,Condo,1
+37,67632,764,5.3,203293,0.367,Masters,Townhouse,1
+49,55627,544,1.3,125566,0.205,Masters,Single Family,1
+30,67528,419,7.4,117998,0.084,High School,Single Family,1
+47,25000,733,0.7,364699,0.122,Bachelors,Condo,1
+21,51048,850,0.9,50000,0.145,High School,Condo,1
+18,56139,699,4.7,70286,0.219,High School,Single Family,1
+39,48890,669,1.4,92546,0.168,Bachelors,Single Family,1
+30,52645,748,6.1,164058,0.321,Bachelors,Single Family,1

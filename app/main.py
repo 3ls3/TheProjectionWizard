@@ -62,6 +62,7 @@ def clear_run_session_state():
     # Upload-related temporary data
     st.session_state.pop('uploaded_file_content', None)
     st.session_state.pop('processing_file', None)
+    st.session_state.pop('last_processed_file', None)
     
     # Clear any confirmation states
     st.session_state.pop('confirm_new_upload', None)

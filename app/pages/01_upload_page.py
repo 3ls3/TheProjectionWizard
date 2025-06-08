@@ -6,7 +6,7 @@ Implements the UI for CSV file upload with the exact specifications required.
 import streamlit as st
 from pathlib import Path
 from pipeline.step_1_ingest import ingest_logic
-from common import constants
+from common import constants, utils
 from common.schemas import StageStatus
 from common.storage import read_json
 
@@ -16,6 +16,13 @@ def show_upload_page():
     
     # Page Title
     st.title("Step 1: Upload Your Data")
+    
+    # Display current run ID if available
+    if 'run_id' in st.session_state:
+        st.info(f"**Current Run ID:** {st.session_state['run_id']}")
+    
+    # Introductory text
+    st.write("Please upload your dataset in CSV format to begin the analysis pipeline.")
     
     # Initialize processing state in session if not exists
     if 'processing_file' not in st.session_state:
@@ -55,34 +62,40 @@ def show_upload_page():
                     status_data = read_json(run_id, constants.STATUS_FILE)
                     
                     if status_data and StageStatus(**status_data).status == 'completed':
-                        st.success(f"File uploaded successfully! Run ID: {run_id}")
-                        st.info(f"Data saved to data/runs/{run_id}/{constants.ORIGINAL_DATA_FILE}")
-                        
-                        # Auto-navigate to next step immediately
-                        st.success("🚀 Proceeding to Target Confirmation...")
-                        st.session_state['current_page'] = 'target_confirmation'
-                        # Clear processing state before rerun
+                        # Clear processing state immediately
                         st.session_state['processing_file'] = False
+                        
+                        # Display results section
+                        st.success(f"File uploaded successfully! Run ID: {run_id}")
+                        st.info(f"**Current Run ID:** {run_id}")
+                        st.caption(f"Data saved to data/runs/{run_id}/{constants.ORIGINAL_DATA_FILE}")
+                        
+                        # Trigger rerun to refresh page state after processing
                         st.rerun()
                     
                     else:
-                        st.error(f"File upload or initial processing failed for Run ID: {run_id}. Check logs in data/runs/{run_id}/{constants.STAGE_LOG_FILENAMES[constants.INGEST_STAGE]}.")
-                        
-                        # Display error message from status.json if available
+                        # Construct comprehensive error message
+                        error_message = f"File upload or initial processing failed for Run ID: {run_id}."
                         if status_data:
                             status_obj = StageStatus(**status_data)
                             if status_obj.message:
-                                st.error(f"Error details: {status_obj.message}")
+                                error_message += f" Details: {status_obj.message}"
                             if status_obj.errors:
-                                st.error("Specific errors:")
-                                for error in status_obj.errors:
-                                    st.code(error)
+                                error_message += f" Specific errors: {', '.join(status_obj.errors)}"
+                        
+                        # Use standardized error display
+                        display_exception = Exception(error_message)
+                        is_dev_mode = st.session_state.get("developer_mode_active", False)
+                        utils.display_page_error(display_exception, run_id=run_id, stage_name=constants.INGEST_STAGE, dev_mode=is_dev_mode)
                         
                         # Clear processing state on error
                         st.session_state['processing_file'] = False
                         
                 except Exception as e:
-                    st.error(f"An unexpected error occurred during file processing: {str(e)}")
+                    # Use standardized error display
+                    is_dev_mode = st.session_state.get("developer_mode_active", False)
+                    utils.display_page_error(e, run_id=st.session_state.get('run_id'), stage_name=constants.INGEST_STAGE, dev_mode=is_dev_mode)
+                    
                     # Clear processing state on exception
                     st.session_state['processing_file'] = False
                     st.session_state['last_processed_file'] = None  # Allow retry on error
@@ -92,10 +105,19 @@ def show_upload_page():
         elif st.session_state['last_processed_file'] == file_id and 'run_id' in st.session_state:
             # File already processed successfully
             st.success(f"File already processed! Run ID: {st.session_state['run_id']}")
-            st.info(f"Data saved to data/runs/{st.session_state['run_id']}/{constants.ORIGINAL_DATA_FILE}")
-            
-            # Show button to proceed to next step
-            if st.button("🚀 Proceed to Target Confirmation"):
+            st.info(f"**Current Run ID:** {st.session_state['run_id']}")
+            st.caption(f"Data saved to data/runs/{st.session_state['run_id']}/{constants.ORIGINAL_DATA_FILE}")
+    
+    # Show "Continue to Next Step" button if file has been processed successfully
+    if (uploaded_file is not None and 
+        'run_id' in st.session_state and 
+        st.session_state.get('last_processed_file') is not None and
+        not st.session_state.get('processing_file', False)):
+        
+        # Check if this file matches the last processed file
+        file_id = f"{uploaded_file.name}_{uploaded_file.size}_{hash(uploaded_file.getvalue())}"
+        if st.session_state['last_processed_file'] == file_id:
+            if st.button("➡️ Continue to Target Confirmation", type="primary", use_container_width=True, key="continue_to_target"):
                 st.session_state['current_page'] = 'target_confirmation'
                 st.rerun()
 

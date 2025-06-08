@@ -37,9 +37,52 @@ def get_page_config():
     }
 
 
+def clear_run_session_state():
+    """
+    Clear all run-specific session state variables when starting a new run.
+    
+    This helper function ensures consistent cleanup of session state across
+    different parts of the application (Upload Data confirmation, Start New Run button).
+    """
+    # Core run data
+    st.session_state.pop('run_id', None)
+    st.session_state.pop('current_page', None)
+    
+    # UI-specific overrides and confirmations
+    st.session_state.pop('ui_feature_schemas_override', None)
+    st.session_state.pop('target_confirmation_complete', None)
+    st.session_state.pop('schema_confirmation_complete', None)
+    
+    # Processing flags and temporary states
+    st.session_state.pop('validation_running', None)
+    st.session_state.pop('prep_running', None)
+    st.session_state.pop('automl_running', None)
+    st.session_state.pop('explain_running', None)
+    
+    # Upload-related temporary data
+    st.session_state.pop('uploaded_file_content', None)
+    st.session_state.pop('processing_file', None)
+    
+    # Clear any confirmation states
+    st.session_state.pop('confirm_new_upload', None)
+
+
 def show_navigation_sidebar():
     """Display navigation options in the sidebar."""
     st.sidebar.title("🔮 Projection Wizard")
+    
+    # Define unified page configuration for navigation (available to both branches)
+    current_page = st.session_state.get('current_page', 'upload')
+    pages_config = [
+        {'id': 'upload', 'name': 'Upload Data'},
+        {'id': 'target_confirmation', 'name': 'Target Confirmation'},
+        {'id': 'schema_confirmation', 'name': 'Schema Confirmation'}, 
+        {'id': 'validation', 'name': 'Data Validation'},
+        {'id': 'prep', 'name': 'Data Preparation'},
+        {'id': 'automl', 'name': 'Model Training'},
+        {'id': 'explain', 'name': 'Model Explanation'},
+        {'id': 'results', 'name': 'Results'}
+    ]
     
     # Show current run info if available
     if 'run_id' in st.session_state:
@@ -57,135 +100,160 @@ def show_navigation_sidebar():
             st.sidebar.error("🚫 **Pipeline Stopped**")
             st.sidebar.error(validation_summary.message or "Validation failed - fix data issues")
         
-        # Show progress indicator
-        current_page = st.session_state.get('current_page', 'upload')
-        pages = ['upload', 'target_confirmation', 'schema_confirmation', 'validation', 'prep', 'automl', 'explain', 'results']
-        page_names = ['Upload Data', 'Target Confirmation', 'Schema Confirmation', 'Data Validation', 'Data Preparation', 'Model Training', 'Model Explanation', 'Results']
-        
-        st.sidebar.subheader("Pipeline Progress")
-        current_index = pages.index(current_page) if current_page in pages else 0
-        
-        # Enhanced emoji logic considering stage status
+        current_index = next((i for i, p in enumerate(pages_config) if p['id'] == current_page), 0)
         validation_failed = validation_summary.status == "failed_critically"
+        validation_index = next((i for i, p in enumerate(pages_config) if p['id'] == 'validation'), 3)
+    else:
+        # No run_id - provide default values for status summaries
+        validation_summary = status_utils.StageStatusSummary(status="pending", message="No run active", can_proceed=False)
+        prep_summary = status_utils.StageStatusSummary(status="pending", message="No run active", can_proceed=False)
+        automl_summary = status_utils.StageStatusSummary(status="pending", message="No run active", can_proceed=False)
+        explain_summary = status_utils.StageStatusSummary(status="pending", message="No run active", can_proceed=False)
         
-        for i, (page, name) in enumerate(zip(pages, page_names)):
-            if page == current_page:
-                st.sidebar.write(f"👉 **{i+1}. {name}**")
-            elif page == 'validation' and validation_failed:
-                st.sidebar.write(f"🚫 {i+1}. {name}")
-            elif validation_failed and i > pages.index('validation'):
-                # Subsequent stages are blocked if validation failed
-                st.sidebar.write(f"🚫 {i+1}. {name}")
-            elif i < current_index:
-                st.sidebar.write(f"✅ {i+1}. {name}")
-            else:
-                st.sidebar.write(f"⏳ {i+1}. {name}")
+        current_index = 0
+        validation_failed = False
+        validation_index = next((i for i, p in enumerate(pages_config) if p['id'] == 'validation'), 3)
     
     st.sidebar.divider()
     
-    # Navigation buttons
-    st.sidebar.subheader("Navigation")
+    # Unified Pipeline Steps (Navigation + Progress)
+    st.sidebar.subheader("Pipeline Steps")
     
-    # Always available: Upload page
-    if st.sidebar.button("📁 Upload Data", use_container_width=True):
-        st.session_state['current_page'] = 'upload'
-        st.rerun()
-    
-    # Available after upload: Target confirmation, Schema confirmation, Data validation
+    # Create unified navigation buttons with progress emojis
     if 'run_id' in st.session_state:
-        if st.sidebar.button("🎯 Target Confirmation", use_container_width=True):
-            st.session_state['current_page'] = 'target_confirmation'
-            st.rerun()
+        # Run exists - show all buttons with appropriate status
+        for i, page_config in enumerate(pages_config):
+            page_id = page_config['id']
+            page_name = page_config['name']
             
-        if st.sidebar.button("📋 Schema Confirmation", use_container_width=True):
-            st.session_state['current_page'] = 'schema_confirmation'
-            st.rerun()
+            # Determine emoji based on progress logic
+            if page_id == current_page:
+                emoji = "👉"
+            elif page_id == 'validation' and validation_failed:
+                emoji = "🚫"
+            elif validation_failed and i > validation_index:
+                emoji = "🚫"  # Subsequent stages blocked if validation failed
+            elif i < current_index:
+                emoji = "✅"  # Completed steps
+            else:
+                emoji = "⏳"  # Pending steps
             
-        if st.sidebar.button("🔍 Data Validation", use_container_width=True):
-            st.session_state['current_page'] = 'validation'
-            st.rerun()
-        
-        # Data Preparation button
-        prep_disabled = not validation_summary.can_proceed
-        prep_help = None
-        if validation_summary.status == "failed_critically":
-            prep_help = validation_summary.message or "❌ Validation critically failed - fix data issues first"
-        elif not validation_summary.can_proceed:
-            prep_help = "Complete data validation first"
-        
-        if prep_disabled:
-            st.sidebar.button("🔧 Data Preparation", disabled=True, help=prep_help)
-        else:
-            if st.sidebar.button("🔧 Data Preparation", use_container_width=True):
-                st.session_state['current_page'] = 'prep'
-                st.rerun()
-        
-        # Model Training button
-        training_disabled = not (validation_summary.can_proceed and prep_summary.can_proceed)
-        training_help = None
-        if validation_summary.status == "failed_critically":
-            training_help = validation_summary.message or "❌ Validation critically failed - fix data issues first"
-        elif not prep_summary.can_proceed:
-            training_help = "Complete data preparation first"
-        elif not validation_summary.can_proceed:
-            training_help = "Complete data validation first"
-        
-        if training_disabled:
-            st.sidebar.button("🤖 Model Training", disabled=True, help=training_help)
-        else:
-            if st.sidebar.button("🤖 Model Training", use_container_width=True):
-                st.session_state['current_page'] = 'automl'
-                st.rerun()
-        
-        # Model Explanation button
-        explain_disabled = not (validation_summary.can_proceed and prep_summary.can_proceed and automl_summary.can_proceed)
-        explain_help = None
-        if validation_summary.status == "failed_critically":
-            explain_help = validation_summary.message or "❌ Validation critically failed - fix data issues first"
-        elif not automl_summary.can_proceed:
-            explain_help = "Complete model training first"
-        elif not prep_summary.can_proceed:
-            explain_help = "Complete data preparation first"
-        elif not validation_summary.can_proceed:
-            explain_help = "Complete data validation first"
-        
-        if explain_disabled:
-            st.sidebar.button("📊 Model Explanation", disabled=True, help=explain_help)
-        else:
-            if st.sidebar.button("📊 Model Explanation", use_container_width=True):
-                st.session_state['current_page'] = 'explain'
-                st.rerun()
-        
-        # Results button
-        results_disabled = not (validation_summary.can_proceed and prep_summary.can_proceed and 
-                               automl_summary.can_proceed and explain_summary.can_proceed)
-        results_help = None
-        if validation_summary.status == "failed_critically":
-            results_help = validation_summary.message or "❌ Validation critically failed - fix data issues first"
-        elif not explain_summary.can_proceed:
-            results_help = "Complete model explanation first"
-        elif not automl_summary.can_proceed:
-            results_help = "Complete model training first"
-        elif not prep_summary.can_proceed:
-            results_help = "Complete data preparation first"
-        elif not validation_summary.can_proceed:
-            results_help = "Complete data validation first"
-        
-        if results_disabled:
-            st.sidebar.button("📈 Results", disabled=True, help=results_help)
-        else:
-            if st.sidebar.button("📈 Results", use_container_width=True):
-                st.session_state['current_page'] = 'results'
-                st.rerun()
+            button_label = f"{emoji} {i+1}. {page_name}"
+            
+            # Determine disabled state and help text for each page
+            is_disabled = False
+            help_text = None
+            
+            if page_id == 'upload':
+                # Upload button - special confirmation handling
+                if st.sidebar.button(button_label, key=f"nav_{page_id}", use_container_width=True):
+                    if 'run_id' in st.session_state:
+                        # Active run exists - request confirmation
+                        st.session_state['confirm_new_upload'] = True
+                        st.rerun()
+                    else:
+                        # No active run - proceed directly
+                        st.session_state['current_page'] = 'upload'
+                        st.rerun()
+                        
+            elif page_id in ['target_confirmation', 'schema_confirmation', 'validation']:
+                # These are available after upload with run_id
+                if st.sidebar.button(button_label, key=f"nav_{page_id}", use_container_width=True):
+                    st.session_state['current_page'] = page_id
+                    st.rerun()
+                    
+            elif page_id == 'prep':
+                is_disabled = not validation_summary.can_proceed
+                if validation_summary.status == "failed_critically":
+                    help_text = validation_summary.message or "❌ Validation critically failed - fix data issues first"
+                elif not validation_summary.can_proceed:
+                    help_text = "Complete data validation first"
+                    
+            elif page_id == 'automl':
+                is_disabled = not (validation_summary.can_proceed and prep_summary.can_proceed)
+                if validation_summary.status == "failed_critically":
+                    help_text = validation_summary.message or "❌ Validation critically failed - fix data issues first"
+                elif not prep_summary.can_proceed:
+                    help_text = "Complete data preparation first"
+                elif not validation_summary.can_proceed:
+                    help_text = "Complete data validation first"
+                    
+            elif page_id == 'explain':
+                is_disabled = not (validation_summary.can_proceed and prep_summary.can_proceed and automl_summary.can_proceed)
+                if validation_summary.status == "failed_critically":
+                    help_text = validation_summary.message or "❌ Validation critically failed - fix data issues first"
+                elif not automl_summary.can_proceed:
+                    help_text = "Complete model training first"
+                elif not prep_summary.can_proceed:
+                    help_text = "Complete data preparation first"
+                elif not validation_summary.can_proceed:
+                    help_text = "Complete data validation first"
+                    
+            elif page_id == 'results':
+                is_disabled = not (validation_summary.can_proceed and prep_summary.can_proceed and 
+                                 automl_summary.can_proceed and explain_summary.can_proceed)
+                if validation_summary.status == "failed_critically":
+                    help_text = validation_summary.message or "❌ Validation critically failed - fix data issues first"
+                elif not explain_summary.can_proceed:
+                    help_text = "Complete model explanation first"
+                elif not automl_summary.can_proceed:
+                    help_text = "Complete model training first"
+                elif not prep_summary.can_proceed:
+                    help_text = "Complete data preparation first"
+                elif not validation_summary.can_proceed:
+                    help_text = "Complete data validation first"
+            
+            # Render button for prep, automl, explain, results with disabled/help logic
+            if page_id in ['prep', 'automl', 'explain', 'results']:
+                if is_disabled:
+                    st.sidebar.button(button_label, key=f"nav_{page_id}", disabled=True, help=help_text)
+                else:
+                    if st.sidebar.button(button_label, key=f"nav_{page_id}", use_container_width=True):
+                        st.session_state['current_page'] = page_id
+                        st.rerun()
     else:
-        # No run_id - disable all buttons except Upload Data
-        st.sidebar.button("🎯 Target Confirmation", disabled=True, help="Upload data first")
-        st.sidebar.button("📋 Schema Confirmation", disabled=True, help="Upload data first")
-        st.sidebar.button("🔍 Data Validation", disabled=True, help="Upload data first")
-        st.sidebar.button("🔧 Data Preparation", disabled=True, help="Upload data first")
-        st.sidebar.button("🤖 Model Training", disabled=True, help="Upload data first")
-        st.sidebar.button("📊 Model Explanation", disabled=True, help="Upload data first")
-        st.sidebar.button("📈 Results", disabled=True, help="Upload data first")
+        # No run_id - show all buttons but only upload is enabled
+        for i, page_config in enumerate(pages_config):
+            page_id = page_config['id']
+            page_name = page_config['name']
+            emoji = "⏳"  # All pending when no run
+            button_label = f"{emoji} {i+1}. {page_name}"
+            
+            if page_id == 'upload':
+                if st.sidebar.button(button_label, key=f"nav_{page_id}", use_container_width=True):
+                    st.session_state['current_page'] = 'upload'
+                    st.rerun()
+            else:
+                st.sidebar.button(button_label, key=f"nav_{page_id}", disabled=True, help="Upload data first")
+    
+    # Show confirmation dialog if requested
+    if st.session_state.get('confirm_new_upload', False):
+        st.sidebar.warning(f"⚠️ **Confirm New Upload**")
+        st.sidebar.warning(f"Starting a new upload will clear your current run (ID: `{st.session_state['run_id']}`). Do you want to proceed?")
+        
+        col1, col2 = st.sidebar.columns(2)
+        if col1.button("✅ Yes, Start New", key="yes_new_upload", use_container_width=True):
+            # Clear all run-specific session state
+            clear_run_session_state()
+            # Navigate to upload page
+            st.session_state['current_page'] = 'upload'
+            st.rerun()
+        
+        if col2.button("❌ No, Keep Run", key="no_new_upload", use_container_width=True):
+            # Just clear the confirmation flag
+            st.session_state.pop('confirm_new_upload', None)
+            st.rerun()
+    
+    # Developer Mode Toggle (PRD R1.6)
+    st.sidebar.divider()
+    dev_mode_enabled = st.sidebar.toggle(
+        "🔧 Developer Mode", 
+        key="developer_mode_toggle", 
+        value=st.session_state.get("developer_mode_active", False),
+        help="Show detailed debug information and stack traces on error pages."
+    )
+    # Store the state in session for other parts of the application to access
+    st.session_state["developer_mode_active"] = dev_mode_enabled
 
 
 def route_to_page():

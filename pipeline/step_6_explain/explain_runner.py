@@ -58,6 +58,29 @@ def run_explainability_stage(run_id: str) -> bool:
             "Explainability stage started"
         )
         
+        # Check if validation stage failed - prevent explainability from running
+        try:
+            status_data = storage.read_json(run_id, constants.STATUS_FILENAME)
+            if status_data and status_data.get('stage') == constants.VALIDATION_STAGE:
+                if status_data.get('status') == 'failed':
+                    error_msg = "Cannot run explainability: validation stage failed"
+                    validation_errors = status_data.get('errors', [])
+                    if validation_errors:
+                        error_msg += f" - Reasons: {'; '.join(validation_errors[:3])}"
+                    
+                    log.error(error_msg)
+                    logger.log_structured_error(
+                        structured_log,
+                        "validation_failed_prerequisite",
+                        error_msg,
+                        {"stage": constants.EXPLAIN_STAGE, "validation_errors": validation_errors}
+                    )
+                    _update_status_failed(run_id, error_msg)
+                    return False
+        except Exception as e:
+            log.warning(f"Could not check validation status: {e}")
+            # Continue execution - don't fail on status check errors
+        
         # Update status to running
         try:
             status_data = {

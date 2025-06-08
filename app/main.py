@@ -50,6 +50,18 @@ def show_navigation_sidebar():
         st.sidebar.subheader("Pipeline Progress")
         current_index = pages.index(current_page) if current_page in pages else 0
         
+        # Show validation failure banner if applicable
+        try:
+            from common import storage, constants
+            status_data = storage.read_json(st.session_state['run_id'], constants.STATUS_FILENAME)
+            if (status_data and 
+                status_data.get('stage') == constants.VALIDATION_STAGE and 
+                status_data.get('status') == 'failed'):
+                st.sidebar.error("🚫 **Pipeline Stopped**")
+                st.sidebar.error("Validation failed - fix data issues")
+        except:
+            pass
+        
         for i, (page, name) in enumerate(zip(pages, page_names)):
             if page == current_page:
                 st.sidebar.write(f"👉 **{i+1}. {name}**")
@@ -87,18 +99,31 @@ def show_navigation_sidebar():
     # Future pages (conditionally enabled)
     # Check if validation is complete and successful enough
     validation_complete = False
+    validation_failed = False
     if 'run_id' in st.session_state:
         try:
             from common import storage, constants, schemas
-            validation_data = storage.read_json(st.session_state['run_id'], constants.VALIDATION_FILENAME)
-            if validation_data:
-                validation_summary = schemas.ValidationReportSummary(**validation_data)
-                success_rate = (validation_summary.successful_expectations / validation_summary.total_expectations) if validation_summary.total_expectations > 0 else 0
-                validation_complete = validation_summary.overall_success or success_rate >= 0.95
+            
+            # First check status.json for validation failure
+            status_data = storage.read_json(st.session_state['run_id'], constants.STATUS_FILENAME)
+            if status_data and status_data.get('stage') == constants.VALIDATION_STAGE:
+                if status_data.get('status') == 'failed':
+                    validation_failed = True
+                    validation_complete = False
+                else:
+                    # Check validation results for success
+                    validation_data = storage.read_json(st.session_state['run_id'], constants.VALIDATION_FILENAME)
+                    if validation_data:
+                        validation_summary = schemas.ValidationReportSummary(**validation_data)
+                        success_rate = (validation_summary.successful_expectations / validation_summary.total_expectations) if validation_summary.total_expectations > 0 else 0
+                        validation_complete = validation_summary.overall_success or success_rate >= 0.95
         except:
             validation_complete = False
+            validation_failed = False
     
-    if validation_complete:
+    if validation_failed:
+        st.sidebar.button("🔧 Data Preparation", disabled=True, help="❌ Validation failed - fix data issues first")
+    elif validation_complete:
         if st.sidebar.button("🔧 Data Preparation", use_container_width=True):
             st.session_state['current_page'] = 'prep'
             st.rerun()
@@ -107,7 +132,7 @@ def show_navigation_sidebar():
     
     # Check if data preparation is complete
     prep_complete = False
-    if 'run_id' in st.session_state:
+    if 'run_id' in st.session_state and not validation_failed:
         try:
             from common import storage, constants
             status_data = storage.read_json(st.session_state['run_id'], constants.STATUS_FILENAME)
@@ -117,7 +142,9 @@ def show_navigation_sidebar():
         except:
             prep_complete = False
     
-    if prep_complete:
+    if validation_failed:
+        st.sidebar.button("🤖 Model Training", disabled=True, help="❌ Validation failed - fix data issues first")
+    elif prep_complete:
         if st.sidebar.button("🤖 Model Training", use_container_width=True):
             st.session_state['current_page'] = 'automl'
             st.rerun()
@@ -126,7 +153,7 @@ def show_navigation_sidebar():
     
     # Check if AutoML training is complete
     automl_complete = False
-    if 'run_id' in st.session_state:
+    if 'run_id' in st.session_state and not validation_failed:
         try:
             from common import storage, constants
             status_data = storage.read_json(st.session_state['run_id'], constants.STATUS_FILENAME)
@@ -136,7 +163,9 @@ def show_navigation_sidebar():
         except:
             automl_complete = False
     
-    if automl_complete:
+    if validation_failed:
+        st.sidebar.button("📊 Model Explanation", disabled=True, help="❌ Validation failed - fix data issues first")
+    elif automl_complete:
         if st.sidebar.button("📊 Model Explanation", use_container_width=True):
             st.session_state['current_page'] = 'explain'
             st.rerun()
@@ -145,7 +174,7 @@ def show_navigation_sidebar():
     
     # Check if explainability analysis is complete
     explain_complete = False
-    if 'run_id' in st.session_state:
+    if 'run_id' in st.session_state and not validation_failed:
         try:
             from common import storage, constants
             status_data = storage.read_json(st.session_state['run_id'], constants.STATUS_FILENAME)
@@ -155,7 +184,9 @@ def show_navigation_sidebar():
         except:
             explain_complete = False
     
-    if explain_complete:
+    if validation_failed:
+        st.sidebar.button("📈 Results", disabled=True, help="❌ Validation failed - fix data issues first")
+    elif explain_complete:
         if st.sidebar.button("📈 Results", use_container_width=True):
             st.session_state['current_page'] = 'results'
             st.rerun()

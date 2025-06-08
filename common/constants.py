@@ -112,7 +112,8 @@ VALIDATION_CONFIG = {
     "duplicate_threshold": 0.1,      # 10% duplicates triggers warning
     "cardinality_threshold": 50,     # High cardinality categorical threshold
     "outlier_std_threshold": 3,      # Standard deviations for outlier detection
-    "success_threshold": 80.0        # Minimum percentage of expectations that must pass
+    "success_threshold": 80.0,       # Minimum percentage of expectations that must pass
+    "pipeline_failure_threshold": 0.90  # Validation success rate below this stops pipeline
 }
 
 # Schema detection configuration

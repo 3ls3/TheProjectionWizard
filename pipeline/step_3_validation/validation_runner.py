@@ -223,17 +223,57 @@ def run_validation_stage(run_id: str) -> bool:
             "Metadata updated with validation results"
         )
         
-        # Update status.json
-        status_value = 'completed' if validation_summary['overall_success'] else 'completed'  # Stage completed regardless of validation results
+        # Update status.json - Fail pipeline if validation success rate is too low
+        validation_success_threshold = constants.VALIDATION_CONFIG.get("pipeline_failure_threshold", 0.90)  # 90% threshold for pipeline continuation
+        success_rate_decimal = successful_expectations / total_expectations if total_expectations > 0 else 0.0
+        
+        if success_rate_decimal < validation_success_threshold:
+            # Validation failed - stop pipeline execution
+            status_value = 'failed'
+            failure_reasons = []
+            failure_reasons.append(f"Validation success rate {success_rate:.1f}% is below required threshold {validation_success_threshold*100:.1f}%")
+            failure_reasons.append(f"Failed expectations: {failed_expectations}/{total_expectations}")
+            
+            # Add critical failure details if available
+            ge_results = ge_results_dict.get('results', [])
+            critical_failures = []
+            for result in ge_results:
+                if not result.get('success', True):
+                    expectation_config = result.get('expectation_config', {})
+                    expectation_type = expectation_config.get('expectation_type', 'unknown')
+                    column = expectation_config.get('kwargs', {}).get('column', 'table_level')
+                    
+                    # Identify critical failures that warrant pipeline stoppage
+                    if expectation_type in [
+                        "expect_column_to_exist",
+                        "expect_table_columns_to_match_ordered_list", 
+                        "expect_column_values_to_be_of_type"
+                    ]:
+                        critical_failures.append(f"{expectation_type} failed for {column}")
+            
+            if critical_failures:
+                failure_reasons.extend(critical_failures[:5])  # Limit to first 5 critical failures
+                
+            message = f"Pipeline stopped: Validation failed with {failed_expectations} critical issues"
+            
+        elif not validation_summary['overall_success']:
+            # Validation had issues but passed threshold - continue with warning
+            status_value = 'completed'
+            message = f"Validation completed with warnings: {failed_expectations} non-critical issues found"
+        else:
+            # Validation fully passed
+            status_value = 'completed' 
+            message = "Validation checks completed successfully"
+        
         status_data = {
             'stage': constants.VALIDATION_STAGE,
             'status': status_value,
-            'message': "Validation checks completed.",
+            'message': message,
             'timestamp': datetime.now(timezone.utc).isoformat(),
-            'errors': []
+            'errors': failure_reasons if status_value == 'failed' else []
         }
         storage.write_status(run_id, status_data)
-        logger_instance.info("Updated status.json")
+        logger_instance.info(f"Updated status.json with status: {status_value}")
         
         # Structured log: Status updated
         logger.log_structured_event(
@@ -265,10 +305,13 @@ def run_validation_stage(run_id: str) -> bool:
         )
         
         # Log overall result
-        if validation_summary['overall_success']:
+        if status_value == 'failed':
+            logger_instance.error(f"❌ Pipeline STOPPED: Validation failed with {failed_expectations}/{total_expectations} expectations ({success_rate:.1f}%)")
+            return False  # Signal pipeline failure
+        elif validation_summary['overall_success']:
             logger_instance.info(f"✅ Validation PASSED: {validation_summary['successful_expectations']}/{validation_summary['total_expectations']} expectations")
         else:
-            logger_instance.warning(f"⚠️ Validation had issues: {validation_summary['successful_expectations']}/{validation_summary['total_expectations']} expectations passed")
+            logger_instance.warning(f"⚠️ Validation completed with warnings: {validation_summary['successful_expectations']}/{validation_summary['total_expectations']} expectations passed ({success_rate:.1f}%)")
         
         return True
         

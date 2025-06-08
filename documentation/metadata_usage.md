@@ -84,10 +84,14 @@ The `metadata.json` file serves as the central state store for each pipeline run
 - Converts metadata dictionaries to Pydantic objects (`FeatureSchemaInfo`, `TargetInfo`)
 - Generates Great Expectations suite based on encoding roles
 - Saves detailed validation results to separate `validation.json` file
+- **Pipeline Failure Logic**: If validation success rate falls below threshold (default 90%), sets status to 'failed' in `status.json` and stops pipeline execution
 
 **Dependencies:** Requires completed schema definition (both target and features).
 
-**Notes:** Validation can complete even if some expectations fail - the stage reports completion status vs. data quality status separately.
+**Notes:** 
+- Validation can now **fail the entire pipeline** if success rate is below `constants.VALIDATION_CONFIG["pipeline_failure_threshold"]` (default 90%)
+- Critical failures (missing columns, wrong data types) are identified and logged as reasons for pipeline stoppage
+- When validation fails, `status.json` contains 'failed' status with detailed error reasons, preventing downstream stages from executing
 
 ---
 
@@ -98,6 +102,7 @@ The `metadata.json` file serves as the central state store for each pipeline run
 - **Reads:**
   - `target_info`: Used for target-aware cleaning and encoding
   - `feature_schemas`: Used to determine appropriate cleaning/encoding strategies per column
+  - **status.json**: Checks if validation stage failed before proceeding
 - **Writes:**
   - `prep_info`: Dictionary containing:
     - `cleaning_steps_performed`: List of strings describing cleaning actions taken
@@ -107,13 +112,18 @@ The `metadata.json` file serves as the central state store for each pipeline run
     - `final_shape_after_prep`: List `[rows, columns]` of the final dataset shape
 
 **Implementation:**
+- **Prerequisite Check**: Verifies validation stage did not fail before starting data preparation
 - Orchestrates cleaning (`cleaning_logic.py`), encoding (`encoding_logic.py`), and profiling (`profiling_logic.py`)
 - Saves ML-ready artifacts (encoders, scalers) to the `model/` directory
 - Converts metadata dictionaries to Pydantic objects for type safety
 
-**Dependencies:** Requires validation stage completion to ensure data quality checks are done.
+**Dependencies:** 
+- Requires validation stage completion to ensure data quality checks are done
+- **Will refuse to run** if `status.json` shows validation stage with 'failed' status
 
-**Notes:** The `encoders_scalers_info` contains paths to serialized sklearn transformers needed for future predictions.
+**Notes:** 
+- The `encoders_scalers_info` contains paths to serialized sklearn transformers needed for future predictions
+- Early termination prevents wasted computation on data known to have critical quality issues
 
 ---
 
@@ -124,6 +134,7 @@ The `metadata.json` file serves as the central state store for each pipeline run
 - **Reads:**
   - `target_info`: Used for task type and target column identification
   - `prep_info`: Validates that data preparation was completed
+  - **status.json**: Checks if validation stage failed before proceeding
 - **Writes:**
   - `automl_info`: Dictionary containing:
     - `tool_used`: "PyCaret" (identifies the AutoML tool)
@@ -136,13 +147,18 @@ The `metadata.json` file serves as the central state store for each pipeline run
     - `dataset_shape_for_training`: List `[rows, columns]` used for training
 
 **Implementation:**
+- **Prerequisite Check**: Verifies validation stage did not fail before starting model training
 - Delegates actual training to `pycaret_logic.py`
 - Validates that required preprocessing artifacts exist
 - Saves trained PyCaret pipeline to disk
 
-**Dependencies:** Requires prep stage completion for cleaned data and feature encoders.
+**Dependencies:** 
+- Requires prep stage completion for cleaned data and feature encoders
+- **Will refuse to run** if `status.json` shows validation stage with 'failed' status
 
-**Notes:** The saved PyCaret pipeline contains the entire preprocessing + model pipeline for easy deployment.
+**Notes:** 
+- The saved PyCaret pipeline contains the entire preprocessing + model pipeline for easy deployment
+- Prevents training models on data known to have critical quality issues
 
 ---
 
@@ -153,6 +169,7 @@ The `metadata.json` file serves as the central state store for each pipeline run
 - **Reads:**
   - `automl_info`: Used to locate the trained model (`pycaret_pipeline_path`) and get model metadata
   - `target_info`: Used for task-specific explanation approaches and target column identification
+  - **status.json**: Checks if validation stage failed before proceeding
 - **Writes:**
   - `explain_info`: Dictionary containing:
     - `tool_used`: "SHAP" (identifies the explainability tool)
@@ -165,14 +182,19 @@ The `metadata.json` file serves as the central state store for each pipeline run
     - `samples_used_for_explanation`: Number of data samples used for SHAP analysis
 
 **Implementation:**
+- **Prerequisite Check**: Verifies validation stage did not fail before starting explainability analysis
 - Loads the trained PyCaret pipeline from `automl_info.pycaret_pipeline_path`
 - Uses `shap_logic.py` to generate SHAP explanations and summary plots
 - Saves visualization artifacts to `plots/` directory
 - Validates metadata using `schemas.TargetInfo` and `schemas.AutoMLInfo` Pydantic objects
 
-**Dependencies:** Requires AutoML stage completion for trained model and cleaned data from prep stage.
+**Dependencies:** 
+- Requires AutoML stage completion for trained model and cleaned data from prep stage
+- **Will refuse to run** if `status.json` shows validation stage with 'failed' status
 
-**Notes:** SHAP explanations help users understand which features most influence model predictions. The stage generates global feature importance visualizations.
+**Notes:** 
+- SHAP explanations help users understand which features most influence model predictions. The stage generates global feature importance visualizations
+- Prevents generating explanations for models trained on data with known critical quality issues
 
 ## Metadata Evolution Example
 
@@ -224,6 +246,8 @@ Here's how `metadata.json` evolves through a typical pipeline run:
 ```
 
 ### After Step 3 (Validation):
+
+**Success Case:**
 ```json
 {
   // ... previous fields ...
@@ -235,6 +259,26 @@ Here's how `metadata.json` evolves through a typical pipeline run:
   }
 }
 ```
+
+**Pipeline Failure Case:**
+If validation success rate falls below threshold (90%), the pipeline stops and `status.json` contains:
+```json
+{
+  "stage": "step_3_validation",
+  "status": "failed",
+  "message": "Pipeline stopped: Validation failed with 8 critical issues",
+  "timestamp": "2024-12-01T14:38:45.123Z",
+  "errors": [
+    "Validation success rate 72.0% is below required threshold 90.0%",
+    "Failed expectations: 8/25",
+    "expect_column_to_exist failed for required_column",
+    "expect_column_values_to_be_of_type failed for age",
+    "expect_table_columns_to_match_ordered_list failed for table_level"
+  ]
+}
+```
+
+In this failure case, all subsequent stages (prep, automl, explain) will refuse to run until data issues are resolved.
 
 ### After Step 4 (Prep):
 ```json
@@ -314,23 +358,33 @@ Here's how `metadata.json` evolves through a typical pipeline run:
 - Always use `storage.read_metadata(run_id)` or `storage.read_json(run_id, constants.METADATA_FILENAME)`
 - Validate that required keys exist before accessing them
 - Convert dictionary data to Pydantic objects when available for type safety
+- **Check status.json for pipeline failures** before proceeding with downstream stages
 
 ### Writing Metadata
 - Always read existing metadata first, then update specific keys
 - Use `storage.write_metadata(run_id, metadata_dict)` for atomic writes
 - Include timestamps for audit trails
 - Validate data types before writing
+- **Update status.json appropriately** when stages fail or complete
 
 ### Error Handling
 - If required metadata is missing, fail gracefully with clear error messages
 - Check for partially completed stages using status.json in addition to metadata
 - Don't assume metadata structure - always validate
+- **Check for validation failures** in status.json before running downstream stages
+
+### Pipeline Failure Management
+- **Validation stage** can now fail the entire pipeline if data quality is too poor
+- All downstream stages (prep, automl, explain) check for validation failure before executing
+- Status is managed via `status.json` with clear error messages for debugging
+- Frontend prevents navigation to downstream steps when validation has failed
 
 ### Extending the Pipeline
 - Add new metadata fields to existing dictionaries rather than top-level keys when possible
 - Document new metadata fields in this file
 - Consider backward compatibility when modifying existing metadata structure
 - Use Pydantic schemas when adding complex metadata structures
+- **Implement prerequisite checks** for new stages that depend on validation success
 
 ## Common Pitfalls to Avoid
 

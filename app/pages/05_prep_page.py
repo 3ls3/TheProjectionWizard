@@ -13,7 +13,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 from pipeline.step_4_prep import prep_runner
-from common import constants, storage, schemas
+from common import constants, storage, schemas, utils
 
 
 def show_prep_page():
@@ -35,39 +35,20 @@ def show_prep_page():
     # Display Current Run ID
     st.info(f"**Current Run ID:** {run_id}")
     
-    # Debug info (can be removed later)
-    if st.checkbox("🔧 Show Debug Info", value=False):
-        st.write("**Session State:**")
-        st.write(f"- force_prep_rerun: {st.session_state.get('force_prep_rerun', 'Not set')}")
-        st.write(f"- current_page: {st.session_state.get('current_page', 'Not set')}")
-        
-        # Check prep files
-        try:
-            run_dir = storage.get_run_dir(run_id)
-            cleaned_data_path = run_dir / constants.CLEANED_DATA_FILE
-            if cleaned_data_path.exists():
-                import os
-                mtime = os.path.getmtime(cleaned_data_path)
-                last_modified = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
-                st.write(f"- cleaned_data.csv last modified: {last_modified}")
-                st.write(f"- cleaned_data.csv size: {cleaned_data_path.stat().st_size / (1024*1024):.1f} MB")
-            else:
-                st.write("- cleaned_data.csv: Not found")
-        except Exception as e:
-            st.write(f"- cleaned_data.csv: Error checking ({e})")
+    # Introductory text
+    st.write("This step cleans your data, encodes features for machine learning, and can generate a detailed data profile report. Review the outcomes before model training.")
+    
+
     
     # Display Existing Results (if page is revisited)
     st.subheader("Data Preparation Status")
-    
-    # Check if user requested a re-run
-    force_rerun = st.session_state.get('force_prep_rerun', False)
     
     try:
         # Check status.json to see if prep stage completed
         status_data = storage.read_json(run_id, constants.STATUS_FILENAME)
         prep_completed = False
         
-        if status_data and not force_rerun:
+        if status_data:
             prep_completed = (status_data.get('stage') == constants.PREP_STAGE and 
                              status_data.get('status') == 'completed')
         
@@ -233,26 +214,18 @@ def show_prep_page():
                         except Exception as e:
                             st.error(f"Error checking model files: {e}")
                     
-                    # Navigation to next step (only show if prep is already complete)
-                    st.subheader("Next Steps")
-                    col_nav1, col_nav2 = st.columns([3, 1])
-                    
-                    with col_nav1:
-                        if st.button("🚀 Proceed to Model Training", type="primary", use_container_width=True):
-                            st.session_state['current_page'] = 'automl'
-                            st.rerun()
-                    
-                    with col_nav2:
-                        if st.button("🔄 Re-run", use_container_width=True):
-                            # Set session state to force re-run and refresh page
-                            st.session_state['force_prep_rerun'] = True
-                            st.rerun()
+                    # Continue to next step
+                    if st.button("➡️ Continue to Model Training", type="primary", use_container_width=True, key="continue_to_automl"):
+                        st.session_state.pop('prep_run_complete', None)
+                        st.session_state['current_page'] = 'automl'
+                        st.rerun()
                 
                 else:
                     st.warning("Preparation completed but detailed results not found in metadata.")
                     
             except Exception as e:
-                st.error(f"Error loading preparation results: {str(e)}")
+                is_dev_mode = st.session_state.get("developer_mode_active", False)
+                utils.display_page_error(e, run_id=run_id, stage_name=constants.PREP_STAGE, dev_mode=is_dev_mode)
         
         else:
             # Check if prep stage failed
@@ -264,17 +237,14 @@ def show_prep_page():
                 st.info("⏳ Data preparation has not been run yet for this run.")
     
     except Exception as e:
-        st.error(f"Error checking preparation status: {str(e)}")
+        is_dev_mode = st.session_state.get("developer_mode_active", False)
+        utils.display_page_error(e, run_id=run_id, stage_name=constants.PREP_STAGE, dev_mode=is_dev_mode)
         prep_completed = False
     
-    # Run Data Preparation Button (show if no existing results or user wants to re-run)
+    # Run Data Preparation Button (show if no existing results)
     if not prep_completed:
-        if force_rerun:
-            st.subheader("Re-run Data Preparation")
-            st.info("⚠️ **Re-running data preparation** - This will overwrite previous results.")
-        else:
-            st.subheader("Run Data Preparation")
-            st.write("This step will clean your data, encode features for ML, and generate a comprehensive data profile report.")
+        st.subheader("Run Data Preparation")
+        st.write("This step will clean your data, encode features for ML, and generate a comprehensive data profile report.")
         
         # Show what will happen
         with st.expander("ℹ️ What happens during data preparation?", expanded=False):
@@ -302,17 +272,13 @@ def show_prep_page():
         
         if prep_running:
             st.warning("⏳ Data preparation is currently running. Please wait...")
-            st.button("🚀 Run Data Preparation", type="primary", use_container_width=True, disabled=True)
-        elif st.button("🚀 Run Data Preparation", type="primary", use_container_width=True):
+            st.button("🚀 Start Data Preparation", type="primary", use_container_width=True, disabled=True)
+        elif st.button("🚀 Start Data Preparation", type="primary", use_container_width=True):
             # Set running flag
             st.session_state['prep_running'] = True
             
             with st.spinner("Running data preparation... This may take several minutes."):
                 try:
-                    # Clear the force rerun flag before running
-                    if 'force_prep_rerun' in st.session_state:
-                        del st.session_state['force_prep_rerun']
-                    
                     # Call the prep runner
                     stage_success = prep_runner.run_preparation_stage(run_id)
                     
@@ -348,51 +314,44 @@ def show_prep_page():
                                     if len(cleaning_steps) > 5:
                                         st.write(f"• ... and {len(cleaning_steps) - 5} more steps")
                                 
-                                # Auto-navigate to next step immediately
+                                # Set completion flag and refresh page to show full results
                                 st.balloons()
-                                st.success("🚀 Proceeding to Model Training...")
-                                st.session_state['current_page'] = 'automl'
+                                st.session_state['prep_run_complete'] = True
                                 st.rerun()
-                                
-                                # Clear running flag on successful completion
-                                if 'prep_running' in st.session_state:
-                                    del st.session_state['prep_running']
                             
                             else:
                                 st.warning("Preparation completed but results not found in metadata.")
                         
                         except Exception as e:
-                            st.error(f"Preparation completed but error loading results: {str(e)}")
+                            is_dev_mode = st.session_state.get("developer_mode_active", False)
+                            utils.display_page_error(e, run_id=run_id, stage_name=constants.PREP_STAGE, dev_mode=is_dev_mode)
                     
                     else:
                         # The runner function failed
-                        st.error("❌ Data preparation failed. Check logs for details.")
-                        
-                        # Try to get more details from status.json
-                        status_data = storage.read_json(run_id, constants.STATUS_FILENAME)
-                        if status_data and status_data.get('message'):
-                            st.error(f"**Error details:** {status_data['message']}")
-                        
-                        # Show log file location
-                        run_dir_path = storage.get_run_dir(run_id)
-                        log_path = run_dir_path / constants.STAGE_LOG_FILENAMES[constants.PREP_STAGE]
-                        st.info(f"Check log file for more details: `{log_path}`")
+                        try:
+                            status_data = storage.read_json(run_id, constants.STATUS_FILENAME)
+                            if status_data and status_data.get('message'):
+                                prep_error = Exception(f"Data preparation failed: {status_data['message']}")
+                            else:
+                                prep_error = Exception("Data preparation failed - check logs for details.")
+                            
+                            is_dev_mode = st.session_state.get("developer_mode_active", False)
+                            utils.display_page_error(prep_error, run_id=run_id, stage_name=constants.PREP_STAGE, dev_mode=is_dev_mode)
+                        except:
+                            # Fallback error handling
+                            prep_error = Exception("Data preparation failed - check logs for details.")
+                            is_dev_mode = st.session_state.get("developer_mode_active", False)
+                            utils.display_page_error(prep_error, run_id=run_id, stage_name=constants.PREP_STAGE, dev_mode=is_dev_mode)
                 
                 except Exception as e:
-                    st.error(f"❌ An error occurred during data preparation: {str(e)}")
-                    st.exception(e)
+                    is_dev_mode = st.session_state.get("developer_mode_active", False)
+                    utils.display_page_error(e, run_id=run_id, stage_name=constants.PREP_STAGE, dev_mode=is_dev_mode)
                 finally:
                     # Always clear the running flag
                     if 'prep_running' in st.session_state:
                         del st.session_state['prep_running']
     
-    # Navigation section (only show if prep not yet run)
-    if not prep_completed:
-        st.divider()
-        
-        if st.button("← Back to Data Validation", use_container_width=True):
-            st.session_state['current_page'] = 'validation'
-            st.rerun()
+
 
 
 if __name__ == "__main__":

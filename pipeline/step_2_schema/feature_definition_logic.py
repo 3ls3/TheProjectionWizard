@@ -27,7 +27,7 @@ def _perform_minimal_stable_cleaning(df: pd.DataFrame, target_column_name: str) 
     Returns:
         A pandas DataFrame that has undergone basic cleaning for metric calculation stability
     """
-    df_cleaned = df.copy()
+    df_cleaned = df.copy()  
     
     # Clean target column first
     target_series = df_cleaned[target_column_name]

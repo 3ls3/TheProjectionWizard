@@ -150,40 +150,42 @@ def run_ingestion(uploaded_file_object: Union[BinaryIO, object], base_runs_path_
                 structured_log,
                 "csv_parsed_successfully",
                 {
-                    "rows": initial_rows,
-                    "columns": initial_cols,
+                    "rows": int(initial_rows),
+                    "columns": int(initial_cols),
                     "column_names": list(df.columns),
                     "dtypes": initial_dtypes,
-                    "memory_usage_mb": df.memory_usage(deep=True).sum() / 1024**2,
-                    "missing_values_total": df.isnull().sum().sum()
+                    "memory_usage_mb": float(df.memory_usage(deep=True).sum() / 1024**2),
+                    "missing_values_total": int(df.isnull().sum().sum())
                 },
                 f"CSV parsed successfully: {initial_rows} rows × {initial_cols} columns"
             )
             
-            # Log data quality metrics as structured metrics
+            # Log data quality metrics as structured metrics (converting numpy types to Python types)
             logger.log_structured_metric(
                 structured_log,
                 "dataset_rows",
-                initial_rows,
+                int(initial_rows),
                 "data_quality",
-                {"dataset_columns": initial_cols}
+                {"dataset_columns": int(initial_cols)}
             )
             
             logger.log_structured_metric(
                 structured_log,
                 "dataset_columns",
-                initial_cols,
+                int(initial_cols),
                 "data_quality",
-                {"dataset_rows": initial_rows}
+                {"dataset_rows": int(initial_rows)}
             )
             
-            missing_percentage = (df.isnull().sum().sum() / (initial_rows * initial_cols)) * 100
+            total_missing = int(df.isnull().sum().sum())
+            total_cells = int(initial_rows * initial_cols)
+            missing_percentage = float((total_missing / total_cells) * 100)
             logger.log_structured_metric(
                 structured_log,
                 "missing_values_percentage",
                 missing_percentage,
                 "data_quality",
-                {"total_missing": df.isnull().sum().sum(), "total_cells": initial_rows * initial_cols}
+                {"total_missing": total_missing, "total_cells": total_cells}
             )
             
         except Exception as e:

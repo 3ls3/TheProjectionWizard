@@ -10,9 +10,33 @@ import json
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Union
 from datetime import datetime
+import numpy as np
 
 from . import storage
 from .constants import PIPELINE_LOG_FILENAME, STAGE_LOG_FILENAMES, PIPELINE_STAGES
+
+
+def json_serializer(obj):
+    """
+    Custom JSON serializer that handles numpy types and other non-serializable objects.
+    
+    Args:
+        obj: Object to serialize
+        
+    Returns:
+        JSON-serializable version of the object
+    """
+    if isinstance(obj, (np.integer, np.floating)):
+        return obj.item()  # Convert numpy types to Python types
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif hasattr(obj, 'isoformat'):  # datetime objects
+        return obj.isoformat()
+    elif hasattr(obj, '__dict__'):  # Custom objects
+        return obj.__dict__
+    else:
+        # Fallback: convert to string
+        return str(obj)
 
 
 class JSONFormatter(logging.Formatter):
@@ -55,7 +79,7 @@ class JSONFormatter(logging.Formatter):
         if record.exc_info:
             log_entry["exception"] = self.formatException(record.exc_info)
         
-        return json.dumps(log_entry, ensure_ascii=False, separators=(',', ':'))
+        return json.dumps(log_entry, ensure_ascii=False, separators=(',', ':'), default=json_serializer)
 
 
 def get_stage_log_filename(stage: str) -> str:

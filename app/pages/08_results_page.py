@@ -18,6 +18,9 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from common import constants, storage, schemas, utils
 
+# Import main for session state clearing function
+import main
+
 
 def create_download_button(label: str, data_bytes: bytes, file_name: str, mime_type: str, key_suffix: str, run_id: str):
     """Helper function to create consistent download buttons."""
@@ -524,10 +527,8 @@ def show_results_page():
             
         with col2:
             if st.button("🏠 Start New Run / Upload New Data", type="primary", use_container_width=True):
-                # Clear relevant session state
-                keys_to_clear = ['run_id', 'current_page']
-                for key in keys_to_clear:
-                    st.session_state.pop(key, None)
+                # Clear all run-specific session state using the centralized function
+                main.clear_run_session_state()
                 
                 # Navigate to upload page
                 st.session_state['current_page'] = 'upload'
@@ -542,9 +543,8 @@ def show_results_page():
         # Still provide option to start new run
         st.divider()
         if st.button("🏠 Start New Run", type="primary"):
-            keys_to_clear = ['run_id', 'current_page']
-            for key in keys_to_clear:
-                st.session_state.pop(key, None)
+            # Clear all run-specific session state using the centralized function
+            main.clear_run_session_state()
             st.session_state['current_page'] = 'upload'
             st.rerun()
 

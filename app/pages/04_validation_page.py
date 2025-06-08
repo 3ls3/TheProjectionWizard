@@ -15,6 +15,9 @@ sys.path.append(str(Path(__file__).parent.parent))
 from pipeline.step_3_validation import validation_runner
 from common import constants, storage, schemas, utils
 
+# Import main for session state clearing function
+import main
+
 
 def show_validation_page():
     """Display the data validation page."""
@@ -84,9 +87,8 @@ def show_validation_page():
             
             # Action button
             if st.button("🔄 Start Over with New Data", type="primary", use_container_width=True):
-                # Clear session and go back to upload
-                if 'run_id' in st.session_state:
-                    del st.session_state['run_id']
+                # Clear all run-specific session state using the centralized function
+                main.clear_run_session_state()
                 st.session_state['current_page'] = 'upload'
                 st.rerun()
             
@@ -274,10 +276,8 @@ def show_validation_page():
                     
                     # Provide option to start over
                     if st.button("🔄 Start Over with New Data", type="secondary", use_container_width=True):
-                        # Clear session and go back to upload
-                        if 'run_id' in st.session_state:
-                            del st.session_state['run_id']
-                        st.session_state.pop('validation_run_complete', None)
+                        # Clear all run-specific session state using the centralized function
+                        main.clear_run_session_state()
                         st.session_state['current_page'] = 'upload'
                         st.rerun()
         except Exception:
@@ -374,9 +374,8 @@ def show_validation_page():
                                 
                                 # Option to restart with new data
                                 if st.button("🔄 Start Over with New Data", type="secondary"):
-                                    # Clear session and go back to upload
-                                    if 'run_id' in st.session_state:
-                                        del st.session_state['run_id']
+                                    # Clear all run-specific session state using the centralized function
+                                    main.clear_run_session_state()
                                     st.session_state['current_page'] = 'upload'
                                     st.rerun()
                             else:

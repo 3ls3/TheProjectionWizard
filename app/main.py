@@ -48,16 +48,22 @@ def clear_run_session_state():
     st.session_state.pop('run_id', None)
     st.session_state.pop('current_page', None)
     
-    # UI-specific overrides and confirmations
+    # UI-specific overrides and confirmations (from schema page)
     st.session_state.pop('ui_feature_schemas_override', None)
     st.session_state.pop('target_confirmation_complete', None)
     st.session_state.pop('schema_confirmation_complete', None)
     
-    # Processing flags and temporary states
+    # Processing flags (prevent double-clicks during long operations)
     st.session_state.pop('validation_running', None)
     st.session_state.pop('prep_running', None)
     st.session_state.pop('automl_running', None)
     st.session_state.pop('explain_running', None)
+    
+    # Run completion flags (show continue buttons after stage completion)
+    st.session_state.pop('validation_run_complete', None)
+    st.session_state.pop('prep_run_complete', None)
+    st.session_state.pop('automl_run_complete', None)
+    st.session_state.pop('explain_run_complete', None)
     
     # Upload-related temporary data
     st.session_state.pop('uploaded_file_content', None)
@@ -66,6 +72,15 @@ def clear_run_session_state():
     
     # Clear any confirmation states
     st.session_state.pop('confirm_new_upload', None)
+    
+    # Clear dynamic schema-related keys (dtype_*, role_*, selectbox_*)
+    keys_to_remove = []
+    for key in st.session_state.keys():
+        if key.startswith(('dtype_', 'role_', 'selectbox_dtype_', 'selectbox_role_', 'advanced_dtype_', 'advanced_role_')):
+            keys_to_remove.append(key)
+    
+    for key in keys_to_remove:
+        st.session_state.pop(key, None)
 
 
 def show_navigation_sidebar():

@@ -13,7 +13,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 from pipeline.step_6_explain import explain_runner
-from common import constants, storage, schemas
+from common import constants, storage, schemas, utils
 
 
 def show_explain_page():
@@ -35,39 +35,20 @@ def show_explain_page():
     # Display Current Run ID
     st.info(f"**Current Run ID:** {run_id}")
     
-    # Debug info (can be removed later)
-    if st.checkbox("🔧 Show Debug Info", value=False):
-        st.write("**Session State:**")
-        st.write(f"- force_explain_rerun: {st.session_state.get('force_explain_rerun', 'Not set')}")
-        st.write(f"- current_page: {st.session_state.get('current_page', 'Not set')}")
-        
-        # Check plot file
-        try:
-            run_dir = storage.get_run_dir(run_id)
-            plot_file_path = run_dir / constants.PLOTS_DIR / constants.SHAP_SUMMARY_PLOT
-            if plot_file_path.exists():
-                import os
-                mtime = os.path.getmtime(plot_file_path)
-                last_modified = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
-                st.write(f"- SHAP plot last modified: {last_modified}")
-                st.write(f"- SHAP plot size: {plot_file_path.stat().st_size / 1024:.1f} KB")
-            else:
-                st.write("- SHAP plot: Not found")
-        except Exception as e:
-            st.write(f"- SHAP plot: Error checking ({e})")
+    # Introductory text
+    st.write("This step generates SHAP (SHapley Additive exPlanations) values to help understand your model's predictions and identify key feature importances. Review the analysis before viewing the final results.")
+    
+
     
     # Display Existing Results (if page is revisited)
     st.subheader("Model Explainability Status")
-    
-    # Check if user requested a re-run
-    force_rerun = st.session_state.get('force_explain_rerun', False)
     
     try:
         # Check status.json to see if explainability stage completed
         status_data = storage.read_json(run_id, constants.STATUS_FILENAME)
         explain_completed = False
         
-        if status_data and not force_rerun:
+        if status_data:
             explain_completed = (status_data.get('stage') == constants.EXPLAIN_STAGE and 
                                status_data.get('status') == 'completed')
         
@@ -119,7 +100,7 @@ def show_explain_page():
                             st.image(
                                 str(plot_path), 
                                 caption=f"SHAP Feature Importance for {best_model} ({task_type.title()})",
-                                use_column_width=True
+                                use_container_width=True
                             )
                             
                             # Plot information
@@ -192,26 +173,18 @@ def show_explain_page():
                         except:
                             st.caption(f"🕒 Completion timestamp: {completion_time}")
                     
-                    # Navigation to next step (only show if explainability is already complete)
-                    st.subheader("Next Steps")
-                    col_nav1, col_nav2 = st.columns([3, 1])
-                    
-                    with col_nav1:
-                        if st.button("📊 View Complete Results", type="primary", use_container_width=True):
-                            st.session_state['current_page'] = 'results'
-                            st.rerun()
-                    
-                    with col_nav2:
-                        if st.button("🔄 Re-analyze", use_container_width=True):
-                            # Set session state to force re-run and refresh page
-                            st.session_state['force_explain_rerun'] = True
-                            st.rerun()
+                    # Continue to next step
+                    if st.button("➡️ Continue to Results", type="primary", use_container_width=True, key="continue_to_results_page"):
+                        st.session_state.pop('explain_run_complete', None)
+                        st.session_state['current_page'] = 'results'
+                        st.rerun()
                 
                 else:
                     st.warning("Explainability analysis completed but detailed results not found in metadata.")
                     
             except Exception as e:
-                st.error(f"Error loading explainability results: {str(e)}")
+                is_dev_mode = st.session_state.get("developer_mode_active", False)
+                utils.display_page_error(e, run_id=run_id, stage_name=constants.EXPLAIN_STAGE, dev_mode=is_dev_mode)
         
         else:
             # Check if explainability stage failed
@@ -223,39 +196,14 @@ def show_explain_page():
                 st.info("⏳ Model explainability analysis has not been run yet for this run.")
     
     except Exception as e:
-        st.error(f"Error checking explainability status: {str(e)}")
+        is_dev_mode = st.session_state.get("developer_mode_active", False)
+        utils.display_page_error(e, run_id=run_id, stage_name=constants.EXPLAIN_STAGE, dev_mode=is_dev_mode)
         explain_completed = False
     
-    # Run Explainability Button (show if no existing results or user wants to re-run)
+    # Run Explainability Button (show if no existing results)
     if not explain_completed:
-        # Check if previous stages are completed
-        try:
-            # Validate that AutoML stage is completed
-            validation_success = explain_runner.validate_explainability_stage_inputs(run_id)
-            
-            if not validation_success:
-                st.error("❌ **Prerequisites not met for model explainability analysis.**")
-                st.error("Please ensure the following stages are completed:")
-                st.write("• Data upload and ingestion")
-                st.write("• Target and schema confirmation")
-                st.write("• Data validation")
-                st.write("• Data preparation")
-                st.write("• **AutoML model training (most important)**")
-                
-                if st.button("← Go to Model Training", use_container_width=True):
-                    st.session_state['current_page'] = 'automl'
-                    st.rerun()
-                return
-        
-        except Exception as e:
-            st.warning(f"Could not validate prerequisites: {e}")
-        
-        if force_rerun:
-            st.subheader("Re-run Explainability Analysis")
-            st.info("⚠️ **Re-running explainability analysis** - This will overwrite the previous results.")
-        else:
-            st.subheader("Run Model Explainability Analysis")
-            st.write("This step will generate global explanations for your trained model using SHAP (SHapley Additive exPlanations).")
+        st.subheader("Run Model Explainability Analysis")
+        st.write("This step will generate global explanations for your trained model using SHAP (SHapley Additive exPlanations).")
         
         # Show what will happen
         with st.expander("ℹ️ What happens during explainability analysis?", expanded=False):
@@ -291,17 +239,13 @@ def show_explain_page():
         
         if explain_running:
             st.warning("⏳ Explainability analysis is currently running. Please wait...")
-            st.button("🔍 Run SHAP Analysis", type="primary", use_container_width=True, disabled=True)
-        elif st.button("🔍 Run SHAP Analysis", type="primary", use_container_width=True):
+            st.button("🚀 Start Explainability Analysis", type="primary", use_container_width=True, disabled=True)
+        elif st.button("🚀 Start Explainability Analysis", type="primary", use_container_width=True):
             # Set running flag
             st.session_state['explain_running'] = True
             
             with st.spinner("Analyzing model... This may take a few minutes depending on data size."):
                 try:
-                    # Clear the force rerun flag before running
-                    if 'force_explain_rerun' in st.session_state:
-                        del st.session_state['force_explain_rerun']
-                    
                     # Call the explainability runner
                     stage_success = explain_runner.run_explainability_stage(run_id)
                     
@@ -332,54 +276,47 @@ def show_explain_page():
                                         st.image(
                                             plot_path,
                                             caption="SHAP Feature Importance Summary",
-                                            use_column_width=True
+                                            use_container_width=True
                                         )
                                 
-                                # Auto-navigate to next step immediately
+                                # Set completion flag and refresh page to show full results
                                 st.balloons()
-                                st.success("📊 Proceeding to Complete Results...")
-                                st.session_state['current_page'] = 'results'
+                                st.session_state['explain_run_complete'] = True
                                 st.rerun()
-                                
-                                # Clear running flag on successful completion
-                                if 'explain_running' in st.session_state:
-                                    del st.session_state['explain_running']
                             
                             else:
                                 st.warning("Analysis completed but results summary not available.")
                         
                         except Exception as e:
-                            st.error(f"Analysis completed but error loading results: {str(e)}")
+                            is_dev_mode = st.session_state.get("developer_mode_active", False)
+                            utils.display_page_error(e, run_id=run_id, stage_name=constants.EXPLAIN_STAGE, dev_mode=is_dev_mode)
                     
                     else:
                         # The runner function failed
-                        st.error("❌ Model explainability analysis failed. Check logs for details.")
-                        
-                        # Try to get more details from status.json
-                        status_data = storage.read_json(run_id, constants.STATUS_FILENAME)
-                        if status_data and status_data.get('message'):
-                            st.error(f"**Error details:** {status_data['message']}")
-                        
-                        # Show log file location
-                        run_dir_path = storage.get_run_dir(run_id)
-                        log_path = run_dir_path / constants.STAGE_LOG_FILENAMES[constants.EXPLAIN_STAGE]
-                        st.info(f"Check log file for more details: `{log_path}`")
+                        try:
+                            status_data = storage.read_json(run_id, constants.STATUS_FILENAME)
+                            if status_data and status_data.get('message'):
+                                explain_error = Exception(f"Model explainability analysis failed: {status_data['message']}")
+                            else:
+                                explain_error = Exception("Model explainability analysis failed - check logs for details.")
+                            
+                            is_dev_mode = st.session_state.get("developer_mode_active", False)
+                            utils.display_page_error(explain_error, run_id=run_id, stage_name=constants.EXPLAIN_STAGE, dev_mode=is_dev_mode)
+                        except:
+                            # Fallback error handling
+                            explain_error = Exception("Model explainability analysis failed - check logs for details.")
+                            is_dev_mode = st.session_state.get("developer_mode_active", False)
+                            utils.display_page_error(explain_error, run_id=run_id, stage_name=constants.EXPLAIN_STAGE, dev_mode=is_dev_mode)
                 
                 except Exception as e:
-                    st.error(f"❌ An error occurred during explainability analysis: {str(e)}")
-                    st.exception(e)
+                    is_dev_mode = st.session_state.get("developer_mode_active", False)
+                    utils.display_page_error(e, run_id=run_id, stage_name=constants.EXPLAIN_STAGE, dev_mode=is_dev_mode)
                 finally:
                     # Always clear the running flag
                     if 'explain_running' in st.session_state:
                         del st.session_state['explain_running']
     
-    # Navigation section (only show if explainability not yet run)
-    if not explain_completed:
-        st.divider()
-        
-        if st.button("← Back to Model Training", use_container_width=True):
-            st.session_state['current_page'] = 'automl'
-            st.rerun()
+
 
 
 if __name__ == "__main__":

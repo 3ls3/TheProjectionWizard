@@ -13,7 +13,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 from pipeline.step_5_automl import automl_runner
-from common import constants, storage, schemas
+from common import constants, storage, schemas, utils
 
 
 def show_automl_page():
@@ -35,39 +35,20 @@ def show_automl_page():
     # Display Current Run ID
     st.info(f"**Current Run ID:** {run_id}")
     
-    # Debug info (can be removed later)
-    if st.checkbox("🔧 Show Debug Info", value=False):
-        st.write("**Session State:**")
-        st.write(f"- force_automl_rerun: {st.session_state.get('force_automl_rerun', 'Not set')}")
-        st.write(f"- current_page: {st.session_state.get('current_page', 'Not set')}")
-        
-        # Check model files
-        try:
-            run_dir = storage.get_run_dir(run_id)
-            model_file_path = run_dir / constants.MODEL_DIR / 'pycaret_pipeline.pkl'
-            if model_file_path.exists():
-                import os
-                mtime = os.path.getmtime(model_file_path)
-                last_modified = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
-                st.write(f"- pycaret_pipeline.pkl last modified: {last_modified}")
-                st.write(f"- pycaret_pipeline.pkl size: {model_file_path.stat().st_size / 1024:.1f} KB")
-            else:
-                st.write("- pycaret_pipeline.pkl: Not found")
-        except Exception as e:
-            st.write(f"- pycaret_pipeline.pkl: Error checking ({e})")
+    # Introductory text
+    st.write("This step automatically trains and compares multiple machine learning models using PyCaret, then selects and saves the best one. Review the model's performance before proceeding to explanation.")
+    
+
     
     # Display Existing Results (if page is revisited)
     st.subheader("AutoML Training Status")
-    
-    # Check if user requested a re-run
-    force_rerun = st.session_state.get('force_automl_rerun', False)
     
     try:
         # Check status.json to see if automl stage completed
         status_data = storage.read_json(run_id, constants.STATUS_FILENAME)
         automl_completed = False
         
-        if status_data and not force_rerun:
+        if status_data:
             automl_completed = (status_data.get('stage') == constants.AUTOML_STAGE and 
                               status_data.get('status') == 'completed')
         
@@ -204,26 +185,18 @@ def show_automl_page():
                         except:
                             pass
                     
-                    # Navigation to next step (only show if automl is already complete)
-                    st.subheader("Next Steps")
-                    col_nav1, col_nav2 = st.columns([3, 1])
-                    
-                    with col_nav1:
-                        if st.button("🔍 Proceed to Model Explanation", type="primary", use_container_width=True):
-                            st.session_state['current_page'] = 'explain'
-                            st.rerun()
-                    
-                    with col_nav2:
-                        if st.button("🔄 Re-train", use_container_width=True):
-                            # Set session state to force re-run and refresh page
-                            st.session_state['force_automl_rerun'] = True
-                            st.rerun()
+                    # Continue to next step
+                    if st.button("➡️ Continue to Model Explanation", type="primary", use_container_width=True, key="continue_to_explain"):
+                        st.session_state.pop('automl_run_complete', None)
+                        st.session_state['current_page'] = 'explain'
+                        st.rerun()
                 
                 else:
                     st.warning("AutoML completed but detailed results not found in metadata.")
                     
             except Exception as e:
-                st.error(f"Error loading AutoML results: {str(e)}")
+                is_dev_mode = st.session_state.get("developer_mode_active", False)
+                utils.display_page_error(e, run_id=run_id, stage_name=constants.AUTOML_STAGE, dev_mode=is_dev_mode)
         
         else:
             # Check if automl stage failed
@@ -235,38 +208,14 @@ def show_automl_page():
                 st.info("⏳ AutoML training has not been run yet for this run.")
     
     except Exception as e:
-        st.error(f"Error checking AutoML status: {str(e)}")
+        is_dev_mode = st.session_state.get("developer_mode_active", False)
+        utils.display_page_error(e, run_id=run_id, stage_name=constants.AUTOML_STAGE, dev_mode=is_dev_mode)
         automl_completed = False
     
-    # Run AutoML Button (show if no existing results or user wants to re-run)
+    # Run AutoML Button (show if no existing results)
     if not automl_completed:
-        # Check if previous stages are completed
-        try:
-            # Validate that prep stage is completed
-            validation_success = automl_runner.validate_automl_stage_inputs(run_id)
-            
-            if not validation_success:
-                st.error("❌ **Prerequisites not met for AutoML training.**")
-                st.error("Please ensure the following stages are completed:")
-                st.write("• Data upload and ingestion")
-                st.write("• Target and schema confirmation")
-                st.write("• Data validation")
-                st.write("• **Data preparation (most important)**")
-                
-                if st.button("← Go to Data Preparation", use_container_width=True):
-                    st.session_state['current_page'] = 'prep'
-                    st.rerun()
-                return
-        
-        except Exception as e:
-            st.warning(f"Could not validate prerequisites: {e}")
-        
-        if force_rerun:
-            st.subheader("Re-run AutoML Training")
-            st.info("⚠️ **Re-running AutoML training** - This will overwrite the previous model.")
-        else:
-            st.subheader("Run AutoML Training")
-            st.write("This step will automatically train and compare multiple machine learning models using PyCaret, then select the best performing one.")
+        st.subheader("Run AutoML Training")
+        st.write("This step will automatically train and compare multiple machine learning models using PyCaret, then select the best performing one.")
         
         # Show what will happen
         with st.expander("ℹ️ What happens during AutoML training?", expanded=False):
@@ -303,17 +252,13 @@ def show_automl_page():
         
         if automl_running:
             st.warning("⏳ AutoML training is currently running. Please wait...")
-            st.button("🚀 Run AutoML Training", type="primary", use_container_width=True, disabled=True)
-        elif st.button("🚀 Run AutoML Training", type="primary", use_container_width=True):
+            st.button("🚀 Start Model Training", type="primary", use_container_width=True, disabled=True)
+        elif st.button("🚀 Start Model Training", type="primary", use_container_width=True):
             # Set running flag
             st.session_state['automl_running'] = True
             
             with st.spinner("Training machine learning models... This may take several minutes."):
                 try:
-                    # Clear the force rerun flag before running
-                    if 'force_automl_rerun' in st.session_state:
-                        del st.session_state['force_automl_rerun']
-                    
                     # Call the automl runner
                     stage_success = automl_runner.run_automl_stage(run_id)
                     
@@ -351,51 +296,44 @@ def show_automl_page():
                                     if metric_text:
                                         st.write(" | ".join(metric_text))
                                 
-                                # Auto-navigate to next step immediately
+                                # Set completion flag and refresh page to show full results
                                 st.balloons()
-                                st.success("🔍 Proceeding to Model Explanation...")
-                                st.session_state['current_page'] = 'explain'
+                                st.session_state['automl_run_complete'] = True
                                 st.rerun()
-                                
-                                # Clear running flag on successful completion
-                                if 'automl_running' in st.session_state:
-                                    del st.session_state['automl_running']
                             
                             else:
                                 st.warning("Training completed but results summary not available.")
                         
                         except Exception as e:
-                            st.error(f"Training completed but error loading results: {str(e)}")
+                            is_dev_mode = st.session_state.get("developer_mode_active", False)
+                            utils.display_page_error(e, run_id=run_id, stage_name=constants.AUTOML_STAGE, dev_mode=is_dev_mode)
                     
                     else:
                         # The runner function failed
-                        st.error("❌ AutoML training failed. Check logs for details.")
-                        
-                        # Try to get more details from status.json
-                        status_data = storage.read_json(run_id, constants.STATUS_FILENAME)
-                        if status_data and status_data.get('message'):
-                            st.error(f"**Error details:** {status_data['message']}")
-                        
-                        # Show log file location
-                        run_dir_path = storage.get_run_dir(run_id)
-                        log_path = run_dir_path / constants.STAGE_LOG_FILENAMES[constants.AUTOML_STAGE]
-                        st.info(f"Check log file for more details: `{log_path}`")
+                        try:
+                            status_data = storage.read_json(run_id, constants.STATUS_FILENAME)
+                            if status_data and status_data.get('message'):
+                                automl_error = Exception(f"AutoML training failed: {status_data['message']}")
+                            else:
+                                automl_error = Exception("AutoML training failed - check logs for details.")
+                            
+                            is_dev_mode = st.session_state.get("developer_mode_active", False)
+                            utils.display_page_error(automl_error, run_id=run_id, stage_name=constants.AUTOML_STAGE, dev_mode=is_dev_mode)
+                        except:
+                            # Fallback error handling
+                            automl_error = Exception("AutoML training failed - check logs for details.")
+                            is_dev_mode = st.session_state.get("developer_mode_active", False)
+                            utils.display_page_error(automl_error, run_id=run_id, stage_name=constants.AUTOML_STAGE, dev_mode=is_dev_mode)
                 
                 except Exception as e:
-                    st.error(f"❌ An error occurred during AutoML training: {str(e)}")
-                    st.exception(e)
+                    is_dev_mode = st.session_state.get("developer_mode_active", False)
+                    utils.display_page_error(e, run_id=run_id, stage_name=constants.AUTOML_STAGE, dev_mode=is_dev_mode)
                 finally:
                     # Always clear the running flag
                     if 'automl_running' in st.session_state:
                         del st.session_state['automl_running']
     
-    # Navigation section (only show if automl not yet run)
-    if not automl_completed:
-        st.divider()
-        
-        if st.button("← Back to Data Preparation", use_container_width=True):
-            st.session_state['current_page'] = 'prep'
-            st.rerun()
+
 
 
 if __name__ == "__main__":

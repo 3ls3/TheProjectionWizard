@@ -72,6 +72,12 @@ def show_schema_page():
     
     run_id = st.session_state['run_id']
     
+    # Display current run ID
+    st.info(f"**Current Run ID:** {run_id}")
+    
+    # Introductory text
+    st.write("Review the auto-detected data types and suggested machine learning roles for your features. Focus on the 'Key Features' first, then optionally review all columns.")
+    
     try:
         # Load Data & Metadata
         run_dir_path = storage.get_run_dir(run_id)
@@ -102,14 +108,17 @@ def show_schema_page():
             all_initial_schemas = feature_definition_logic.suggest_initial_feature_schemas(df)
             
             # Identify key features
-            num_features_to_surface = min(7, len(df.columns) - 1)  # Exclude target from count
+            num_features_to_surface = min(5, len(df.columns) - 1)  # Exclude target from count
             key_feature_names = feature_definition_logic.identify_key_features(
                 df, target_info, num_features_to_surface=num_features_to_surface
             )
         
+        # Check if schemas are already confirmed
+        schemas_exist = bool(metadata and 'feature_schemas' in metadata and metadata['feature_schemas'])
+        
         # Load existing feature schemas if user revisits page
         existing_feature_schemas = {}
-        if 'feature_schemas' in metadata and metadata['feature_schemas']:
+        if schemas_exist:
             existing_feature_schemas = metadata['feature_schemas']
         
         # Initialize session state for UI choices
@@ -170,6 +179,7 @@ def show_schema_page():
                             "Data Type:",
                             options=dtype_options_list,
                             index=dtype_index,
+                            disabled=schemas_exist,
                             key=f"selectbox_dtype_{feature_name}"
                         )
                         
@@ -199,6 +209,7 @@ def show_schema_page():
                             "Encoding Role:",
                             options=role_options_list,
                             index=role_index,
+                            disabled=schemas_exist,
                             key=f"selectbox_role_{feature_name}",
                             help="How this feature should be processed for machine learning"
                         )
@@ -218,89 +229,93 @@ def show_schema_page():
                     
                     st.divider()
         
-        # Advanced Section - All Columns
-        with st.expander("Review/Override All Columns (Advanced)", expanded=False):
-            st.caption("Review and modify schema settings for all columns in your dataset.")
+                # Advanced Section - Remaining Columns
+        with st.expander("Review/Override Remaining Columns (Advanced)", expanded=False):
+            st.caption("Review and modify schema settings for remaining columns not shown above.")
             
-            # Filter out target column
-            all_columns = [col for col in df.columns if col != target_info['name']]
+            # Filter out target column AND key features (to avoid duplicates)
+            remaining_columns = [col for col in df.columns 
+                               if col != target_info['name'] and col not in key_feature_names]
             
-            for feature_name in all_columns:
-                with st.container():
-                    col1, col2, col3 = st.columns([1, 1, 1])
-                    
-                    feature_series = df[feature_name]
-                    stats = get_column_stats(feature_series)
-                    
-                    with col1:
-                        st.write(f"**{feature_name}**")
-                        if feature_name in key_feature_names:
-                            st.caption("🌟 Key Feature")
-                        st.caption(f"Unique: {stats['unique_values']} | Missing: {stats['missing_values']} ({stats['missing_percentage']}%)")
-                    
-                    with col2:
-                        # Data Type Selection
-                        initial_dtype = all_initial_schemas[feature_name]['initial_dtype']
-                        existing_dtype = existing_feature_schemas.get(feature_name, {}).get('dtype', initial_dtype)
+            if not remaining_columns:
+                st.info("All features are already shown in the Key Features section above.")
+            else:
+                for feature_name in remaining_columns:
+                    with st.container():
+                        col1, col2, col3 = st.columns([1, 1, 1])
                         
-                        # Use existing session state value if available
-                        session_dtype = st.session_state.ui_feature_schemas_override.get(feature_name, {}).get('final_dtype', existing_dtype)
+                        feature_series = df[feature_name]
+                        stats = get_column_stats(feature_series)
                         
-                        user_friendly_dtype = get_user_friendly_dtype(session_dtype)
-                        dtype_options_list = list(DTYPE_OPTIONS.values())
+                        with col1:
+                            st.write(f"**{feature_name}**")
+                            st.caption(f"Unique: {stats['unique_values']} | Missing: {stats['missing_values']} ({stats['missing_percentage']}%)")
                         
-                        try:
-                            dtype_index = dtype_options_list.index(user_friendly_dtype)
-                        except ValueError:
-                            dtype_index = 0
+                        with col2:
+                            # Data Type Selection
+                            initial_dtype = all_initial_schemas[feature_name]['initial_dtype']
+                            existing_dtype = existing_feature_schemas.get(feature_name, {}).get('dtype', initial_dtype)
+                            
+                            # Use existing session state value if available
+                            session_dtype = st.session_state.ui_feature_schemas_override.get(feature_name, {}).get('final_dtype', existing_dtype)
+                            
+                            user_friendly_dtype = get_user_friendly_dtype(session_dtype)
+                            dtype_options_list = list(DTYPE_OPTIONS.values())
+                            
+                            try:
+                                dtype_index = dtype_options_list.index(user_friendly_dtype)
+                            except ValueError:
+                                dtype_index = 0
+                            
+                            selected_dtype_friendly = st.selectbox(
+                                "Data Type:",
+                                options=dtype_options_list,
+                                index=dtype_index,
+                                disabled=schemas_exist,
+                                key=f"advanced_dtype_{feature_name}"
+                            )
+                            
+                            selected_dtype = DTYPE_REVERSE_MAP[selected_dtype_friendly]
                         
-                        selected_dtype_friendly = st.selectbox(
-                            "Data Type:",
-                            options=dtype_options_list,
-                            index=dtype_index,
-                            key=f"advanced_dtype_{feature_name}"
-                        )
+                        with col3:
+                            # Encoding Role Selection
+                            initial_role = all_initial_schemas[feature_name]['suggested_encoding_role']
+                            existing_role = existing_feature_schemas.get(feature_name, {}).get('encoding_role', initial_role)
+                            
+                            # Use existing session state value if available
+                            session_role = st.session_state.ui_feature_schemas_override.get(feature_name, {}).get('final_encoding_role', existing_role)
+                            
+                            user_friendly_role = get_user_friendly_encoding_role(session_role)
+                            role_options_list = list(ENCODING_ROLE_OPTIONS.values())
+                            
+                            try:
+                                role_index = role_options_list.index(user_friendly_role)
+                            except ValueError:
+                                role_index = 0
+                            
+                            selected_role_friendly = st.selectbox(
+                                "Encoding Role:",
+                                options=role_options_list,
+                                index=role_index,
+                                disabled=schemas_exist,
+                                key=f"advanced_role_{feature_name}"
+                            )
+                            
+                            selected_role = ENCODING_ROLE_REVERSE_MAP.get(
+                                selected_role_friendly.split(" - ")[0], 
+                                session_role
+                            )
                         
-                        selected_dtype = DTYPE_REVERSE_MAP[selected_dtype_friendly]
-                    
-                    with col3:
-                        # Encoding Role Selection
-                        initial_role = all_initial_schemas[feature_name]['suggested_encoding_role']
-                        existing_role = existing_feature_schemas.get(feature_name, {}).get('encoding_role', initial_role)
+                        # Store the user's choice for all columns
+                        if feature_name not in st.session_state.ui_feature_schemas_override:
+                            st.session_state.ui_feature_schemas_override[feature_name] = {}
                         
-                        # Use existing session state value if available
-                        session_role = st.session_state.ui_feature_schemas_override.get(feature_name, {}).get('final_encoding_role', existing_role)
+                        st.session_state.ui_feature_schemas_override[feature_name].update({
+                            'final_dtype': selected_dtype,
+                            'final_encoding_role': selected_role
+                        })
                         
-                        user_friendly_role = get_user_friendly_encoding_role(session_role)
-                        role_options_list = list(ENCODING_ROLE_OPTIONS.values())
-                        
-                        try:
-                            role_index = role_options_list.index(user_friendly_role)
-                        except ValueError:
-                            role_index = 0
-                        
-                        selected_role_friendly = st.selectbox(
-                            "Encoding Role:",
-                            options=role_options_list,
-                            index=role_index,
-                            key=f"advanced_role_{feature_name}"
-                        )
-                        
-                        selected_role = ENCODING_ROLE_REVERSE_MAP.get(
-                            selected_role_friendly.split(" - ")[0], 
-                            session_role
-                        )
-                    
-                    # Store the user's choice for all columns
-                    if feature_name not in st.session_state.ui_feature_schemas_override:
-                        st.session_state.ui_feature_schemas_override[feature_name] = {}
-                    
-                    st.session_state.ui_feature_schemas_override[feature_name].update({
-                        'final_dtype': selected_dtype,
-                        'final_encoding_role': selected_role
-                    })
-                    
-                    st.divider()
+                        st.divider()
         
         # Show Summary
         st.subheader("Summary of Changes")
@@ -318,13 +333,16 @@ def show_schema_page():
         else:
             st.info("Using AI suggestions for all features. You can review individual features above.")
         
-        # Confirmation Section
+        # Primary Action Button
         st.divider()
         
-        col1, col2 = st.columns([3, 1])
-        
-        with col1:
-            if st.button("✅ Confirm Feature Schemas", type="primary", use_container_width=True):
+        if st.button("✅ Confirm & Proceed", type="primary", use_container_width=True):
+            if schemas_exist:
+                # Step already completed - navigate directly
+                st.session_state['current_page'] = 'validation'
+                st.rerun()
+            else:
+                # First time through - save the feature schemas then navigate
                 with st.spinner("Saving feature schemas..."):
                     # Get user overrides from session state
                     user_overrides = st.session_state.get('ui_feature_schemas_override', {})
@@ -341,24 +359,18 @@ def show_schema_page():
                         # Clear session state
                         st.session_state.ui_feature_schemas_override = {}
                         
-                        # Auto-navigate to next step immediately
+                        # Navigate directly to next page
                         st.session_state['current_page'] = 'validation'
                         st.rerun()
                     else:
-                        st.error("❌ Failed to save feature schemas. Check logs for details.")
-                        
-                        # Show log file location
-                        log_path = run_dir_path / constants.STAGE_LOG_FILENAMES[constants.SCHEMA_STAGE]
-                        st.error(f"Check log file for more details: `{log_path}`")
-        
-        with col2:
-            if st.button("← Back", use_container_width=True):
-                st.session_state['current_page'] = 'target_confirmation'
-                st.rerun()
+                        # Use standardized error display
+                        save_exception = Exception("Failed to save feature schemas.")
+                        is_dev_mode = st.session_state.get("developer_mode_active", False)
+                        utils.display_page_error(save_exception, run_id=run_id, stage_name=constants.SCHEMA_STAGE, dev_mode=is_dev_mode)
     
     except Exception as e:
-        st.error(f"An error occurred while loading the schema page: {str(e)}")
-        st.exception(e)
+        is_dev_mode = st.session_state.get("developer_mode_active", False)
+        utils.display_page_error(e, run_id=st.session_state.get('run_id'), stage_name="Schema Confirmation", dev_mode=is_dev_mode)
 
 
 def main():

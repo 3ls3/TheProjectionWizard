@@ -86,14 +86,14 @@ def _perform_minimal_stable_cleaning(df: pd.DataFrame, target_column_name: str) 
 
 
 def identify_key_features(df_original: pd.DataFrame, target_info: dict, 
-                         num_features_to_surface: int = 7) -> List[str]:
+                         num_features_to_surface: int = 5) -> List[str]:
     """
     Identify potentially important features using basic importance metrics.
     
     Args:
         df_original: The original pandas DataFrame (loaded from original_data.csv)
         target_info: The dictionary for the target column (name, task_type, ml_type) from metadata.json
-        num_features_to_surface: How many top features to suggest (default to ~7)
+        num_features_to_surface: How many top features to suggest (default to ~5)
         
     Returns:
         A list of top N feature column names

@@ -98,6 +98,12 @@ def show_target_page():
     
     run_id = st.session_state['run_id']
     
+    # Display current run ID
+    st.info(f"**Current Run ID:** {run_id}")
+    
+    # Introductory text
+    st.write("Please select the column you want to predict (target variable) and specify the type of machine learning task.")
+    
     try:
         # Load Data and Suggestions
         run_dir_path = storage.get_run_dir(run_id)
@@ -116,7 +122,9 @@ def show_target_page():
         
         # Attempt to load existing target info from metadata.json
         metadata = storage.read_metadata(run_id)
-        if metadata and 'target_info' in metadata and metadata['target_info']:
+        target_info_exists = bool(metadata and 'target_info' in metadata and metadata['target_info'])
+        
+        if target_info_exists:
             target_info = metadata['target_info']
             current_target = target_info.get('name', suggested_target)
             current_task = target_info.get('task_type', suggested_task)
@@ -147,6 +155,7 @@ def show_target_page():
             "Select your target column:",
             options=column_options,
             index=current_target_index,
+            disabled=target_info_exists,
             help="This is the column you want to predict (your dependent variable)"
         )
         
@@ -175,6 +184,7 @@ def show_target_page():
             "What type of ML task is this?",
             options=task_options,
             index=current_task_index,
+            disabled=target_info_exists,
             help="Classification: Predicting categories/classes. Regression: Predicting continuous numbers."
         )
         
@@ -195,43 +205,35 @@ def show_target_page():
                 "How should the target variable be treated for the model?",
                 options=ml_type_options,
                 index=current_ml_type_index,
+                disabled=target_info_exists,
                 help="This determines how the target will be encoded for machine learning"
             )
             
             # Show description for selected ML type
             st.caption(f"💡 {get_ml_type_description(selected_ml_type)}")
             
-            # Show suggestions if different from current selection
-            if (selected_target != suggested_target or 
-                selected_task != suggested_task or 
-                selected_ml_type != suggested_ml_type):
+            # Show AI suggestions for reference (only if not already completed)
+            if (not target_info_exists and 
+                (selected_target != suggested_target or 
+                 selected_task != suggested_task or 
+                 selected_ml_type != suggested_ml_type)):
                 
                 with st.expander("🤖 AI Suggestions", expanded=False):
                     st.write("**AI suggested the following:**")
                     st.write(f"• Target Column: `{suggested_target}`")
                     st.write(f"• Task Type: `{suggested_task}`")
                     st.write(f"• ML Type: `{suggested_ml_type}`")
-                    
-                    if st.button("Use AI Suggestions"):
-                        st.session_state['use_ai_suggestions'] = True
-                        st.rerun()
-            
-            # Handle AI suggestions button click
-            if st.session_state.get('use_ai_suggestions', False):
-                st.session_state['use_ai_suggestions'] = False
-                # This will cause the page to reload with AI suggestions as defaults
-                # (handled by the selectbox index logic above)
-                selected_target = suggested_target
-                selected_task = suggested_task
-                selected_ml_type = suggested_ml_type
         
-        # Confirmation Button
+        # Primary Action Button
         st.divider()
         
-        col1, col2 = st.columns([3, 1])
-        
-        with col1:
-            if st.button("✅ Confirm Target and Task", type="primary", use_container_width=True):
+        if st.button("✅ Confirm & Proceed", type="primary", use_container_width=True):
+            if target_info_exists:
+                # Step already completed - navigate directly
+                st.session_state['current_page'] = 'schema_confirmation'
+                st.rerun()
+            else:
+                # First time through - save the target definition then navigate
                 with st.spinner("Saving target definition..."):
                     success = target_definition_logic.confirm_target_definition(
                         run_id, selected_target, selected_task, selected_ml_type
@@ -240,25 +242,19 @@ def show_target_page():
                     if success:
                         st.success("✅ Target definition saved successfully!")
                         st.balloons()
-                        
-                        # Auto-navigate to next step immediately
+                        # Navigate directly to next page
                         st.session_state['current_page'] = 'schema_confirmation'
                         st.rerun()
                     else:
-                        st.error("❌ Failed to save target definition. Check logs for details.")
-                        
-                        # Show log file location
-                        log_path = run_dir_path / constants.STAGE_LOG_FILENAMES[constants.SCHEMA_STAGE]
-                        st.error(f"Check log file for more details: `{log_path}`")
-        
-        with col2:
-            if st.button("← Back", use_container_width=True):
-                st.session_state['current_page'] = 'upload'
-                st.rerun()
+                        # Use standardized error display
+                        error_message = "Failed to save target definition."
+                        save_exception = Exception(error_message)
+                        is_dev_mode = st.session_state.get("developer_mode_active", False)
+                        utils.display_page_error(save_exception, run_id=run_id, stage_name=constants.SCHEMA_STAGE, dev_mode=is_dev_mode)
     
     except Exception as e:
-        st.error(f"An error occurred while loading the target page: {str(e)}")
-        st.exception(e)
+        is_dev_mode = st.session_state.get("developer_mode_active", False)
+        utils.display_page_error(e, run_id=st.session_state.get('run_id'), stage_name="Target Confirmation", dev_mode=is_dev_mode)
 
 
 def main():

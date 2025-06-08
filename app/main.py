@@ -13,6 +13,9 @@ sys.path.append(str(Path(__file__).parent))  # App directory
 
 import importlib
 
+# Import common utilities
+from common import status_utils, constants
+
 # Import page modules
 upload_page_module = importlib.import_module('pages.01_upload_page')
 target_page_module = importlib.import_module('pages.02_target_page')
@@ -40,7 +43,19 @@ def show_navigation_sidebar():
     
     # Show current run info if available
     if 'run_id' in st.session_state:
-        st.sidebar.success(f"**Active Run:** {st.session_state['run_id']}")
+        run_id = st.session_state['run_id']
+        st.sidebar.success(f"**Active Run:** {run_id}")
+        
+        # Get stage status summaries
+        validation_summary = status_utils.get_stage_status_summary(run_id, constants.VALIDATION_STAGE)
+        prep_summary = status_utils.get_stage_status_summary(run_id, constants.PREP_STAGE)
+        automl_summary = status_utils.get_stage_status_summary(run_id, constants.AUTOML_STAGE)
+        explain_summary = status_utils.get_stage_status_summary(run_id, constants.EXPLAIN_STAGE)
+        
+        # Show critical failure banner if validation failed
+        if validation_summary.status == "failed_critically":
+            st.sidebar.error("🚫 **Pipeline Stopped**")
+            st.sidebar.error(validation_summary.message or "Validation failed - fix data issues")
         
         # Show progress indicator
         current_page = st.session_state.get('current_page', 'upload')
@@ -50,21 +65,17 @@ def show_navigation_sidebar():
         st.sidebar.subheader("Pipeline Progress")
         current_index = pages.index(current_page) if current_page in pages else 0
         
-        # Show validation failure banner if applicable
-        try:
-            from common import storage, constants
-            status_data = storage.read_json(st.session_state['run_id'], constants.STATUS_FILENAME)
-            if (status_data and 
-                status_data.get('stage') == constants.VALIDATION_STAGE and 
-                status_data.get('status') == 'failed'):
-                st.sidebar.error("🚫 **Pipeline Stopped**")
-                st.sidebar.error("Validation failed - fix data issues")
-        except:
-            pass
+        # Enhanced emoji logic considering stage status
+        validation_failed = validation_summary.status == "failed_critically"
         
         for i, (page, name) in enumerate(zip(pages, page_names)):
             if page == current_page:
                 st.sidebar.write(f"👉 **{i+1}. {name}**")
+            elif page == 'validation' and validation_failed:
+                st.sidebar.write(f"🚫 {i+1}. {name}")
+            elif validation_failed and i > pages.index('validation'):
+                # Subsequent stages are blocked if validation failed
+                st.sidebar.write(f"🚫 {i+1}. {name}")
             elif i < current_index:
                 st.sidebar.write(f"✅ {i+1}. {name}")
             else:
@@ -80,118 +91,101 @@ def show_navigation_sidebar():
         st.session_state['current_page'] = 'upload'
         st.rerun()
     
-    # Available after upload: Target confirmation
+    # Available after upload: Target confirmation, Schema confirmation, Data validation
     if 'run_id' in st.session_state:
         if st.sidebar.button("🎯 Target Confirmation", use_container_width=True):
             st.session_state['current_page'] = 'target_confirmation'
             st.rerun()
             
-        # Available after target confirmation: Schema confirmation
         if st.sidebar.button("📋 Schema Confirmation", use_container_width=True):
             st.session_state['current_page'] = 'schema_confirmation'
             st.rerun()
             
-        # Available after schema confirmation: Data validation
         if st.sidebar.button("🔍 Data Validation", use_container_width=True):
             st.session_state['current_page'] = 'validation'
             st.rerun()
-    
-    # Future pages (conditionally enabled)
-    # Check if validation is complete and successful enough
-    validation_complete = False
-    validation_failed = False
-    if 'run_id' in st.session_state:
-        try:
-            from common import storage, constants, schemas
-            
-            # First check status.json for validation failure
-            status_data = storage.read_json(st.session_state['run_id'], constants.STATUS_FILENAME)
-            if status_data and status_data.get('stage') == constants.VALIDATION_STAGE:
-                if status_data.get('status') == 'failed':
-                    validation_failed = True
-                    validation_complete = False
-                else:
-                    # Check validation results for success
-                    validation_data = storage.read_json(st.session_state['run_id'], constants.VALIDATION_FILENAME)
-                    if validation_data:
-                        validation_summary = schemas.ValidationReportSummary(**validation_data)
-                        success_rate = (validation_summary.successful_expectations / validation_summary.total_expectations) if validation_summary.total_expectations > 0 else 0
-                        validation_complete = validation_summary.overall_success or success_rate >= 0.95
-        except:
-            validation_complete = False
-            validation_failed = False
-    
-    if validation_failed:
-        st.sidebar.button("🔧 Data Preparation", disabled=True, help="❌ Validation failed - fix data issues first")
-    elif validation_complete:
-        if st.sidebar.button("🔧 Data Preparation", use_container_width=True):
-            st.session_state['current_page'] = 'prep'
-            st.rerun()
+        
+        # Data Preparation button
+        prep_disabled = not validation_summary.can_proceed
+        prep_help = None
+        if validation_summary.status == "failed_critically":
+            prep_help = validation_summary.message or "❌ Validation critically failed - fix data issues first"
+        elif not validation_summary.can_proceed:
+            prep_help = "Complete data validation first"
+        
+        if prep_disabled:
+            st.sidebar.button("🔧 Data Preparation", disabled=True, help=prep_help)
+        else:
+            if st.sidebar.button("🔧 Data Preparation", use_container_width=True):
+                st.session_state['current_page'] = 'prep'
+                st.rerun()
+        
+        # Model Training button
+        training_disabled = not (validation_summary.can_proceed and prep_summary.can_proceed)
+        training_help = None
+        if validation_summary.status == "failed_critically":
+            training_help = validation_summary.message or "❌ Validation critically failed - fix data issues first"
+        elif not prep_summary.can_proceed:
+            training_help = "Complete data preparation first"
+        elif not validation_summary.can_proceed:
+            training_help = "Complete data validation first"
+        
+        if training_disabled:
+            st.sidebar.button("🤖 Model Training", disabled=True, help=training_help)
+        else:
+            if st.sidebar.button("🤖 Model Training", use_container_width=True):
+                st.session_state['current_page'] = 'automl'
+                st.rerun()
+        
+        # Model Explanation button
+        explain_disabled = not (validation_summary.can_proceed and prep_summary.can_proceed and automl_summary.can_proceed)
+        explain_help = None
+        if validation_summary.status == "failed_critically":
+            explain_help = validation_summary.message or "❌ Validation critically failed - fix data issues first"
+        elif not automl_summary.can_proceed:
+            explain_help = "Complete model training first"
+        elif not prep_summary.can_proceed:
+            explain_help = "Complete data preparation first"
+        elif not validation_summary.can_proceed:
+            explain_help = "Complete data validation first"
+        
+        if explain_disabled:
+            st.sidebar.button("📊 Model Explanation", disabled=True, help=explain_help)
+        else:
+            if st.sidebar.button("📊 Model Explanation", use_container_width=True):
+                st.session_state['current_page'] = 'explain'
+                st.rerun()
+        
+        # Results button
+        results_disabled = not (validation_summary.can_proceed and prep_summary.can_proceed and 
+                               automl_summary.can_proceed and explain_summary.can_proceed)
+        results_help = None
+        if validation_summary.status == "failed_critically":
+            results_help = validation_summary.message or "❌ Validation critically failed - fix data issues first"
+        elif not explain_summary.can_proceed:
+            results_help = "Complete model explanation first"
+        elif not automl_summary.can_proceed:
+            results_help = "Complete model training first"
+        elif not prep_summary.can_proceed:
+            results_help = "Complete data preparation first"
+        elif not validation_summary.can_proceed:
+            results_help = "Complete data validation first"
+        
+        if results_disabled:
+            st.sidebar.button("📈 Results", disabled=True, help=results_help)
+        else:
+            if st.sidebar.button("📈 Results", use_container_width=True):
+                st.session_state['current_page'] = 'results'
+                st.rerun()
     else:
-        st.sidebar.button("🔧 Data Preparation", disabled=True, help="Complete data validation first")
-    
-    # Check if data preparation is complete
-    prep_complete = False
-    if 'run_id' in st.session_state and not validation_failed:
-        try:
-            from common import storage, constants
-            status_data = storage.read_json(st.session_state['run_id'], constants.STATUS_FILENAME)
-            prep_complete = (status_data and 
-                           status_data.get('stage') == constants.PREP_STAGE and 
-                           status_data.get('status') == 'completed')
-        except:
-            prep_complete = False
-    
-    if validation_failed:
-        st.sidebar.button("🤖 Model Training", disabled=True, help="❌ Validation failed - fix data issues first")
-    elif prep_complete:
-        if st.sidebar.button("🤖 Model Training", use_container_width=True):
-            st.session_state['current_page'] = 'automl'
-            st.rerun()
-    else:
-        st.sidebar.button("🤖 Model Training", disabled=True, help="Complete data preparation first")
-    
-    # Check if AutoML training is complete
-    automl_complete = False
-    if 'run_id' in st.session_state and not validation_failed:
-        try:
-            from common import storage, constants
-            status_data = storage.read_json(st.session_state['run_id'], constants.STATUS_FILENAME)
-            automl_complete = (status_data and 
-                             status_data.get('stage') == constants.AUTOML_STAGE and 
-                             status_data.get('status') == 'completed')
-        except:
-            automl_complete = False
-    
-    if validation_failed:
-        st.sidebar.button("📊 Model Explanation", disabled=True, help="❌ Validation failed - fix data issues first")
-    elif automl_complete:
-        if st.sidebar.button("📊 Model Explanation", use_container_width=True):
-            st.session_state['current_page'] = 'explain'
-            st.rerun()
-    else:
-        st.sidebar.button("📊 Model Explanation", disabled=True, help="Complete model training first")
-    
-    # Check if explainability analysis is complete
-    explain_complete = False
-    if 'run_id' in st.session_state and not validation_failed:
-        try:
-            from common import storage, constants
-            status_data = storage.read_json(st.session_state['run_id'], constants.STATUS_FILENAME)
-            explain_complete = (status_data and 
-                              status_data.get('stage') == constants.EXPLAIN_STAGE and 
-                              status_data.get('status') == 'completed')
-        except:
-            explain_complete = False
-    
-    if validation_failed:
-        st.sidebar.button("📈 Results", disabled=True, help="❌ Validation failed - fix data issues first")
-    elif explain_complete:
-        if st.sidebar.button("📈 Results", use_container_width=True):
-            st.session_state['current_page'] = 'results'
-            st.rerun()
-    else:
-        st.sidebar.button("📈 Results", disabled=True, help="Complete model explanation first")
+        # No run_id - disable all buttons except Upload Data
+        st.sidebar.button("🎯 Target Confirmation", disabled=True, help="Upload data first")
+        st.sidebar.button("📋 Schema Confirmation", disabled=True, help="Upload data first")
+        st.sidebar.button("🔍 Data Validation", disabled=True, help="Upload data first")
+        st.sidebar.button("🔧 Data Preparation", disabled=True, help="Upload data first")
+        st.sidebar.button("🤖 Model Training", disabled=True, help="Upload data first")
+        st.sidebar.button("📊 Model Explanation", disabled=True, help="Upload data first")
+        st.sidebar.button("📈 Results", disabled=True, help="Upload data first")
 
 
 def route_to_page():

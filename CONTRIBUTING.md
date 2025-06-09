@@ -38,13 +38,6 @@ python scripts/python/health_check.py
 - Check `COORDINATION.md` for team workflow
 - Understand shared file protocols
 
-## 📋 Development Workflow
-
-### **Daily Routine**
-1. **Morning**: Check Slack for team updates
-2. **Start work**: Pull latest main, rebase your branch
-3. **Before committing**: Run tests and health checks
-4. **End of day**: Push your branch, update team
 
 ### **Before Making Changes**
 ```bash

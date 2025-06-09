@@ -38,7 +38,7 @@ TheProjectionWizard/
 ├── data/
 │   ├── runs/              # Run-specific artifacts
     └── fixtures/          # Sample data for testing
-├── documentation/          # Project documentation
+├── docs/                   # Project documentation
 │   └── archive/           # Archived documentation
 ├── Dockerfile             # Container configuration
 ├── Makefile              # Build automation

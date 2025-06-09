@@ -1,0 +1,145 @@
+#root {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem;
+  text-align: center;
+}
+
+.App {
+  width: 100%;
+}
+
+.App-header {
+  margin-bottom: 2rem;
+}
+
+.App-header h1 {
+  margin: 0;
+}
+
+.App-header p {
+  margin: 0.5rem 0;
+  opacity: 0.8;
+}
+
+.App-main {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.upload-section,
+.result-section,
+.suggestion-section {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  padding: 1.5rem;
+  margin: 1rem 0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.upload-section h2 {
+  margin-top: 0;
+}
+
+.upload-section input[type="file"] {
+  margin: 1rem;
+  padding: 0.5rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  color: inherit;
+}
+
+.upload-btn,
+.suggestion-btn {
+  background: #646cff;
+  color: white;
+  border: none;
+  padding: 0.75rem 1.5rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 1rem;
+  margin: 0.5rem;
+  transition: background-color 0.3s;
+}
+
+.upload-btn:hover,
+.suggestion-btn:hover {
+  background: #535bf2;
+}
+
+.upload-btn:disabled,
+.suggestion-btn:disabled {
+  background: #666;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.error {
+  background: rgba(255, 0, 0, 0.1);
+  border: 1px solid rgba(255, 0, 0, 0.3);
+  border-radius: 6px;
+  padding: 1rem;
+  margin: 1rem 0;
+  color: #ff6b6b;
+}
+
+.preview {
+  margin: 1rem 0;
+  text-align: left;
+}
+
+.preview table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.5rem 0;
+  font-size: 0.9rem;
+}
+
+.preview th,
+.preview td {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 0.5rem;
+  text-align: left;
+}
+
+.preview th {
+  background: rgba(255, 255, 255, 0.1);
+  font-weight: bold;
+}
+
+.api-info {
+  margin-top: 2rem;
+  padding: 1rem;
+  background: rgba(0, 255, 0, 0.05);
+  border: 1px solid rgba(0, 255, 0, 0.2);
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.api-info p {
+  margin: 0.25rem 0;
+}
+
+@media (prefers-color-scheme: light) {
+  .upload-section,
+  .result-section,
+  .suggestion-section {
+    background: rgba(0, 0, 0, 0.02);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+  }
+
+  .upload-section input[type="file"] {
+    background: rgba(0, 0, 0, 0.05);
+    border: 1px solid #ccc;
+  }
+
+  .preview th,
+  .preview td {
+    border: 1px solid rgba(0, 0, 0, 0.2);
+  }
+
+  .preview th {
+    background: rgba(0, 0, 0, 0.05);
+  }
+} 

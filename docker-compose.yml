@@ -1,0 +1,47 @@
+version: "3.9"
+
+services:
+  # ── Backend FastAPI Service ─────────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+    networks:
+      - projection-wizard-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/docs"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ── Frontend React Service ──────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    networks:
+      - projection-wizard-network
+
+# ── Network Configuration ─────────────────────────────────────────────────
+networks:
+  projection-wizard-network:
+    driver: bridge
+
+# ── Volume Configuration ──────────────────────────────────────────────────
+volumes:
+  projection-wizard-data:
+    driver: local 

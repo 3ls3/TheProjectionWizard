@@ -3,16 +3,16 @@ FastAPI main application for The Projection Wizard API.
 Provides REST endpoints for the ML pipeline functionality.
 """
 
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
 import sys
 from pathlib import Path
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-# Import route modules
 from api.routes.endpoints import router as schema_router
+from api.routes import pipeline
 
 # Create FastAPI application
 app = FastAPI(
@@ -34,6 +34,8 @@ app.add_middleware(
 
 # Include routers
 app.include_router(schema_router, prefix="/api/v1", tags=["schema"])
+app.include_router(pipeline.router, tags=["pipeline"])
+
 
 @app.get("/")
 async def root():
@@ -45,11 +47,13 @@ async def root():
         "redoc": "/redoc"
     }
 
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy"}
 
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True) 
+    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)

@@ -8,6 +8,29 @@ from typing import Dict
 from common import storage
 
 
+# Stage progress mapping for consistent progress reporting
+STAGE_PROGRESS_MAP = {
+    "ingest": 0,
+    "schema": 10,
+    "validation": 30,
+    "prep": 50,
+    "automl": 70,
+    "explain": 90,
+    "completed": 100,
+    "failed": 100,
+}
+
+# Map internal stage names to clean API names
+STAGE_NAME_MAP = {
+    "step_1_ingest": "ingest",
+    "step_2_schema": "schema",
+    "step_3_validation": "validation",
+    "step_4_prep": "prep",
+    "step_5_automl": "automl",
+    "step_6_explain": "explain",
+}
+
+
 def build_results(run_id: str) -> Dict:
     """
     Build final results dictionary from pipeline artifacts.
@@ -115,38 +138,39 @@ def get_pipeline_status(run_id: str) -> Dict:
     with open(status_path, 'r') as f:
         status_data = json.load(f)
 
-    # Map internal stage names to cleaner API names
-    stage_mapping = {
-        "step_3_validation": "validation",
-        "step_4_prep": "prep",
-        "step_5_automl": "automl",
-        "step_6_explain": "explain"
-    }
-
+    # Map internal stage names to clean API names
     stage = status_data.get("stage", "unknown")
-    clean_stage = stage_mapping.get(stage, stage)
+    clean_stage = STAGE_NAME_MAP.get(stage, stage)
 
-    # Calculate rough progress percentage
-    progress_pct = None
+    # Get status with default
     status = status_data.get("status", "unknown")
 
+    # Calculate progress percentage using the improved mapping
     if status == "completed":
         progress_pct = 100
     elif status == "failed":
-        progress_pct = 0
+        progress_pct = 100  # Show 100% for failed to indicate completion
     elif status == "running":
-        # Map stages to rough progress percentages
-        stage_progress = {
-            "validation": 20,
-            "prep": 40,
-            "automl": 70,
-            "explain": 90
-        }
-        progress_pct = stage_progress.get(clean_stage, 50)
+        progress_pct = STAGE_PROGRESS_MAP.get(clean_stage, 50)
+    else:
+        # For pending or unknown status
+        progress_pct = STAGE_PROGRESS_MAP.get(clean_stage, 0)
+
+    # Ensure message is informative even if missing
+    message = status_data.get("message")
+    if not message:
+        if status == "completed":
+            message = f"Pipeline completed successfully at {clean_stage} stage"
+        elif status == "failed":
+            message = f"Pipeline failed at {clean_stage} stage"
+        elif status == "running":
+            message = f"Pipeline running: {clean_stage} stage in progress"
+        else:
+            message = f"Pipeline {status}: {clean_stage} stage"
 
     return {
         "stage": clean_stage,
         "status": status,
-        "message": status_data.get("message"),
+        "message": message,
         "progress_pct": progress_pct
     }

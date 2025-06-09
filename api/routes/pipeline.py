@@ -14,7 +14,7 @@ import tempfile
 from pathlib import Path
 
 from common import storage, logger, constants
-from common import result_utils
+from common import result_utils, errors
 from .schema import (
     UploadResponse,
     TargetSuggestionResponse,
@@ -76,6 +76,51 @@ def _create_preview(df: pd.DataFrame, num_rows: int = 5) -> List[List[str]]:
     return preview
 
 
+def _run_pipeline_with_error_handling(run_id: str) -> None:
+    """
+    Wrapper for running the pipeline with proper error handling.
+    Used as background task to prevent unhandled exceptions from crashing the API.
+    """
+    # Get logger for background task
+    background_logger = logger.get_structured_logger(
+        run_id, "api_background_pipeline"
+    )
+
+    try:
+        logger.log_structured_event(
+            background_logger,
+            "background_pipeline_started",
+            {"run_id": run_id},
+            f"Starting background pipeline execution for run {run_id}"
+        )
+
+        # Run the actual pipeline
+        success = run_from_schema_confirm(run_id)
+
+        if success:
+            logger.log_structured_event(
+                background_logger,
+                "background_pipeline_succeeded",
+                {"run_id": run_id},
+                f"Background pipeline completed successfully for run {run_id}"
+            )
+        else:
+            logger.log_structured_error(
+                background_logger,
+                "background_pipeline_failed",
+                f"Pipeline execution failed for run {run_id}",
+                {"run_id": run_id, "success": False}
+            )
+
+    except Exception as e:
+        logger.log_structured_error(
+            background_logger,
+            "background_pipeline_error",
+            f"Unexpected error in background pipeline for run {run_id}: {str(e)}",
+            {"run_id": run_id, "error": str(e), "error_type": type(e).__name__}
+        )
+
+
 @router.post("/upload", response_model=UploadResponse, status_code=201)
 async def upload_csv(file: UploadFile = File(...)):
     """
@@ -94,22 +139,30 @@ async def upload_csv(file: UploadFile = File(...)):
         HTTPException: If file validation fails or processing errors occur
     """
 
-    # 1. Validate content-type (must contain "csv")
-    if not file.content_type or "csv" not in file.content_type.lower():
-        if not file.filename or not file.filename.lower().endswith('.csv'):
-            raise HTTPException(
-                status_code=400,
-                detail="File must be a CSV file (content-type or filename "
-                       "must indicate CSV)"
-            )
-
-    # Generate new run ID
+    # Generate new run ID and get logger
     run_id = _new_run_id()
+    upload_logger = logger.get_structured_logger(run_id, "api_upload")
 
-    # Get logger for this operation
-    upload_logger = logger.get_logger(run_id, "api_upload")
+    # Log request start
+    logger.log_structured_event(
+        upload_logger,
+        "api_request_started",
+        {
+            "endpoint": "upload",
+            "filename": file.filename,
+            "content_type": file.content_type
+        },
+        f"Starting file upload for new run {run_id}"
+    )
 
     try:
+        # 1. Validate content-type (must contain "csv")
+        if not file.content_type or "csv" not in file.content_type.lower():
+            if not file.filename or not file.filename.lower().endswith('.csv'):
+                errors.raise_invalid_csv(
+                    "Content-type or filename must indicate CSV format"
+                )
+
         # 2. Read file content into pandas DataFrame
         # Use temporary file to avoid memory issues with large files
         with tempfile.NamedTemporaryFile(delete=False, suffix='.csv') as tmp:
@@ -122,9 +175,9 @@ async def upload_csv(file: UploadFile = File(...)):
             try:
                 df = pd.read_csv(tmp.name)
             except Exception as e:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Failed to parse CSV file: {str(e)}"
+                errors.raise_invalid_csv(
+                    f"Failed to parse CSV: {str(e)}",
+                    {"parse_error": str(e)}
                 )
             finally:
                 # Clean up temp file
@@ -132,16 +185,12 @@ async def upload_csv(file: UploadFile = File(...)):
 
         # Validate data shape
         if df.empty:
-            raise HTTPException(
-                status_code=400,
-                detail="CSV file is empty or contains no valid data"
-            )
+            errors.raise_invalid_csv("File is empty or contains no valid data")
 
-        # 3. Generate run_id and create directory (already done above)
-        # 4. Persist original CSV
+        # 3. Persist original CSV
         _write_original_data(run_id, df)
 
-        # 5. Seed minimal metadata.json
+        # 4. Seed minimal metadata.json
         metadata = {
             "run_id": run_id,
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -163,16 +212,21 @@ async def upload_csv(file: UploadFile = File(...)):
         }
         storage.append_to_run_index(index_entry)
 
-        # 6. Return UploadResponse(run_id, shape, preview)
+        # 5. Return UploadResponse(run_id, shape, preview)
         shape = (len(df), len(df.columns))
         preview = _create_preview(df)
 
-        # Log successful upload
-        upload_logger.info(
+        # Log successful completion
+        logger.log_structured_event(
+            upload_logger,
+            "api_request_succeeded",
+            {
+                "endpoint": "upload",
+                "run_id": run_id,
+                "shape": shape,
+                "filename": file.filename
+            },
             f"Successfully uploaded file '{file.filename}' as run {run_id}"
-        )
-        upload_logger.info(
-            f"Dataset shape: {shape[0]} rows, {shape[1]} columns"
         )
 
         return UploadResponse(
@@ -182,15 +236,29 @@ async def upload_csv(file: UploadFile = File(...)):
         )
 
     except HTTPException:
+        # Log handled HTTP exceptions
+        logger.log_structured_error(
+            upload_logger,
+            "api_request_failed",
+            "File upload validation failed",
+            {"endpoint": "upload", "filename": file.filename}
+        )
         # Re-raise HTTP exceptions as-is
         raise
     except Exception as e:
         # Log unexpected errors
-        upload_logger.error(f"Unexpected error during file upload: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Internal server error during file upload: {str(e)}"
+        logger.log_structured_error(
+            upload_logger,
+            "api_request_failed",
+            f"Unexpected error during file upload: {str(e)}",
+            {
+                "endpoint": "upload",
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "filename": file.filename
+            }
         )
+        errors.raise_internal_server_error(f"File upload failed: {str(e)}")
 
 
 @router.get("/target-suggestion", response_model=TargetSuggestionResponse)
@@ -212,23 +280,29 @@ def target_suggestion(run_id: str = Query(...)):
         HTTPException: If run not found or analysis fails
     """
 
-    # Validate run exists
-    if not _validate_run_exists(run_id):
-        raise HTTPException(
-            status_code=404,
-            detail=f"Run '{run_id}' not found"
-        )
-
     # Get logger for this operation
-    suggestion_logger = logger.get_logger(run_id, "api_target_suggestion")
+    suggestion_logger = logger.get_structured_logger(
+        run_id, "api_target_suggestion"
+    )
+
+    # Log request start
+    logger.log_structured_event(
+        suggestion_logger,
+        "api_request_started",
+        {"endpoint": "target-suggestion", "run_id": run_id},
+        f"Starting target suggestion for run {run_id}"
+    )
 
     try:
+        # Validate run exists
+        if not _validate_run_exists(run_id):
+            errors.raise_run_not_found(run_id)
+
         # Load original data
         df = storage.read_original_data(run_id)
         if df is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Original data not found for run '{run_id}'"
+            errors.raise_results_not_available(
+                run_id, f"Original data not found for run '{run_id}'"
             )
 
         # Call pipeline logic to suggest target and task type
@@ -239,18 +313,31 @@ def target_suggestion(run_id: str = Query(...)):
         if suggested_col is None or suggested_task is None:
             raise HTTPException(
                 status_code=400,
-                detail="Could not infer target column from the data"
+                detail=errors.create_error_detail(
+                    "Could not infer target column from the data",
+                    errors.ErrorCodes.TARGET_INFERENCE_FAILED,
+                    {"run_id": run_id}
+                )
             )
-
-        # Log the suggestion
-        suggestion_logger.info(
-            f"Suggested target: '{suggested_col}', "
-            f"task type: '{suggested_task}'"
-        )
 
         # For now, set a static confidence score
         # In the future, this could be calculated based on heuristics
         confidence = 0.87
+
+        # Log successful completion
+        logger.log_structured_event(
+            suggestion_logger,
+            "api_request_succeeded",
+            {
+                "endpoint": "target-suggestion",
+                "run_id": run_id,
+                "suggested_column": suggested_col,
+                "task_type": suggested_task,
+                "confidence": confidence
+            },
+            f"Target suggestion completed for run {run_id}: "
+            f"'{suggested_col}' ({suggested_task})"
+        )
 
         return TargetSuggestionResponse(
             suggested_column=suggested_col,
@@ -259,17 +346,29 @@ def target_suggestion(run_id: str = Query(...)):
         )
 
     except HTTPException:
+        # Log handled HTTP exceptions
+        logger.log_structured_error(
+            suggestion_logger,
+            "api_request_failed",
+            "Target suggestion failed",
+            {"endpoint": "target-suggestion", "run_id": run_id}
+        )
         # Re-raise HTTP exceptions as-is
         raise
     except Exception as e:
         # Log unexpected errors
-        suggestion_logger.error(
-            f"Unexpected error during target suggestion: {str(e)}"
+        logger.log_structured_error(
+            suggestion_logger,
+            "api_request_failed",
+            f"Unexpected error during target suggestion: {str(e)}",
+            {
+                "endpoint": "target-suggestion",
+                "run_id": run_id,
+                "error": str(e),
+                "error_type": type(e).__name__
+            }
         )
-        raise HTTPException(
-            status_code=500,
-            detail=f"Internal server error during target analysis: {str(e)}"
-        )
+        errors.raise_internal_server_error(f"Target analysis failed: {str(e)}")
 
 
 @router.post("/confirm-target", status_code=200)
@@ -290,23 +389,34 @@ def confirm_target(req: TargetConfirmationRequest):
         HTTPException: If run not found or update fails
     """
 
-    # Validate run exists
-    if not _validate_run_exists(req.run_id):
-        raise HTTPException(
-            status_code=404,
-            detail=f"Run '{req.run_id}' not found"
-        )
-
     # Get logger for this operation
-    confirm_logger = logger.get_logger(req.run_id, "api_target_confirmation")
+    confirm_logger = logger.get_structured_logger(
+        req.run_id, "api_target_confirmation"
+    )
+
+    # Log request start
+    logger.log_structured_event(
+        confirm_logger,
+        "api_request_started",
+        {
+            "endpoint": "confirm-target",
+            "run_id": req.run_id,
+            "confirmed_column": req.confirmed_column,
+            "task_type": req.task_type
+        },
+        f"Starting target confirmation for run {req.run_id}"
+    )
 
     try:
+        # Validate run exists
+        if not _validate_run_exists(req.run_id):
+            errors.raise_run_not_found(req.run_id)
+
         # Load original data to determine ml_type
         df = storage.read_original_data(req.run_id)
         if df is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Original data not found for run '{req.run_id}'"
+            errors.raise_results_not_available(
+                req.run_id, f"Original data not found for run '{req.run_id}'"
             )
 
         # Get the ml_type from the suggestion logic
@@ -337,27 +447,52 @@ def confirm_target(req: TargetConfirmationRequest):
         # Persist updated metadata
         storage.write_metadata(req.run_id, metadata)
 
-        # Log successful confirmation
-        confirm_logger.info(
-            f"Target confirmed: '{req.confirmed_column}', "
-            f"task type: '{req.task_type}', ml_type: '{suggested_ml_type}'"
+        # Log successful completion
+        logger.log_structured_event(
+            confirm_logger,
+            "api_request_succeeded",
+            {
+                "endpoint": "confirm-target",
+                "run_id": req.run_id,
+                "confirmed_column": req.confirmed_column,
+                "task_type": req.task_type,
+                "ml_type": suggested_ml_type
+            },
+            f"Target confirmed for run {req.run_id}: "
+            f"'{req.confirmed_column}' ({req.task_type})"
         )
 
         return {"status": "ok"}
 
     except HTTPException:
+        # Log handled HTTP exceptions
+        logger.log_structured_error(
+            confirm_logger,
+            "api_request_failed",
+            "Target confirmation failed",
+            {
+                "endpoint": "confirm-target",
+                "run_id": req.run_id,
+                "confirmed_column": req.confirmed_column
+            }
+        )
         # Re-raise HTTP exceptions as-is
         raise
     except Exception as e:
         # Log unexpected errors
-        confirm_logger.error(
-            f"Unexpected error during target confirmation: {str(e)}"
+        logger.log_structured_error(
+            confirm_logger,
+            "api_request_failed",
+            f"Unexpected error during target confirmation: {str(e)}",
+            {
+                "endpoint": "confirm-target",
+                "run_id": req.run_id,
+                "error": str(e),
+                "error_type": type(e).__name__
+            }
         )
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                f"Internal server error during target confirmation: {str(e)}"
-            )
+        errors.raise_internal_server_error(
+            f"Target confirmation failed: {str(e)}"
         )
 
 
@@ -381,31 +516,37 @@ def feature_suggestion(run_id: str = Query(...), top_n: int = 5):
         analysis fails
     """
 
-    # Validate run exists
-    if not _validate_run_exists(run_id):
-        raise HTTPException(
-            status_code=404,
-            detail=f"Run '{run_id}' not found"
-        )
-
-    # Validate target has been confirmed
-    if not _validate_target_confirmed(run_id):
-        raise HTTPException(
-            status_code=400,
-            detail="Target must be confirmed before requesting feature "
-                   "suggestions"
-        )
-
     # Get logger for this operation
-    feature_logger = logger.get_logger(run_id, "api_feature_suggestion")
+    feature_logger = logger.get_structured_logger(
+        run_id, "api_feature_suggestion"
+    )
+
+    # Log request start
+    logger.log_structured_event(
+        feature_logger,
+        "api_request_started",
+        {
+            "endpoint": "feature-suggestion",
+            "run_id": run_id,
+            "top_n": top_n
+        },
+        f"Starting feature suggestion for run {run_id}"
+    )
 
     try:
+        # Validate run exists
+        if not _validate_run_exists(run_id):
+            errors.raise_run_not_found(run_id)
+
+        # Validate target has been confirmed
+        if not _validate_target_confirmed(run_id):
+            errors.raise_target_not_confirmed(run_id)
+
         # Load original data and metadata
         df = storage.read_original_data(run_id)
         if df is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Original data not found for run '{run_id}'"
+            errors.raise_results_not_available(
+                run_id, f"Original data not found for run '{run_id}'"
             )
 
         metadata = storage.read_metadata(run_id)
@@ -433,10 +574,19 @@ def feature_suggestion(run_id: str = Query(...), top_n: int = 5):
             if col != target_column and col not in filtered_schemas:
                 filtered_schemas[col] = schema
 
-        # Log the suggestion
-        feature_logger.info(
-            f"Generated feature suggestions for {len(filtered_schemas)} "
-            f"columns, with {len(key_features)} key features identified"
+        # Log successful completion
+        logger.log_structured_event(
+            feature_logger,
+            "api_request_succeeded",
+            {
+                "endpoint": "feature-suggestion",
+                "run_id": run_id,
+                "total_features": len(filtered_schemas),
+                "key_features_count": len(key_features),
+                "top_n": top_n
+            },
+            f"Feature suggestion completed for run {run_id}: "
+            f"{len(filtered_schemas)} features, {len(key_features)} key features"
         )
 
         return FeatureSuggestionResponse(
@@ -444,17 +594,29 @@ def feature_suggestion(run_id: str = Query(...), top_n: int = 5):
         )
 
     except HTTPException:
+        # Log handled HTTP exceptions
+        logger.log_structured_error(
+            feature_logger,
+            "api_request_failed",
+            "Feature suggestion failed",
+            {"endpoint": "feature-suggestion", "run_id": run_id}
+        )
         # Re-raise HTTP exceptions as-is
         raise
     except Exception as e:
         # Log unexpected errors
-        feature_logger.error(
-            f"Unexpected error during feature suggestion: {str(e)}"
+        logger.log_structured_error(
+            feature_logger,
+            "api_request_failed",
+            f"Unexpected error during feature suggestion: {str(e)}",
+            {
+                "endpoint": "feature-suggestion",
+                "run_id": run_id,
+                "error": str(e),
+                "error_type": type(e).__name__
+            }
         )
-        raise HTTPException(
-            status_code=500,
-            detail=f"Internal server error during feature analysis: {str(e)}"
-        )
+        errors.raise_internal_server_error(f"Feature analysis failed: {str(e)}")
 
 
 @router.post("/confirm-features", status_code=202)
@@ -480,30 +642,37 @@ def confirm_features(
         confirmation fails
     """
 
-    # Validate run exists
-    if not _validate_run_exists(req.run_id):
-        raise HTTPException(
-            status_code=404,
-            detail=f"Run '{req.run_id}' not found"
-        )
-
-    # Validate target has been confirmed
-    if not _validate_target_confirmed(req.run_id):
-        raise HTTPException(
-            status_code=400,
-            detail="Target must be confirmed before confirming features"
-        )
-
     # Get logger for this operation
-    confirm_logger = logger.get_logger(req.run_id, "api_feature_confirmation")
+    confirm_logger = logger.get_structured_logger(
+        req.run_id, "api_feature_confirmation"
+    )
+
+    # Log request start
+    logger.log_structured_event(
+        confirm_logger,
+        "api_request_started",
+        {
+            "endpoint": "confirm-features",
+            "run_id": req.run_id,
+            "confirmed_schemas_count": len(req.confirmed_schemas)
+        },
+        f"Starting feature confirmation for run {req.run_id}"
+    )
 
     try:
+        # Validate run exists
+        if not _validate_run_exists(req.run_id):
+            errors.raise_run_not_found(req.run_id)
+
+        # Validate target has been confirmed
+        if not _validate_target_confirmed(req.run_id):
+            errors.raise_target_not_confirmed(req.run_id)
+
         # Load original data to get all initial schemas
         df = storage.read_original_data(req.run_id)
         if df is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Original data not found for run '{req.run_id}'"
+            errors.raise_results_not_available(
+                req.run_id, f"Original data not found for run '{req.run_id}'"
             )
 
         # Get all initial schemas
@@ -512,10 +681,7 @@ def confirm_features(
         # Check if features have already been confirmed
         metadata = storage.read_metadata(req.run_id)
         if metadata and 'feature_schemas' in metadata:
-            raise HTTPException(
-                status_code=400,
-                detail="Features have already been confirmed for this run"
-            )
+            errors.raise_features_already_confirmed(req.run_id)
 
         # Confirm feature schemas using pipeline logic
         success = feat_logic.confirm_feature_schemas(
@@ -527,37 +693,61 @@ def confirm_features(
         if not success:
             raise HTTPException(
                 status_code=400,
-                detail="Schema confirmation failed"
+                detail=errors.create_error_detail(
+                    "Schema confirmation failed",
+                    errors.ErrorCodes.SCHEMA_CONFIRMATION_FAILED,
+                    {"run_id": req.run_id}
+                )
             )
 
-        # Log successful confirmation
-        confirm_logger.info(
-            f"Feature schemas confirmed for {len(req.confirmed_schemas)} "
-            f"user-modified columns"
-        )
+        # Schedule background pipeline execution with error handling wrapper
+        background_tasks.add_task(_run_pipeline_with_error_handling, req.run_id)
 
-        # Schedule background pipeline execution
-        background_tasks.add_task(run_from_schema_confirm, req.run_id)
-
-        confirm_logger.info(
-            "Scheduled background pipeline execution (stages 3-7)"
+        # Log successful completion
+        logger.log_structured_event(
+            confirm_logger,
+            "api_request_succeeded",
+            {
+                "endpoint": "confirm-features",
+                "run_id": req.run_id,
+                "confirmed_schemas_count": len(req.confirmed_schemas),
+                "background_task_scheduled": True
+            },
+            f"Feature confirmation completed for run {req.run_id}, "
+            f"background pipeline scheduled"
         )
 
         return {"status": "pipeline_started"}
 
     except HTTPException:
+        # Log handled HTTP exceptions
+        logger.log_structured_error(
+            confirm_logger,
+            "api_request_failed",
+            "Feature confirmation failed",
+            {
+                "endpoint": "confirm-features",
+                "run_id": req.run_id,
+                "confirmed_schemas_count": len(req.confirmed_schemas)
+            }
+        )
         # Re-raise HTTP exceptions as-is
         raise
     except Exception as e:
         # Log unexpected errors
-        confirm_logger.error(
-            f"Unexpected error during feature confirmation: {str(e)}"
+        logger.log_structured_error(
+            confirm_logger,
+            "api_request_failed",
+            f"Unexpected error during feature confirmation: {str(e)}",
+            {
+                "endpoint": "confirm-features",
+                "run_id": req.run_id,
+                "error": str(e),
+                "error_type": type(e).__name__
+            }
         )
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                f"Internal server error during feature confirmation: {str(e)}"
-            )
+        errors.raise_internal_server_error(
+            f"Feature confirmation failed: {str(e)}"
         )
 
 
@@ -579,39 +769,75 @@ def get_status(run_id: str = Query(...)):
         HTTPException: If run not found or status unavailable
     """
 
-    # Validate run exists
-    if not _validate_run_exists(run_id):
-        raise HTTPException(
-            status_code=404,
-            detail=f"Run '{run_id}' not found"
-        )
-
     # Get logger for this operation
-    status_logger = logger.get_logger(run_id, "api_status")
+    status_logger = logger.get_structured_logger(run_id, "api_status")
+
+    # Log request start
+    logger.log_structured_event(
+        status_logger,
+        "api_request_started",
+        {"endpoint": "status", "run_id": run_id},
+        f"Starting status check for run {run_id}"
+    )
 
     try:
+        # Validate run exists
+        if not _validate_run_exists(run_id):
+            errors.raise_run_not_found(run_id)
+
         # Get status using result utils
         status_data = result_utils.get_pipeline_status(run_id)
 
-        status_logger.info(
-            f"Status requested: stage='{status_data['stage']}', "
-            f"status='{status_data['status']}'"
+        # Log successful completion
+        logger.log_structured_event(
+            status_logger,
+            "api_request_succeeded",
+            {
+                "endpoint": "status",
+                "run_id": run_id,
+                "stage": status_data['stage'],
+                "status": status_data['status'],
+                "progress_pct": status_data['progress_pct']
+            },
+            f"Status retrieved for run {run_id}: "
+            f"{status_data['stage']} ({status_data['status']})"
         )
 
         return PipelineStatusResponse(**status_data)
 
     except FileNotFoundError:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Status information not available for run '{run_id}'"
+        # Log and raise status not available error
+        logger.log_structured_error(
+            status_logger,
+            "api_request_failed",
+            "Status file not found",
+            {"endpoint": "status", "run_id": run_id}
         )
+        errors.raise_status_not_available(run_id)
+    except HTTPException:
+        # Log handled HTTP exceptions
+        logger.log_structured_error(
+            status_logger,
+            "api_request_failed",
+            "Status check failed",
+            {"endpoint": "status", "run_id": run_id}
+        )
+        # Re-raise HTTP exceptions as-is
+        raise
     except Exception as e:
         # Log unexpected errors
-        status_logger.error(f"Unexpected error getting status: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Internal server error getting status: {str(e)}"
+        logger.log_structured_error(
+            status_logger,
+            "api_request_failed",
+            f"Unexpected error getting status: {str(e)}",
+            {
+                "endpoint": "status",
+                "run_id": run_id,
+                "error": str(e),
+                "error_type": type(e).__name__
+            }
         )
+        errors.raise_internal_server_error(f"Status check failed: {str(e)}")
 
 
 @router.get("/results", response_model=FinalResultsResponse)
@@ -634,54 +860,88 @@ def get_results(run_id: str = Query(...)):
         unavailable
     """
 
-    # Validate run exists
-    if not _validate_run_exists(run_id):
-        raise HTTPException(
-            status_code=404,
-            detail=f"Run '{run_id}' not found"
-        )
-
     # Get logger for this operation
-    results_logger = logger.get_logger(run_id, "api_results")
+    results_logger = logger.get_structured_logger(run_id, "api_results")
+
+    # Log request start
+    logger.log_structured_event(
+        results_logger,
+        "api_request_started",
+        {"endpoint": "results", "run_id": run_id},
+        f"Starting results retrieval for run {run_id}"
+    )
 
     try:
+        # Validate run exists
+        if not _validate_run_exists(run_id):
+            errors.raise_run_not_found(run_id)
+
         # Check pipeline status first
         status_data = result_utils.get_pipeline_status(run_id)
 
         if status_data['status'] == 'failed':
-            raise HTTPException(
-                status_code=400,
-                detail="Pipeline failed - results not available"
+            errors.raise_pipeline_failed(
+                run_id, "Pipeline failed - results not available"
             )
         elif status_data['status'] != 'completed':
-            raise HTTPException(
-                status_code=202,
-                detail="Pipeline still running - results not yet available"
-            )
+            errors.raise_pipeline_still_running(run_id)
 
         # Pipeline completed - get results
         results_data = result_utils.build_results(run_id)
 
-        results_logger.info(
-            f"Results retrieved: {len(results_data['model_metrics'])} metrics, "
+        # Log successful completion
+        logger.log_structured_event(
+            results_logger,
+            "api_request_succeeded",
+            {
+                "endpoint": "results",
+                "run_id": run_id,
+                "metrics_count": len(results_data['model_metrics']),
+                "features_count": len(results_data['top_features'])
+            },
+            f"Results retrieved for run {run_id}: "
+            f"{len(results_data['model_metrics'])} metrics, "
             f"{len(results_data['top_features'])} features"
         )
 
         return FinalResultsResponse(**results_data)
 
     except HTTPException:
+        # Log handled HTTP exceptions
+        logger.log_structured_error(
+            results_logger,
+            "api_request_failed",
+            "Results retrieval failed",
+            {"endpoint": "results", "run_id": run_id}
+        )
         # Re-raise HTTP exceptions as-is
         raise
     except FileNotFoundError as e:
-        results_logger.error(f"Results files missing: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail="Results files missing - pipeline may have failed"
+        # Log and raise results not available error
+        logger.log_structured_error(
+            results_logger,
+            "api_request_failed",
+            f"Results files missing: {str(e)}",
+            {
+                "endpoint": "results",
+                "run_id": run_id,
+                "error": str(e)
+            }
+        )
+        errors.raise_results_not_available(
+            run_id, "Results files missing - pipeline may have failed"
         )
     except Exception as e:
         # Log unexpected errors
-        results_logger.error(f"Unexpected error getting results: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Internal server error getting results: {str(e)}"
+        logger.log_structured_error(
+            results_logger,
+            "api_request_failed",
+            f"Unexpected error getting results: {str(e)}",
+            {
+                "endpoint": "results",
+                "run_id": run_id,
+                "error": str(e),
+                "error_type": type(e).__name__
+            }
         )
+        errors.raise_internal_server_error(f"Results retrieval failed: {str(e)}")

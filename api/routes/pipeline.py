@@ -14,12 +14,15 @@ import tempfile
 from pathlib import Path
 
 from common import storage, logger, constants
+from common import result_utils
 from .schema import (
     UploadResponse,
     TargetSuggestionResponse,
     TargetConfirmationRequest,
     FeatureSuggestionResponse,
-    FeatureConfirmationRequest
+    FeatureConfirmationRequest,
+    PipelineStatusResponse,
+    FinalResultsResponse
 )
 from pipeline.step_2_schema import target_definition_logic as tgt_logic
 from pipeline.step_2_schema import feature_definition_logic as feat_logic
@@ -555,4 +558,130 @@ def confirm_features(
             detail=(
                 f"Internal server error during feature confirmation: {str(e)}"
             )
+        )
+
+
+@router.get("/status", response_model=PipelineStatusResponse)
+def get_status(run_id: str = Query(...)):
+    """
+    Get the current pipeline status for a run.
+
+    Reads the status.json file to provide real-time information about
+    pipeline progress, current stage, and completion status.
+
+    Args:
+        run_id: The ID of the run to check status for
+
+    Returns:
+        PipelineStatusResponse with stage, status, message, and progress
+
+    Raises:
+        HTTPException: If run not found or status unavailable
+    """
+
+    # Validate run exists
+    if not _validate_run_exists(run_id):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Run '{run_id}' not found"
+        )
+
+    # Get logger for this operation
+    status_logger = logger.get_logger(run_id, "api_status")
+
+    try:
+        # Get status using result utils
+        status_data = result_utils.get_pipeline_status(run_id)
+
+        status_logger.info(
+            f"Status requested: stage='{status_data['stage']}', "
+            f"status='{status_data['status']}'"
+        )
+
+        return PipelineStatusResponse(**status_data)
+
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Status information not available for run '{run_id}'"
+        )
+    except Exception as e:
+        # Log unexpected errors
+        status_logger.error(f"Unexpected error getting status: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error getting status: {str(e)}"
+        )
+
+
+@router.get("/results", response_model=FinalResultsResponse)
+def get_results(run_id: str = Query(...)):
+    """
+    Get the final pipeline results for a completed run.
+
+    Returns model metrics, feature importance, and explainability information
+    once the pipeline has completed all stages successfully.
+
+    Args:
+        run_id: The ID of the run to get results for
+
+    Returns:
+        FinalResultsResponse with model metrics, top features, and
+        explainability
+
+    Raises:
+        HTTPException: If run not found, pipeline not completed, or results
+        unavailable
+    """
+
+    # Validate run exists
+    if not _validate_run_exists(run_id):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Run '{run_id}' not found"
+        )
+
+    # Get logger for this operation
+    results_logger = logger.get_logger(run_id, "api_results")
+
+    try:
+        # Check pipeline status first
+        status_data = result_utils.get_pipeline_status(run_id)
+
+        if status_data['status'] == 'failed':
+            raise HTTPException(
+                status_code=400,
+                detail="Pipeline failed - results not available"
+            )
+        elif status_data['status'] != 'completed':
+            raise HTTPException(
+                status_code=202,
+                detail="Pipeline still running - results not yet available"
+            )
+
+        # Pipeline completed - get results
+        results_data = result_utils.build_results(run_id)
+
+        results_logger.info(
+            f"Results retrieved: {len(results_data['model_metrics'])} metrics, "
+            f"{len(results_data['top_features'])} features"
+        )
+
+        return FinalResultsResponse(**results_data)
+
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
+    except FileNotFoundError as e:
+        results_logger.error(f"Results files missing: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Results files missing - pipeline may have failed"
+        )
+    except Exception as e:
+        # Log unexpected errors
+        results_logger.error(f"Unexpected error getting results: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error getting results: {str(e)}"
         )

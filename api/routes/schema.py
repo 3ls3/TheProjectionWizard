@@ -50,6 +50,19 @@ class FeatureConfirmationRequest(BaseModel):
     confirmed_schemas: Dict[str, Dict[str, str]]
 
 
+class PipelineStatusResponse(BaseModel):
+    """Response model for pipeline status endpoint."""
+    api_version: Literal["v1"] = "v1"
+    stage: str = Field(
+        ..., description="Current pipeline stage (e.g. 'prep', 'automl', 'completed')"
+    )
+    status: Literal["pending", "running", "completed", "failed"]
+    message: Optional[str] = None
+    progress_pct: Optional[int] = Field(
+        None, description="Coarse progress percentage (0-100)"
+    )
+
+
 class FinalResultsResponse(BaseModel):
     """Response model for final pipeline results endpoint."""
     api_version: Literal["v1"] = "v1"
@@ -65,5 +78,6 @@ __all__ = [
     "TargetConfirmationRequest",
     "FeatureSuggestionResponse",
     "FeatureConfirmationRequest",
+    "PipelineStatusResponse",
     "FinalResultsResponse",
 ]

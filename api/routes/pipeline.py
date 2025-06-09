@@ -3,7 +3,9 @@ Pipeline API routes for The Projection Wizard.
 Provides endpoints for the main ML pipeline functionality.
 """
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, Query
+from fastapi import (
+    APIRouter, UploadFile, File, HTTPException, Query, BackgroundTasks
+)
 from uuid import uuid4
 import pandas as pd
 from datetime import datetime, timezone
@@ -15,9 +17,13 @@ from common import storage, logger, constants
 from .schema import (
     UploadResponse,
     TargetSuggestionResponse,
-    TargetConfirmationRequest
+    TargetConfirmationRequest,
+    FeatureSuggestionResponse,
+    FeatureConfirmationRequest
 )
 from pipeline.step_2_schema import target_definition_logic as tgt_logic
+from pipeline.step_2_schema import feature_definition_logic as feat_logic
+from pipeline.orchestrator import run_from_schema_confirm
 
 router = APIRouter(prefix="/api")
 
@@ -34,6 +40,12 @@ def _validate_run_exists(run_id: str) -> bool:
     run_dir = Path(constants.DATA_DIR_NAME) / "runs" / run_id
     original_data_path = run_dir / constants.ORIGINAL_DATA_FILE
     return original_data_path.exists()
+
+
+def _validate_target_confirmed(run_id: str) -> bool:
+    """Check if target has been confirmed for this run."""
+    metadata = storage.read_metadata(run_id)
+    return metadata is not None and 'target_info' in metadata
 
 
 def _write_original_data(run_id: str, df: pd.DataFrame) -> None:
@@ -286,6 +298,19 @@ def confirm_target(req: TargetConfirmationRequest):
     confirm_logger = logger.get_logger(req.run_id, "api_target_confirmation")
 
     try:
+        # Load original data to determine ml_type
+        df = storage.read_original_data(req.run_id)
+        if df is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Original data not found for run '{req.run_id}'"
+            )
+
+        # Get the ml_type from the suggestion logic
+        suggested_col, suggested_task, suggested_ml_type = (
+            tgt_logic.suggest_target_and_task(df)
+        )
+
         # Load existing metadata.json
         metadata = storage.read_metadata(req.run_id)
         if metadata is None:
@@ -299,6 +324,7 @@ def confirm_target(req: TargetConfirmationRequest):
         metadata['target_info'] = {
             "name": req.confirmed_column,
             "task_type": req.task_type,
+            "ml_type": suggested_ml_type or "unknown_type",
             "user_confirmed_at": datetime.now(timezone.utc).isoformat()
         }
 
@@ -311,11 +337,14 @@ def confirm_target(req: TargetConfirmationRequest):
         # Log successful confirmation
         confirm_logger.info(
             f"Target confirmed: '{req.confirmed_column}', "
-            f"task type: '{req.task_type}'"
+            f"task type: '{req.task_type}', ml_type: '{suggested_ml_type}'"
         )
 
         return {"status": "ok"}
 
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
     except Exception as e:
         # Log unexpected errors
         confirm_logger.error(
@@ -325,5 +354,205 @@ def confirm_target(req: TargetConfirmationRequest):
             status_code=500,
             detail=(
                 f"Internal server error during target confirmation: {str(e)}"
+            )
+        )
+
+
+@router.get("/feature-suggestion", response_model=FeatureSuggestionResponse)
+def feature_suggestion(run_id: str = Query(...), top_n: int = 5):
+    """
+    Get feature schema suggestions for a run.
+
+    Analyzes the dataset to identify key features and suggest appropriate
+    data types and encoding roles for each column.
+
+    Args:
+        run_id: The ID of the run to analyze
+        top_n: Number of top features to prioritize (default: 5)
+
+    Returns:
+        FeatureSuggestionResponse with feature schemas
+
+    Raises:
+        HTTPException: If run not found, target not confirmed, or
+        analysis fails
+    """
+
+    # Validate run exists
+    if not _validate_run_exists(run_id):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Run '{run_id}' not found"
+        )
+
+    # Validate target has been confirmed
+    if not _validate_target_confirmed(run_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Target must be confirmed before requesting feature "
+                   "suggestions"
+        )
+
+    # Get logger for this operation
+    feature_logger = logger.get_logger(run_id, "api_feature_suggestion")
+
+    try:
+        # Load original data and metadata
+        df = storage.read_original_data(run_id)
+        if df is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Original data not found for run '{run_id}'"
+            )
+
+        metadata = storage.read_metadata(run_id)
+        target_info = metadata['target_info']
+
+        # Get all feature schemas
+        all_schemas = feat_logic.suggest_initial_feature_schemas(df)
+
+        # Identify key features
+        key_features = feat_logic.identify_key_features(
+            df, target_info, num_features_to_surface=top_n
+        )
+
+        # Create filtered schemas with key features first
+        filtered_schemas = {}
+
+        # Add key features first
+        for feature in key_features:
+            if feature in all_schemas:
+                filtered_schemas[feature] = all_schemas[feature]
+
+        # Add remaining features (excluding target column)
+        target_column = target_info['name']
+        for col, schema in all_schemas.items():
+            if col != target_column and col not in filtered_schemas:
+                filtered_schemas[col] = schema
+
+        # Log the suggestion
+        feature_logger.info(
+            f"Generated feature suggestions for {len(filtered_schemas)} "
+            f"columns, with {len(key_features)} key features identified"
+        )
+
+        return FeatureSuggestionResponse(
+            feature_schemas=filtered_schemas
+        )
+
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
+    except Exception as e:
+        # Log unexpected errors
+        feature_logger.error(
+            f"Unexpected error during feature suggestion: {str(e)}"
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error during feature analysis: {str(e)}"
+        )
+
+
+@router.post("/confirm-features", status_code=202)
+def confirm_features(
+    req: FeatureConfirmationRequest,
+    background_tasks: BackgroundTasks,
+):
+    """
+    Confirm feature schemas and start the automated pipeline stages.
+
+    Updates the run metadata with confirmed feature information and
+    schedules the execution of stages 3-7 in the background.
+
+    Args:
+        req: Request containing run_id and confirmed feature schemas
+        background_tasks: FastAPI background tasks for async execution
+
+    Returns:
+        Status indicating pipeline has started
+
+    Raises:
+        HTTPException: If run not found, validation fails, or
+        confirmation fails
+    """
+
+    # Validate run exists
+    if not _validate_run_exists(req.run_id):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Run '{req.run_id}' not found"
+        )
+
+    # Validate target has been confirmed
+    if not _validate_target_confirmed(req.run_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Target must be confirmed before confirming features"
+        )
+
+    # Get logger for this operation
+    confirm_logger = logger.get_logger(req.run_id, "api_feature_confirmation")
+
+    try:
+        # Load original data to get all initial schemas
+        df = storage.read_original_data(req.run_id)
+        if df is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Original data not found for run '{req.run_id}'"
+            )
+
+        # Get all initial schemas
+        all_initial_schemas = feat_logic.suggest_initial_feature_schemas(df)
+
+        # Check if features have already been confirmed
+        metadata = storage.read_metadata(req.run_id)
+        if metadata and 'feature_schemas' in metadata:
+            raise HTTPException(
+                status_code=400,
+                detail="Features have already been confirmed for this run"
+            )
+
+        # Confirm feature schemas using pipeline logic
+        success = feat_logic.confirm_feature_schemas(
+            req.run_id,
+            req.confirmed_schemas,
+            all_initial_schemas
+        )
+
+        if not success:
+            raise HTTPException(
+                status_code=400,
+                detail="Schema confirmation failed"
+            )
+
+        # Log successful confirmation
+        confirm_logger.info(
+            f"Feature schemas confirmed for {len(req.confirmed_schemas)} "
+            f"user-modified columns"
+        )
+
+        # Schedule background pipeline execution
+        background_tasks.add_task(run_from_schema_confirm, req.run_id)
+
+        confirm_logger.info(
+            "Scheduled background pipeline execution (stages 3-7)"
+        )
+
+        return {"status": "pipeline_started"}
+
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
+    except Exception as e:
+        # Log unexpected errors
+        confirm_logger.error(
+            f"Unexpected error during feature confirmation: {str(e)}"
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Internal server error during feature confirmation: {str(e)}"
             )
         )

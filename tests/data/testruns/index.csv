@@ -1,0 +1,7 @@
+run_id,timestamp,original_filename,status
+2025-06-06T094333Z_c5b4daa0,2025-06-06T09:43:33.406156+00:00,original_data.csv,Ingestion Completed
+2025-06-06T094333Z_efcf24c7,2025-06-06T09:43:33.410750+00:00,original_data.csv,Ingestion Completed
+2025-06-06T094333Z_46ec7cdc,2025-06-06T09:43:33.414246+00:00,original_data.csv,Ingestion Completed
+2025-06-06T094340Z_8fd5e4dd,2025-06-06T09:43:40.382767+00:00,original_data.csv,Ingestion Completed
+2025-06-06T094340Z_cd56d05b,2025-06-06T09:43:40.391242+00:00,original_data.csv,Ingestion Completed
+2025-06-06T094340Z_dcdde99f,2025-06-06T09:43:40.395481+00:00,original_data.csv,Ingestion Completed

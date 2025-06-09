@@ -1,3 +1,28 @@
+# =============================================================================
+# ⚠️  PARALLEL DEVELOPMENT COORDINATION REQUIRED ⚠️  
+# =============================================================================
+#
+# This file is modified by ALL team members:
+# - API developer: Adds FastAPI, uvicorn, async libraries
+# - Pipeline developer: May upgrade ML libraries, add optimization packages  
+# - Testing developer: Adds pytest plugins, testing frameworks
+#
+# COLLABORATION PROTOCOL:
+# 1. 🗣️  ANNOUNCE in Slack: "Planning to add [package] to requirements.txt"
+# 2. ⏳ WAIT for confirmation - dependencies can cause conflicts!
+# 3. 📝 ADD with comments including your name and date
+# 4. 🧪 TEST immediately: pip install -r requirements.txt
+# 5. 🚫 AVOID upgrading existing packages without team discussion
+# 6. 📢 NOTIFY team: "Updated requirements.txt - please reinstall dependencies"
+#
+# FORMAT FOR NEW ADDITIONS:
+# # =============================================================================
+# # [FEATURE AREA] Dependencies ([YOUR NAME] - [DATE])
+# # =============================================================================
+# package-name>=1.0.0  # Brief description of why needed
+#
+# =============================================================================
+
 # Core ML and Data Processing
 pandas>=2.0.0
 numpy>=1.24.0

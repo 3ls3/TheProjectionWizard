@@ -1,3 +1,34 @@
+# =============================================================================
+# ⚠️  PARALLEL DEVELOPMENT COORDINATION REQUIRED ⚠️
+# =============================================================================
+#
+# This file controls project-wide configuration and dependencies:
+# - API developer: May need to add FastAPI-specific tool configs
+# - Pipeline developer: May need to configure ML/data processing tools
+# - Testing developer: May need to add pytest or coverage configurations
+#
+# COLLABORATION PROTOCOL:
+# 1. 🗣️  ANNOUNCE in Slack: "Need to modify pyproject.toml for [reason]"
+# 2. ⏳ WAIT for team discussion - this affects entire project setup!
+# 3. 📝 ADD new sections clearly commented with your name/purpose
+# 4. 🚫 AVOID modifying existing tool configurations without discussion
+# 5. ✅ TEST that existing tools still work after changes
+# 6. 📢 NOTIFY team: "Updated pyproject.toml - please review tool configs"
+#
+# EXAMPLE SAFE ADDITIONS:
+# [tool.mypy.api]  # API-specific mypy config (Tim)
+# ignore_missing_imports = true
+#
+# [tool.pytest.mark_api]  # API testing markers (Testing developer)
+# slow = "marks tests as slow"
+#
+# HIGH RISK AREAS - DISCUSS BEFORE CHANGING:
+# - [project] dependencies (use requirements.txt instead)
+# - [tool.black], [tool.flake8], [tool.mypy] base configs
+# - [build-system] settings
+#
+# =============================================================================
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

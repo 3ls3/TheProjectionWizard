@@ -1,6 +1,51 @@
 """
 Pydantic data models for The Projection Wizard.
 Defines schemas for metadata.json, status.json, and validation.json.
+
+=============================================================================
+⚠️  PARALLEL DEVELOPMENT COORDINATION REQUIRED ⚠️
+=============================================================================
+
+This file is CRITICAL for data consistency between components:
+- API developer: Adds request/response models for endpoints
+- Pipeline developer: May extend metadata models with new stage info
+- Testing developer: Uses models for test data validation
+
+COLLABORATION PROTOCOL:
+1. 🗣️  ANNOUNCE in Slack: "Need to add/modify schema for [feature]"
+2. ⏳ WAIT for team discussion - schema changes affect everyone!
+3. 📝 ADD new models at bottom with clear docstrings
+4. 🔄 EXTEND existing models using inheritance when possible
+5. 🚫 NEVER remove or rename fields in existing models
+6. ✅ TEST that all existing code still works
+7. 📢 NOTIFY team: "Updated schemas.py - new models available"
+
+SAFE PATTERNS:
+✅ Add new Pydantic models for your features
+✅ Extend existing models with Optional fields
+✅ Create request/response models for API endpoints
+✅ Use inheritance: class MyModel(BaseExistingModel)
+
+DANGEROUS PATTERNS:
+❌ Removing fields from existing models (breaks deserialization)
+❌ Renaming fields (breaks all existing JSON files)
+❌ Changing field types (breaks validation)
+❌ Making optional fields required (breaks existing data)
+
+EXAMPLE SAFE ADDITION:
+```python
+# API Request Models (Tim - Dec 2024)
+class APIUploadRequest(BaseModel):
+    filename: str
+    file_size: int
+    
+class APIUploadResponse(BaseModel):
+    run_id: str
+    status: str
+```
+
+If modifying existing models, discuss in #projection-wizard Slack first!
+=============================================================================
 """
 
 from datetime import datetime, timezone

@@ -176,3 +176,53 @@ logs/
 tests/data/runs/
 
 *.cursor
+
+# =============================================================================
+# PARALLEL DEVELOPMENT ADDITIONS
+# =============================================================================
+
+# Individual developer environments
+.env.local
+.env.dev.*
+.vscode/settings.json
+.idea/workspace.xml
+.idea/dictionaries/
+
+# Development databases and caches
+*.db
+*.sqlite
+*.sqlite3
+.cache/
+**/.cache/
+
+# Testing artifacts
+test-reports/
+.coverage.*
+coverage-reports/
+pytest_cache/
+.pytest_cache/
+
+# Development logs and debugging
+debug.log
+*.debug
+dev-logs/
+
+# FastAPI development
+.env.api
+uvicorn.log
+
+# Parallel work branches backup
+*.orig
+*.backup
+
+# OS-specific files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Temporary merge files
+*.merge
+
+# Performance profiling
+*.prof
+profile_*.txt

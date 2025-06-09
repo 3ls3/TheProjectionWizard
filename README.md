@@ -14,9 +14,18 @@ TheProjectionWizard/
 │   ├── step_5_automl/      # AutoML model training with PyCaret
 │   └── step_6_explain/     # Model explainability with SHAP
 ├── app/                    # Streamlit application
-│   ├── pages/              # Streamlit UI pages
+│   ├── pages/              # Streamlit UI pages (01-08)
 │   └── main.py             # Main application entry point
+├── api/                    # FastAPI REST API (optional)
+│   ├── routes/             # API route definitions
+│   ├── utils/              # API utility functions
+│   └── main.py             # FastAPI application entry point
 ├── common/                 # Shared utilities and schemas
+│   ├── constants.py        # Project-wide constants
+│   ├── schemas.py          # Pydantic data models
+│   ├── storage.py          # File I/O and atomic operations
+│   ├── logger.py           # Structured logging system
+│   └── utils.py            # General utility functions
 ├── scripts/                # Automation and testing scripts
 │   ├── bash/               # Shell scripts for deployment
 │   └── python/             # Python scripts for testing and CLI
@@ -24,25 +33,30 @@ TheProjectionWizard/
 │   ├── unit/               # Unit tests for individual stages
 │   ├── integration/        # Integration tests for full pipeline
 │   ├── fixtures/           # Test fixtures and data
-│   ├── data/               # Test data
+│   ├── data/               # Test runs
 │   └── reports/            # Test reports
 ├── data/
 │   ├── runs/              # Run-specific artifacts
-│   └── fixtures/          # Sample data for testing
-├── requirements.txt
-├── pyproject.toml
+    └── fixtures/          # Sample data for testing
+├── documentation/          # Project documentation
+│   └── archive/           # Archived documentation
+├── Dockerfile             # Container configuration
+├── Makefile              # Build automation
+├── requirements.txt      # Python dependencies
+├── pyproject.toml        # Project configuration
 └── README.md
 ```
 
 ## Pipeline Flow
 
 1. **Data Ingestion**: Upload CSV and initial analysis
-2. **Schema Confirmation**: Define target variable and data types
-3. **Data Validation**: Validate data quality with Great Expectations
-4. **Data Preparation**: Clean and encode features
-5. **AutoML**: Train models with PyCaret
-6. **Model Explanation**: Generate SHAP explanations
-7. **Results**: View and download results
+2. **Target Definition**: Define target variable and confirm task type
+3. **Schema Confirmation**: Define feature types and data schemas
+4. **Data Validation**: Validate data quality with Great Expectations
+5. **Data Preparation**: Clean and encode features
+6. **AutoML**: Train models with PyCaret
+7. **Model Explanation**: Generate SHAP explanations
+8. **Results**: View and download results
 
 ## Setup
 
@@ -60,8 +74,8 @@ cd TheProjectionWizard
 
 2. Create and activate a virtual environment:
 ```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 ```
 
 3. Install dependencies:
@@ -75,6 +89,27 @@ pip install -r requirements.txt
 ```bash
 streamlit run app/main.py
 ```
+
+The application will be available at `http://localhost:8501`
+
+### Running the FastAPI Server (Optional)
+
+The project includes an optional REST API for programmatic access:
+
+```bash
+# From project root
+uvicorn api.main:app --reload
+```
+
+The API will be available at:
+- **Base URL**: http://localhost:8000
+- **Interactive Docs**: http://localhost:8000/docs
+- **ReDoc**: http://localhost:8000/redoc
+
+**Key API Endpoints:**
+- `GET /api/v1/runs` - List all pipeline runs
+- `GET /api/v1/runs/{run_id}/info` - Get run information
+- `GET /api/v1/feature_suggestions` - Get ML feature analysis
 
 ### Docker Deployment
 
@@ -124,7 +159,7 @@ Copy `.env.example` to `.env` and set your GCP project details:
 ```bash
 PROJECT_ID=your-gcp-project-id
 REGION=europe-west1
-IMAGE_TAG=wizard:v0.1  # Optional, defaults to wizard:latest
+IMAGE_TAG=wizard:latest  # Optional, defaults to wizard:latest
 ```
 
 ### Running the CLI Pipeline (Headless)
@@ -175,9 +210,9 @@ python pipeline/step_3_validation/test_ge_logic.py
 
 ### Code Style
 This project uses:
-- Black for code formatting
-- Flake8 for linting
-- MyPy for type checking
+- **Black** for code formatting
+- **Flake8** for linting
+- **MyPy** for type checking
 
 Run formatting and linting:
 ```bash
@@ -192,17 +227,27 @@ mypy .
 - **File-based Communication**: Stages communicate via JSON artifacts
 - **Atomic Operations**: All file writes are atomic to prevent corruption
 - **Immutable Artifacts**: Run artifacts are never modified, only appended
+- **Quality Gates**: Built-in validation prevents bad data from propagating downstream
+
+### Technology Stack
+
+**Core Technologies:**
+- **Frontend**: Streamlit (UI), FastAPI (REST API)
+- **ML/AI**: PyCaret (AutoML), Scikit-Learn, SHAP (Explainability)
+- **Data Processing**: Pandas, Great Expectations (Validation), YData Profiling
+- **Infrastructure**: Docker, Google Cloud Run
+- **Development**: pytest, Black, Flake8, MyPy
 
 ### Inter-Module Communication
 
 Each run creates a unique directory under `data/runs/<run_id>/` containing:
-- `metadata.json`: Run configuration and results
-- `status.json`: Current pipeline status
+- `metadata.json`: Run configuration and results (evolves through pipeline)
+- `status.json`: Current pipeline status and error tracking
 - `original_data.csv`: Uploaded data
-- `cleaned_data.csv`: Processed data
+- `cleaned_data.csv`: Processed ML-ready data
 - `validation.json`: Data validation results
-- `model/`: Trained model artifacts
-- `plots/`: Generated visualizations
+- `model/`: Trained model artifacts and encoders
+- `plots/`: Generated visualizations and reports
 
 ### Run Index
 
@@ -218,15 +263,16 @@ This index enables tracking of all pipeline executions and can be used for run h
 
 The project includes multiple levels of testing:
 
-1. **Component Tests**: Individual module tests (e.g., `test_ingest_logic.py`, `test_ge_logic.py`)
-2. **CLI Integration Test**: End-to-end pipeline testing via `test_cli_runner.py`
-3. **Common Utilities Test**: Core functionality testing via `test_common.py`
+1. **Unit Tests**: Individual module tests in each `pipeline/step_X/` directory
+2. **Integration Tests**: End-to-end pipeline testing via `test_cli_runner.py`
+3. **Common Utilities Tests**: Core functionality testing via `test_common.py`
+4. **Health Checks**: Comprehensive project validation via `health_check.py`
 
 Each step directory contains its own test files to verify the logic independent of the UI.
 
 ## Project Structure Details
 
-### Step Modules
+### Pipeline Modules
 - `pipeline/step_1_ingest/`: Handles CSV upload and initial data analysis
 - `pipeline/step_2_schema/`: Target definition and feature schema confirmation
 - `pipeline/step_3_validation/`: Great Expectations data validation
@@ -238,20 +284,43 @@ Each step directory contains its own test files to verify the logic independent 
 - `common/constants.py`: Project-wide constants and configuration
 - `common/schemas.py`: Pydantic models for data validation
 - `common/storage.py`: File I/O and atomic operations
-- `common/logger.py`: Run-scoped logging utilities
+- `common/logger.py`: Run-scoped structured logging utilities
 - `common/utils.py`: General utility functions
 
-### UI Pages
-- `app/pages/01_upload_page.py` through `app/pages/08_results_page.py`: Streamlit page components
+### UI Components
+- `app/pages/01_upload_page.py`: Data upload interface
+- `app/pages/02_target_page.py`: Target variable definition
+- `app/pages/03_schema_page.py`: Feature schema confirmation
+- `app/pages/04_validation_page.py`: Data validation interface
+- `app/pages/05_prep_page.py`: Data preparation interface
+- `app/pages/06_automl_page.py`: Model training interface
+- `app/pages/07_explain_page.py`: Model explanation interface
+- `app/pages/08_results_page.py`: Results and download interface
 - `app/main.py`: Main Streamlit application entry point
+
+### API Endpoints (Optional)
+- `api/routes/`: REST API route definitions
+- `api/utils/`: API-specific utilities
+- `api/main.py`: FastAPI application with health checks and core endpoints
+
+## Key Features
+
+- **Progressive Workflow**: Guided step-by-step ML pipeline
+- **Quality Assurance**: Built-in data validation and error handling
+- **Model Explainability**: SHAP-based feature importance and explanations
+- **Deployment Ready**: Docker containerization and cloud deployment
+- **Dual Interface**: Both UI (Streamlit) and programmatic (CLI/API) access
+- **Comprehensive Logging**: Structured logging with error tracking
+- **Testing Coverage**: Unit, integration, and health check testing
 
 ## Contributing
 
 1. Create feature branches for new functionality
 2. Ensure all tests pass before submitting PRs
-3. Follow the established code style guidelines
+3. Follow the established code style guidelines (Black, Flake8, MyPy)
 4. Update documentation for new features
 5. Test both UI and CLI interfaces for any changes
+6. Activate the virtual environment (`.venv`) before development
 
 ## License
 

@@ -1,6 +1,38 @@
 """
 Constants and configuration settings for The Projection Wizard.
 Contains default paths, stage names, and core AutoML settings.
+
+=============================================================================
+⚠️  PARALLEL DEVELOPMENT COORDINATION REQUIRED ⚠️
+=============================================================================
+
+This file is used by ALL team members and components:
+- API developer: Uses pipeline stages, file names, paths
+- Pipeline developer: May add new stages, configuration options
+- Testing developer: Uses stage names, file patterns
+
+COLLABORATION PROTOCOL:
+1. 🗣️  ANNOUNCE in Slack before modifying: "Planning to add X to constants.py"
+2. ⏳ WAIT for team confirmation before making changes  
+3. 📝 ADD new constants at the bottom with clear comments
+4. 🚫 DO NOT modify existing constants without team discussion
+5. ✅ TEST that no existing code breaks after your changes
+6. 📢 NOTIFY team when changes are complete: "Updated constants.py - please pull"
+
+SAFE PATTERNS:
+✅ Add new constants at end with descriptive comments
+✅ Create new sections for your feature area
+✅ Use ALL_CAPS naming convention
+✅ Include type hints and descriptions
+
+DANGEROUS PATTERNS:
+❌ Renaming existing constants (breaks all imports)
+❌ Changing values of existing constants (breaks functionality)
+❌ Removing constants (breaks imports)
+❌ Modifying shared configuration dictionaries
+
+If unsure, ask in #projection-wizard Slack channel BEFORE changing!
+=============================================================================
 """
 
 from pathlib import Path

@@ -1,6 +1,50 @@
 """
 Storage utilities for The Projection Wizard.
 Provides run_id-centric file operations with atomic writing for critical files.
+
+=============================================================================
+⚠️  PARALLEL DEVELOPMENT COORDINATION REQUIRED ⚠️
+=============================================================================
+
+This file provides the CORE storage interface used by all components:
+- API developer: Uses for file upload/download, run management
+- Pipeline developer: Uses for reading/writing stage artifacts
+- Testing developer: Uses for test fixture management
+
+COLLABORATION PROTOCOL:
+1. 🗣️  ANNOUNCE in Slack: "Need to add storage function for [feature]"
+2. ⏳ COORDINATE with team - storage changes affect everyone!
+3. 📝 ADD new functions without modifying existing ones
+4. 🔄 FOLLOW existing patterns for consistency
+5. ✅ TEST with existing pipeline to ensure no breaks
+6. 📢 NOTIFY team: "Added new storage functions - available for use"
+
+SAFE PATTERNS:
+✅ Add new specialized read/write functions
+✅ Follow atomic writing pattern for critical files
+✅ Use existing error handling patterns
+✅ Add utility functions that complement existing ones
+
+DANGEROUS PATTERNS:
+❌ Changing function signatures (breaks all callers)
+❌ Modifying file naming conventions (breaks existing runs)
+❌ Changing atomic write behavior (can cause corruption)
+❌ Removing existing functions (breaks imports)
+
+EXAMPLE SAFE ADDITION:
+```python
+def read_api_cache(run_id: str) -> Optional[Dict]:
+    '''Read API-specific cache data.'''
+    return read_json(run_id, "api_cache.json")
+
+def write_api_response(run_id: str, endpoint: str, data: Dict) -> None:
+    '''Write API response data with atomic operations.'''
+    filename = f"api_response_{endpoint}.json"
+    write_json_atomic(run_id, filename, data)
+```
+
+If changing core storage behavior, discuss in #projection-wizard Slack first!
+=============================================================================
 """
 
 import json

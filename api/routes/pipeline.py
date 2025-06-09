@@ -3,7 +3,7 @@ Pipeline API routes for The Projection Wizard.
 Provides endpoints for the main ML pipeline functionality.
 """
 
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, Query
 from uuid import uuid4
 import pandas as pd
 from datetime import datetime, timezone
@@ -12,7 +12,12 @@ import tempfile
 from pathlib import Path
 
 from common import storage, logger, constants
-from .schema import UploadResponse
+from .schema import (
+    UploadResponse,
+    TargetSuggestionResponse,
+    TargetConfirmationRequest
+)
+from pipeline.step_2_schema import target_definition_logic as tgt_logic
 
 router = APIRouter(prefix="/api")
 
@@ -20,6 +25,15 @@ router = APIRouter(prefix="/api")
 def _new_run_id() -> str:
     """Generate a new unique run ID."""
     return uuid4().hex[:8]
+
+
+def _validate_run_exists(run_id: str) -> bool:
+    """Check if a run exists by checking for original_data.csv."""
+    # Don't use get_run_dir as it creates the directory
+    from pathlib import Path
+    run_dir = Path(constants.DATA_DIR_NAME) / "runs" / run_id
+    original_data_path = run_dir / constants.ORIGINAL_DATA_FILE
+    return original_data_path.exists()
 
 
 def _write_original_data(run_id: str, df: pd.DataFrame) -> None:
@@ -161,4 +175,155 @@ async def upload_csv(file: UploadFile = File(...)):
         raise HTTPException(
             status_code=500,
             detail=f"Internal server error during file upload: {str(e)}"
+        )
+
+
+@router.get("/target-suggestion", response_model=TargetSuggestionResponse)
+def target_suggestion(run_id: str = Query(...)):
+    """
+    Get target column and task type suggestions for a run.
+
+    Analyzes the uploaded dataset to suggest the most likely target column
+    and task type (classification vs regression).
+
+    Args:
+        run_id: The ID of the run to analyze
+
+    Returns:
+        TargetSuggestionResponse with suggested column, task type, and
+        confidence
+
+    Raises:
+        HTTPException: If run not found or analysis fails
+    """
+
+    # Validate run exists
+    if not _validate_run_exists(run_id):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Run '{run_id}' not found"
+        )
+
+    # Get logger for this operation
+    suggestion_logger = logger.get_logger(run_id, "api_target_suggestion")
+
+    try:
+        # Load original data
+        df = storage.read_original_data(run_id)
+        if df is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Original data not found for run '{run_id}'"
+            )
+
+        # Call pipeline logic to suggest target and task type
+        suggested_col, suggested_task, suggested_ml_type = (
+            tgt_logic.suggest_target_and_task(df)
+        )
+
+        if suggested_col is None or suggested_task is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Could not infer target column from the data"
+            )
+
+        # Log the suggestion
+        suggestion_logger.info(
+            f"Suggested target: '{suggested_col}', "
+            f"task type: '{suggested_task}'"
+        )
+
+        # For now, set a static confidence score
+        # In the future, this could be calculated based on heuristics
+        confidence = 0.87
+
+        return TargetSuggestionResponse(
+            suggested_column=suggested_col,
+            task_type=suggested_task,
+            confidence=confidence
+        )
+
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
+    except Exception as e:
+        # Log unexpected errors
+        suggestion_logger.error(
+            f"Unexpected error during target suggestion: {str(e)}"
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error during target analysis: {str(e)}"
+        )
+
+
+@router.post("/confirm-target", status_code=200)
+def confirm_target(req: TargetConfirmationRequest):
+    """
+    Confirm the target column and task type for a run.
+
+    Updates the run metadata with the confirmed target information,
+    enabling the next stages of the pipeline.
+
+    Args:
+        req: Request containing run_id, confirmed column, and task type
+
+    Returns:
+        Success status message
+
+    Raises:
+        HTTPException: If run not found or update fails
+    """
+
+    # Validate run exists
+    if not _validate_run_exists(req.run_id):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Run '{req.run_id}' not found"
+        )
+
+    # Get logger for this operation
+    confirm_logger = logger.get_logger(req.run_id, "api_target_confirmation")
+
+    try:
+        # Load existing metadata.json
+        metadata = storage.read_metadata(req.run_id)
+        if metadata is None:
+            # Create minimal metadata if it doesn't exist
+            metadata = {
+                "run_id": req.run_id,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+
+        # Update metadata with target information
+        metadata['target_info'] = {
+            "name": req.confirmed_column,
+            "task_type": req.task_type,
+            "user_confirmed_at": datetime.now(timezone.utc).isoformat()
+        }
+
+        # Also set top-level task_type for convenience
+        metadata['task_type'] = req.task_type
+
+        # Persist updated metadata
+        storage.write_metadata(req.run_id, metadata)
+
+        # Log successful confirmation
+        confirm_logger.info(
+            f"Target confirmed: '{req.confirmed_column}', "
+            f"task type: '{req.task_type}'"
+        )
+
+        return {"status": "ok"}
+
+    except Exception as e:
+        # Log unexpected errors
+        confirm_logger.error(
+            f"Unexpected error during target confirmation: {str(e)}"
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Internal server error during target confirmation: {str(e)}"
+            )
         )

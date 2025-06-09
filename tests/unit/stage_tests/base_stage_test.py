@@ -25,7 +25,7 @@ class BaseStageTest:
     
     def __init__(self, stage_name: str, test_run_id: str):
         """
-        Initialize the stage test.
+        Initialize the base stage test.
         
         Args:
             stage_name: Name of the pipeline stage being tested
@@ -36,7 +36,7 @@ class BaseStageTest:
         self.test_logger = logger.get_stage_logger(test_run_id, f"test_{stage_name}")
         
         # Get test run directory
-        self.test_run_dir = Path(__file__).parent.parent.parent / "data" / "test_runs" / test_run_id
+        self.test_run_dir = Path("data/test_runs") / test_run_id
         
         if not self.test_run_dir.exists():
             raise ValueError(f"Test run directory does not exist: {self.test_run_dir}")
@@ -254,12 +254,13 @@ class TestResult:
     """Container for test results with structured information."""
     
     def __init__(self, stage_name: str, success: bool, duration: float, 
-                 details: Dict[str, Any], errors: List[str] = None):
+                 details: Dict[str, Any], errors: List[str] = None, error_message: str = None):
         self.stage_name = stage_name
         self.success = success
         self.duration = duration
         self.details = details
         self.errors = errors or []
+        self.error_message = error_message
         self.timestamp = datetime.now()
     
     def to_dict(self) -> Dict[str, Any]:
@@ -270,5 +271,6 @@ class TestResult:
             "duration": self.duration,
             "details": self.details,
             "errors": self.errors,
+            "error_message": self.error_message,
             "timestamp": self.timestamp.isoformat()
         } 

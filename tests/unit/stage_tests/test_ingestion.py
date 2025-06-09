@@ -32,7 +32,7 @@ class IngestionStageTest(BaseStageTest):
     """Test runner for the data ingestion stage."""
     
     def __init__(self, test_run_id: str):
-        super().__init__("ingestion", test_run_id)
+        super().__init__(test_run_id, "ingestion")
         
         # Find the original CSV file in the test directory
         self.original_csv_path = self.test_run_dir / constants.ORIGINAL_DATA_FILENAME
@@ -310,4 +310,19 @@ if __name__ == "__main__":
             print(f"  - {error}")
     
     print(f"\nTest completed at: {result.timestamp}")
-    print(f"See test logs in: data/test_runs/{test_run_id}/test_ingestion.log") 
+    print(f"See test logs in: data/test_runs/{test_run_id}/test_ingestion.log")
+
+def create_all_stage_fixtures(task_type: str = "classification") -> Dict[str, str]:
+    generator = TestFixtureGenerator()
+    validation_id = generator.setup_validation_fixture(task_type)
+    prep_id = generator.setup_prep_fixture(task_type, validation_id)
+    fixtures = {
+        "ingestion": generator.setup_ingestion_fixture(task_type),
+        "schema": generator.setup_schema_fixture(task_type),
+        "validation": validation_id,
+        "prep": prep_id,
+        "automl": generator.setup_automl_fixture(task_type),
+        "explain": generator.setup_explain_fixture(task_type)
+    }
+    print(f"✅ Generated fixtures for stages: {list(fixtures.keys())}")
+    return fixtures 

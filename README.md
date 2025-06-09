@@ -1,390 +1,327 @@
 # The Projection Wizard
 
-A data science bootcamp project to build an end-to-end ML pipeline. Users upload a tabular CSV (non-time-series), and receive:
-→ a trained model
-→ predictions
-→ data profiling reports
-→ basic model explanations
+A modular end-to-end machine learning pipeline for tabular data analysis and model building. The Projection Wizard guides users from data upload to trained models with explanations, designed for data analysts and citizen data scientists.
 
 ## Project Structure
 
-The pipeline consists of two teams:
-- **Team A (Current Focus)**: Handles EDA, data validation, and light cleaning
-  - Goal: Output a cleaned_data.csv and schema.json ready for AutoML
-- **Team B**: Takes the cleaned data and runs AutoML (e.g. PyCaret), model comparison, and explainability
-
-## New Feature: Type Override UI
-
-### Overview
-We've implemented a user-first approach where users can review and override auto-detected data types and select their target variable before running intensive EDA and validation processes.
-
-### How It Works
-
-1. **Upload CSV**: Users upload their CSV file as before
-2. **Data Preview**: View basic file info, column information, and data preview
-3. **🆕 Type Override & Target Selection**: 
-   - Review pandas-inferred data types for each column
-   - Override types using dropdown menus (string/object, integer, float, boolean, category, datetime)
-   - Select target variable using radio buttons (only one allowed)
-   - Confirm selections with the "Confirm Types & Target" button
-4. **Processing**: DataFrame is updated with confirmed types and stored in session state
-5. **Next Steps**: EDA, validation, and cleaning steps now use the processed DataFrame with correct types
-
-### Benefits
-
-- **More Accurate EDA**: Reports are generated on correctly typed data
-- **Better Validation**: Great Expectations rules apply to the intended data schema
-- **Improved Cleaning**: Operations work on properly typed columns
-- **User Control**: Users explicitly confirm their data schema before analysis
-
-### UI Components
-
-- **Column Type Grid**: Shows column name, inferred type, new type dropdown, and target selection
-- **Real-time Summary**: Displays selected target column and number of type changes
-- **Confirmation System**: Requires explicit confirmation before proceeding
-- **Error Handling**: Graceful handling of type conversion failures
-- **State Management**: Preserves user selections and processed data across navigation
-
-### Technical Implementation
-
-- **Session State**: Uses `st.session_state` to maintain user selections and processed DataFrame
-- **Type Conversion**: Robust type casting with error handling for edge cases
-- **Integration**: All subsequent pipeline steps check for confirmed types before proceeding
-- **Modularity**: Clean separation of concerns with dedicated functions
-
-## Running the Application
-
-```bash
-# Activate virtual environment
-source .venv/bin/activate
-
-# Run Team A's Streamlit interface
-streamlit run app/streamlit_team_a.py
-```
-
-## 🔄 Pipeline Flow (Continuous UX)
-
-### Main Pipeline (Continuous Flow)
-1. **📁 Upload Data** → Upload CSV and review basic file information
-2. **📊 Basic EDA** → Quick statistical overview and data quality checks  
-3. **🎯 Type Override** → Confirm column types and target selection
-4. **✅ Data Validation** → Automatic Great Expectations validation after confirmation
-5. **🧹 Data Cleaning** → Clean and preprocess data (placeholder for now)
-6. **📋 Final EDA** → Complete analysis with downloadable cleaned_data.csv
-
-### Debug Sidebar (Detailed Information)
-- **Upload Data Details** → Session state, DataFrame info, column analysis
-- **Type Override Details** → Type changes, processed DataFrame details
-- **Data Validation Details** → Validation results, expectation details
-- **Data Cleaning Details** → Cleaning operations (to be implemented)
-- **EDA Profiling Details** → Comprehensive reports (to be implemented)
-
-## Sample Data
-
-Test the application with the sample data file:
-- `data/mock/sample_data.csv` - Contains various data types for testing
-
-## ✅ Latest Updates: Continuous Pipeline UX
-
-### 🎯 New Continuous Flow Design
-
-We've completely restructured the user experience to provide a **seamless, continuous pipeline flow**:
-
-#### **📊 Progress Tracking**
-- **Visual Progress Bar**: Clear 6-stage progress indicator at the top
-- **Stage-based Navigation**: Each stage builds on the previous one
-- **State Persistence**: Session state maintained when switching to debug views
-- **Smart Advancement**: Automatic progression when stages are completed
-
-#### **🔄 Main Pipeline Flow**
-1. **Upload** → File upload with immediate validation and preview
-2. **Basic EDA** → Quick statistical overview and data quality insights
-3. **Type Override** → Interactive type confirmation and target selection
-4. **Validation** → Automatic Great Expectations validation with clear pass/fail
-5. **Cleaning** → Data cleaning operations (placeholder implementation)
-6. **Final EDA** → Complete analysis with downloadable outputs
-
-#### **🔍 Debug Sidebar**
-- **Detailed Logging**: Comprehensive debugging information for each stage
-- **Session State Inspection**: Real-time view of all stored data and settings
-- **Validation Details**: In-depth validation results and expectation analysis
-- **Development Support**: Essential debugging tools for development and testing
-
-#### **🚀 User Experience Improvements**
-- **No Lost Progress**: Switching between main flow and debug views preserves all progress
-- **Clear Error Handling**: Actionable error messages with options to fix or continue
-- **Download Ready**: Final cleaned_data.csv and metadata.json ready for Team B
-- **Restart Option**: Easy reset to process multiple datasets in sequence
-
-## Next Steps
-
-- ✅ **COMPLETED**: Great Expectations validation with confirmed schema
-- Implement ydata-profiling EDA reports using processed DataFrame
-- Implement data cleaning operations
-- Create export functionality for cleaned_data.csv and schema.json
-
-## 🏗️ Project Structure
-
 ```
 TheProjectionWizard/
-├── app/
-│   ├── main.py                     # Shared Streamlit entry (Team B)
-│   ├── streamlit_team_a.py         # Team A's temporary frontend
-│   ├── predictor.py                # Team B's predictor (existing)
-│   └── utils.py                    # Shared utilities
-│
+├── pipeline/               # Data processing pipeline
+│   ├── step_1_ingest/      # Data ingestion and initial processing
+│   ├── step_2_schema/      # Schema validation and target confirmation
+│   ├── step_3_validation/  # Data validation with Great Expectations
+│   ├── step_4_prep/        # Data preparation and cleaning
+│   ├── step_5_automl/      # AutoML model training with PyCaret
+│   └── step_6_explain/     # Model explainability with SHAP
+├── app/                    # Streamlit application
+│   ├── pages/              # Streamlit UI pages (01-08)
+│   └── main.py             # Main application entry point
+├── api/                    # FastAPI REST API (optional)
+│   ├── routes/             # API route definitions
+│   ├── utils/              # API utility functions
+│   └── main.py             # FastAPI application entry point
+├── common/                 # Shared utilities and schemas
+│   ├── constants.py        # Project-wide constants
+│   ├── schemas.py          # Pydantic data models
+│   ├── storage.py          # File I/O and atomic operations
+│   ├── logger.py           # Structured logging system
+│   └── utils.py            # General utility functions
+├── scripts/                # Automation and testing scripts
+│   ├── bash/               # Shell scripts for deployment
+│   └── python/             # Python scripts for testing and CLI
+├── tests/                  # Test suite
+│   ├── unit/               # Unit tests for individual stages
+│   ├── integration/        # Integration tests for full pipeline
+│   ├── fixtures/           # Test fixtures and data
+│   ├── data/               # Test runs
+│   └── reports/            # Test reports
 ├── data/
-│   ├── raw/                        # User-uploaded data
-│   ├── mock/                       # Synthetic test datasets  
-│   └── processed/                  # Team A's cleaned outputs
-│
-├── eda_validation/                 # ✅ Team A's Main Module
-│   ├── __init__.py                 # Module initialization
-│   ├── ydata_profile.py           # EDA via ydata-profiling
-│   ├── cleaning.py                # Data cleaning & preprocessing
-│   ├── utils.py                   # Utility functions
-│   └── validation/
-│       ├── __init__.py
-│       ├── setup_expectations.py  # Great Expectations setup
-│       └── run_validation.py      # Validation execution
-│
-├── modeling/                      # Team B's folder (do not edit)
-│   └── README.md                  # Team B integration guide
-│
-├── tests/
-│   ├── test_eda_validation.py     # Team A's test suite
-│   ├── test_print.py              # Existing tests
-│   └── test_tim.py                # Existing tests
-│
-├── requirements.txt               # Python dependencies
-├── app.yaml                       # App configuration
-└── README.md                      # This file
+│   ├── runs/              # Run-specific artifacts
+    └── fixtures/          # Sample data for testing
+├── docs/                   # Project documentation
+│   └── archive/           # Archived documentation
+├── Dockerfile             # Container configuration
+├── Makefile              # Build automation
+├── requirements.txt      # Python dependencies
+├── pyproject.toml        # Project configuration
+└── README.md
 ```
 
-## 👥 Team Responsibilities
+## Pipeline Flow
 
-### Team A (EDA & Validation)
-- **Data Profiling**: Comprehensive EDA using ydata-profiling
-- **Data Validation**: Quality checks with Great Expectations
-- **Data Cleaning**: Missing values, duplicates, standardization
-- **Pipeline Output**: Cleaned data ready for modeling
+1. **Data Ingestion**: Upload CSV and initial analysis
+2. **Target Definition**: Define target variable and confirm task type
+3. **Schema Confirmation**: Define feature types and data schemas
+4. **Data Validation**: Validate data quality with Great Expectations
+5. **Data Preparation**: Clean and encode features
+6. **AutoML**: Train models with PyCaret
+7. **Model Explanation**: Generate SHAP explanations
+8. **Results**: View and download results
 
-### Team B (Modeling & Prediction)
-- **AutoML Training**: PyCaret/AutoGluon model comparison
-- **Model Evaluation**: Performance metrics and selection
-- **Explainability**: SHAP/LIME analysis
-- **Main App Integration**: Streamlit UI with Team A's data
+## Setup
 
-## 🚀 Quick Start
+### Prerequisites
+- Python 3.10+
+- pip or conda
 
-### Team A Pipeline Usage
+### Installation
 
-1. **Upload raw data** to `data/raw/`
-
-2. **Run EDA profiling**:
-   ```bash
-   python eda_validation/ydata_profile.py data/raw/your_file.csv
-   ```
-
-3. **Clean the data**:
-   ```bash
-   python eda_validation/cleaning.py data/raw/your_file.csv --missing-strategy drop
-   ```
-
-4. **Setup validation expectations**:
-   ```bash
-   python eda_validation/validation/setup_expectations.py data/raw/your_file.csv
-   ```
-
-5. **Run data validation**:
-   ```bash
-   python eda_validation/validation/run_validation.py data/raw/your_file.csv -s expectations.json
-   ```
-
-6. **Use Team A's temporary frontend**:
-   ```bash
-   streamlit run app/streamlit_team_a.py
-   ```
-
-### Programmatic Usage
-
-```python
-from eda_validation import cleaning, ydata_profile, utils
-from eda_validation.validation import setup_expectations, run_validation
-
-# Load and clean data
-df = pd.read_csv('data/raw/dataset.csv')
-df_clean, report = cleaning.clean_dataframe(df)
-
-# Generate EDA profile
-profile = ydata_profile.generate_profile(df_clean, title="My Dataset")
-ydata_profile.save_profile_report(profile, "profile.html")
-
-# Setup and run validation
-expectations = setup_expectations.create_basic_expectation_suite(df_clean)
-success, results = run_validation.validate_dataframe_with_suite(df_clean, expectations)
+1. Clone the repository:
+```bash
+git clone <repository-url>
+cd TheProjectionWizard
 ```
 
-## 📦 Dependencies
-
-### Core Requirements
-```
-pandas
-numpy
-streamlit
-pathlib
+2. Create and activate a virtual environment:
+```bash
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 ```
 
-### Optional (Enhanced Features)
-```
-ydata-profiling  # For comprehensive EDA reports
-great-expectations  # For data validation
-openpyxl  # For Excel file support
-```
-
-Install all dependencies:
+3. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-## 🧪 Testing
+## Usage
 
-Run Team A's test suite:
+### Running the Streamlit App
 ```bash
-# Using unittest
-python tests/test_eda_validation.py
-
-# Using pytest (if installed)
-python -m pytest tests/test_eda_validation.py -v
+streamlit run app/main.py
 ```
 
-## 📁 Data Flow
+The application will be available at `http://localhost:8501`
 
-```
-Raw Data → EDA Profiling → Data Cleaning → Validation → Processed Data → Team B
-    ↓           ↓              ↓             ↓             ↓
-data/raw/   reports/    data/processed/ validation/  data/processed/
-```
+### Running the FastAPI Server (Optional)
 
-### Team A Outputs
+The project includes an optional REST API for programmatic access:
 
-For each dataset `{name}`, Team A generates:
-- `{name}_cleaned.csv` - Clean data ready for modeling
-- `{name}_profile.html` - EDA report
-- `{name}_cleaned.json` - Cleaning report  
-- `{name}_validation_results.json` - Validation results
-- `{name}_expectations.json` - Expectation suite
-
-## 🔧 Configuration
-
-### Cleaning Options
-- **Missing value strategies**: `drop`, `fill_mean`, `fill_median`, `fill_mode`, `forward_fill`
-- **Column standardization**: `snake_case`, `camel_case`, `lower`
-- **Duplicate handling**: Configurable keep strategy
-
-### Validation Options
-- **Automatic expectation generation** based on data analysis
-- **Custom expectation suites** via JSON configuration
-- **Validation reporting** with detailed failure analysis
-
-## 🤝 Team Integration
-
-### For Team B
-
-Team A provides clean handoff through `data/processed/`:
-
-```python
-# Load Team A's cleaned data
-df = pd.read_csv('data/processed/dataset_cleaned.csv')
-
-# Load metadata for context
-with open('data/processed/dataset_metadata.json') as f:
-    metadata = json.load(f)
-
-# Check data quality
-quality_score = metadata['quality_score']  # 0-100 scale
-```
-
-### Module Boundaries
-
-- **Team A**: `eda_validation/` module only
-- **Team B**: `modeling/` and `app/main.py`
-- **Shared**: `data/processed/` for handoff
-
-## 📋 CLI Reference
-
-### EDA Profiling
 ```bash
-python eda_validation/ydata_profile.py INPUT_FILE [-o OUTPUT] [-t TITLE]
+# From project root
+uvicorn api.main:app --reload
 ```
 
-### Data Cleaning  
+The API will be available at:
+- **Base URL**: http://localhost:8000
+- **Interactive Docs**: http://localhost:8000/docs
+- **ReDoc**: http://localhost:8000/redoc
+
+**Key API Endpoints:**
+- `GET /api/v1/runs` - List all pipeline runs
+- `GET /api/v1/runs/{run_id}/info` - Get run information
+- `GET /api/v1/feature_suggestions` - Get ML feature analysis
+
+### Docker Deployment
+
+The project includes Docker support for containerized deployment to Google Cloud Run.
+
+#### Local Docker Testing
 ```bash
-python eda_validation/cleaning.py INPUT_FILE [-o OUTPUT] [--missing-strategy STRATEGY] [--missing-threshold THRESHOLD]
+# Build and run locally
+make run-docker
+# Opens at http://localhost:8501
 ```
 
-### Validation Setup
+#### Cloud Deployment
+1. **Setup GCP Project** (one-time):
 ```bash
-python eda_validation/validation/setup_expectations.py INPUT_FILE [-n NAME] [-o OUTPUT]
+# Initialize GCP project and enable APIs
+make gcp-init
 ```
 
-### Validation Execution
+2. **Configure Docker authentication** (one-time):
 ```bash
-python eda_validation/validation/run_validation.py INPUT_FILE -s SUITE_FILE [-o OUTPUT]
+gcloud auth configure-docker ${REGION}-docker.pkg.dev
 ```
 
-## 🎯 Quality Metrics
-
-Team A's pipeline generates quality scores based on:
-- **Missing values**: Percentage of missing data
-- **Duplicates**: Duplicate row percentage  
-- **Validation**: Great Expectations success rate
-- **Overall Score**: Composite 0-100 quality rating
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-1. **Import errors**: Ensure you're running from project root
-2. **Missing dependencies**: Install optional packages for full functionality
-3. **File path issues**: Use relative paths from project root
-4. **Memory issues**: Consider sampling large datasets for initial exploration
-
-### Debug Mode
+3. **Push image to Artifact Registry**:
 ```bash
-# Enable detailed logging
-python eda_validation/cleaning.py data.csv --verbose
+# Push with default tag (wizard:latest)
+make push-image
+
+# Push with custom tag
+IMAGE_TAG=wizard:v1.2.3 make push-image
 ```
 
-## 📝 License
-
-Data Science Bootcamp Project - Educational Use
-
----
-
-**Team A Contributors**: [Your Names Here]  
-**Team B Contributors**: [Team B Names Here]
-
-## Recent Changes
-
-### Utility Function Consolidation
-
-- **Consolidated `make_json_serializable`**: Moved the duplicate utility function from `app/team_a/sections/utils.py` and `eda_validation/cleaning.py` to a single location in `eda_validation/utils.py`
-- **Single Source of Truth**: Both modules now import this function from the central location, eliminating code duplication
-- **Enhanced Implementation**: The consolidated version combines the best features from both original implementations, handling more data types comprehensively
-
-### Team A Script Update
-
-- **Updated `run_team_a.sh`**: Now runs `app/team_a/main-part1.py` directly instead of the deprecated `app/streamlit_team_a.py`
-- **Simplified Pipeline**: Direct execution of the main Team A pipeline entry point
-
-### Import Structure
-
-```python
-# Central utility location
-from eda_validation.utils import make_json_serializable
-
-# Used by both:
-# - app/team_a/sections/utils.py
-# - eda_validation/cleaning.py
+4. **Deploy to Cloud Run**:
+```bash
+# Deploy the pushed image to Cloud Run
+make deploy
 ```
+This will deploy your application as a public web service with:
+- 1 CPU, 2Gi memory
+- 15 minute timeout
+- Max 2 instances 
+- Public access (no authentication required)
+
+#### Environment Configuration
+Copy `.env.example` to `.env` and set your GCP project details:
+```bash
+PROJECT_ID=your-gcp-project-id
+REGION=europe-west1
+IMAGE_TAG=wizard:latest  # Optional, defaults to wizard:latest
+```
+
+### Running the CLI Pipeline (Headless)
+
+The CLI runner allows you to execute the entire pipeline from command line without UI interaction:
+
+```bash
+# Basic usage with auto-detection
+python scripts/python/run_pipeline_cli.py --csv data/fixtures/sample_classification.csv
+
+# Specify target column and task type
+python scripts/python/run_pipeline_cli.py --csv data.csv --target price --task regression
+
+# Full specification
+python scripts/python/run_pipeline_cli.py --csv data.csv --target category --task classification --target-ml-type multiclass_text_labels
+```
+
+**CLI Options:**
+- `--csv`: Path to input CSV file (required)
+- `--target`: Target column name (optional, auto-detected if not provided)
+- `--task`: Task type - `classification` or `regression` (optional, auto-detected)
+- `--target-ml-type`: ML-ready type for target encoding (optional, auto-detected)
+- `--output-dir`: Base directory for outputs (default: `data/runs`)
+
+The CLI runner will:
+1. Execute all pipeline stages sequentially
+2. Generate all standard artifacts (cleaned data, models, reports)
+3. Update the run index with results
+4. Provide detailed progress output and error reporting
+
+### Running Tests
+```bash
+# Run health check (comprehensive project validation)
+python scripts/python/health_check.py
+
+# Test the CLI runner functionality
+python scripts/python/test_cli_runner.py
+
+# Test common utilities
+python scripts/python/test_common.py
+
+# Individual component tests (examples)
+python pipeline/step_1_ingest/test_ingest_logic.py
+python pipeline/step_3_validation/test_ge_logic.py
+```
+
+## Development
+
+### Code Style
+This project uses:
+- **Black** for code formatting
+- **Flake8** for linting
+- **MyPy** for type checking
+
+Run formatting and linting:
+```bash
+black .
+flake8 .
+mypy .
+```
+
+### Architecture Principles
+
+- **Modularity**: Each pipeline stage is independent and testable
+- **File-based Communication**: Stages communicate via JSON artifacts
+- **Atomic Operations**: All file writes are atomic to prevent corruption
+- **Immutable Artifacts**: Run artifacts are never modified, only appended
+- **Quality Gates**: Built-in validation prevents bad data from propagating downstream
+
+### Technology Stack
+
+**Core Technologies:**
+- **Frontend**: Streamlit (UI), FastAPI (REST API)
+- **ML/AI**: PyCaret (AutoML), Scikit-Learn, SHAP (Explainability)
+- **Data Processing**: Pandas, Great Expectations (Validation), YData Profiling
+- **Infrastructure**: Docker, Google Cloud Run
+- **Development**: pytest, Black, Flake8, MyPy
+
+### Inter-Module Communication
+
+Each run creates a unique directory under `data/runs/<run_id>/` containing:
+- `metadata.json`: Run configuration and results (evolves through pipeline)
+- `status.json`: Current pipeline status and error tracking
+- `original_data.csv`: Uploaded data
+- `cleaned_data.csv`: Processed ML-ready data
+- `validation.json`: Data validation results
+- `model/`: Trained model artifacts and encoders
+- `plots/`: Generated visualizations and reports
+
+### Run Index
+
+The system maintains a CSV-based run index at `data/runs/index.csv` that logs key details of each pipeline run:
+- `run_id`: Unique identifier for the run
+- `timestamp`: When the run was initiated
+- `original_filename`: Name of the uploaded CSV file
+- `status`: Final status (e.g., "Completed Successfully", "Failed at AutoML")
+
+This index enables tracking of all pipeline executions and can be used for run history analysis.
+
+### Testing Strategy
+
+The project includes multiple levels of testing:
+
+1. **Unit Tests**: Individual module tests in each `pipeline/step_X/` directory
+2. **Integration Tests**: End-to-end pipeline testing via `test_cli_runner.py`
+3. **Common Utilities Tests**: Core functionality testing via `test_common.py`
+4. **Health Checks**: Comprehensive project validation via `health_check.py`
+
+Each step directory contains its own test files to verify the logic independent of the UI.
+
+## Project Structure Details
+
+### Pipeline Modules
+- `pipeline/step_1_ingest/`: Handles CSV upload and initial data analysis
+- `pipeline/step_2_schema/`: Target definition and feature schema confirmation
+- `pipeline/step_3_validation/`: Great Expectations data validation
+- `pipeline/step_4_prep/`: Data cleaning and feature encoding
+- `pipeline/step_5_automl/`: PyCaret model training and evaluation
+- `pipeline/step_6_explain/`: SHAP-based model explainability
+
+### Common Utilities
+- `common/constants.py`: Project-wide constants and configuration
+- `common/schemas.py`: Pydantic models for data validation
+- `common/storage.py`: File I/O and atomic operations
+- `common/logger.py`: Run-scoped structured logging utilities
+- `common/utils.py`: General utility functions
+
+### UI Components
+- `app/pages/01_upload_page.py`: Data upload interface
+- `app/pages/02_target_page.py`: Target variable definition
+- `app/pages/03_schema_page.py`: Feature schema confirmation
+- `app/pages/04_validation_page.py`: Data validation interface
+- `app/pages/05_prep_page.py`: Data preparation interface
+- `app/pages/06_automl_page.py`: Model training interface
+- `app/pages/07_explain_page.py`: Model explanation interface
+- `app/pages/08_results_page.py`: Results and download interface
+- `app/main.py`: Main Streamlit application entry point
+
+### API Endpoints (Optional)
+- `api/routes/`: REST API route definitions
+- `api/utils/`: API-specific utilities
+- `api/main.py`: FastAPI application with health checks and core endpoints
+
+## Key Features
+
+- **Progressive Workflow**: Guided step-by-step ML pipeline
+- **Quality Assurance**: Built-in data validation and error handling
+- **Model Explainability**: SHAP-based feature importance and explanations
+- **Deployment Ready**: Docker containerization and cloud deployment
+- **Dual Interface**: Both UI (Streamlit) and programmatic (CLI/API) access
+- **Comprehensive Logging**: Structured logging with error tracking
+- **Testing Coverage**: Unit, integration, and health check testing
+
+## Contributing
+
+1. Create feature branches for new functionality
+2. Ensure all tests pass before submitting PRs
+3. Follow the established code style guidelines (Black, Flake8, MyPy)
+4. Update documentation for new features
+5. Test both UI and CLI interfaces for any changes
+6. Activate the virtual environment (`.venv`) before development
+
+## License
+
+[Add license information here] 

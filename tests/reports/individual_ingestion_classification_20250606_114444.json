@@ -1,0 +1,65 @@
+{
+  "test_type": "single_test",
+  "timestamp": "2025-06-06T11:44:44.068904",
+  "result": {
+    "stage_name": "ingestion",
+    "success": false,
+    "duration": 0.003773927688598633,
+    "details": {
+      "test_info": {
+        "stage_name": "ingestion",
+        "test_run_id": "test_ingestion_classification_20250606_094444",
+        "test_directory": "/Users/Tim/Library/Mobile Documents/com~apple~CloudDocs/(00) Dateien/(05) Projekte/25Q2 Projection Wizar LeWag/25W23 Projection Wizard /TheProjectionWizard/data/test_runs/test_ingestion_classification_20250606_094444",
+        "timestamp": "2025-06-06T11:44:44.068808",
+        "duration_seconds": 0.003773927688598633,
+        "success": false
+      },
+      "validation_results": {
+        "input_validation": {
+          "success": true,
+          "missing_files": []
+        },
+        "stage_execution": {
+          "success": true,
+          "run_id": "2025-06-06T094444Z_cf3dca2b"
+        },
+        "output_validation": {
+          "success": false,
+          "missing_files": [
+            "metadata.json",
+            "status.json"
+          ]
+        },
+        "status_validation": {
+          "success": false,
+          "status_data": {}
+        },
+        "metadata_validation": {
+          "success": false,
+          "found_keys": []
+        },
+        "ingestion_specifics": {
+          "success": false,
+          "checks": {
+            "initial_rows": "Invalid initial_rows: None",
+            "initial_cols": "Invalid initial_cols: None",
+            "initial_dtypes": "Invalid initial_dtypes type: <class 'NoneType'>",
+            "original_filename": "Invalid original_filename: None"
+          }
+        }
+      },
+      "files": {
+        "test_directory_contents": [
+          "original_data.csv"
+        ]
+      }
+    },
+    "errors": [
+      "output_validation: {'success': False, 'missing_files': ['metadata.json', 'status.json']}",
+      "status_validation: {'success': False, 'status_data': {}}",
+      "metadata_validation: {'success': False, 'found_keys': []}",
+      "ingestion_specifics: {'success': False, 'checks': {'initial_rows': 'Invalid initial_rows: None', 'initial_cols': 'Invalid initial_cols: None', 'initial_dtypes': \"Invalid initial_dtypes type: <class 'NoneType'>\", 'original_filename': 'Invalid original_filename: None'}}"
+    ],
+    "timestamp": "2025-06-06T11:44:44.068860"
+  }
+}

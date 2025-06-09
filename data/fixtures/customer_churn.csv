@@ -1,0 +1,101 @@
+customer_age,tenure_months,monthly_charges,contract_type,internet_service,support_tickets,payment_method,churned
+52,12,75.39,Month-to-month,DSL,2,Bank transfer,1
+42,6,134.14,One year,Fiber optic,0,Electronic check,1
+54,3,67.47,Month-to-month,DSL,3,Credit card,1
+67,9,222.64,One year,Fiber optic,1,Electronic check,1
+41,68,96.33,Two year,DSL,2,Mailed check,0
+41,9,53.23,One year,DSL,3,Electronic check,0
+68,17,48.87,Month-to-month,DSL,5,Credit card,0
+56,29,90.97,One year,Fiber optic,2,Bank transfer,0
+37,10,68.59,Month-to-month,Fiber optic,3,Bank transfer,1
+53,85,99.79,One year,Fiber optic,2,Electronic check,0
+38,78,90.63,Two year,No,0,Bank transfer,0
+38,6,72.85,Month-to-month,DSL,0,Electronic check,0
+48,16,53.45,Two year,DSL,1,Credit card,0
+18,8,40.92,Two year,Fiber optic,1,Electronic check,0
+19,8,62.73,Month-to-month,DSL,3,Electronic check,0
+36,1,105.64,Month-to-month,No,1,Electronic check,1
+29,22,81.71,Month-to-month,DSL,0,Mailed check,0
+49,16,45.57,Month-to-month,No,1,Bank transfer,0
+31,1,80.38,Month-to-month,DSL,1,Electronic check,1
+23,7,87.5,One year,Fiber optic,0,Credit card,0
+66,57,52.66,Month-to-month,Fiber optic,1,Mailed check,0
+41,6,79.76,Month-to-month,No,2,Bank transfer,0
+46,3,76.77,Two year,DSL,0,Mailed check,1
+23,16,47.48,Month-to-month,Fiber optic,2,Mailed check,0
+36,101,86.54,Two year,No,2,Bank transfer,0
+46,6,93.86,Month-to-month,Fiber optic,3,Electronic check,1
+27,26,115.67,Month-to-month,Fiber optic,1,Electronic check,1
+50,34,114.32,One year,Fiber optic,2,Credit card,0
+35,6,43.23,One year,Fiber optic,2,Credit card,0
+40,31,51.54,Two year,Fiber optic,3,Mailed check,0
+35,11,92.16,One year,Fiber optic,1,Electronic check,0
+72,24,92.11,Two year,No,2,Bank transfer,0
+44,24,92.16,Month-to-month,DSL,1,Mailed check,1
+29,18,300.0,Month-to-month,DSL,0,Electronic check,1
+57,2,94.24,One year,No,1,Electronic check,1
+26,43,118.12,Two year,Fiber optic,1,Bank transfer,0
+48,9,109.85,Two year,Fiber optic,5,Bank transfer,1
+18,4,97.32,Month-to-month,Fiber optic,3,Electronic check,1
+25,1,66.11,Month-to-month,DSL,0,Electronic check,0
+47,21,101.6,One year,DSL,1,Electronic check,0
+56,27,55.06,Month-to-month,Fiber optic,2,Bank transfer,0
+47,1,68.22,Two year,DSL,3,Electronic check,0
+43,17,61.77,Two year,Fiber optic,1,Electronic check,0
+40,6,77.5,Month-to-month,DSL,1,Credit card,1
+22,24,189.3,One year,No,1,Electronic check,0
+34,4,35.54,One year,No,1,Bank transfer,0
+38,28,98.69,Month-to-month,Fiber optic,3,Electronic check,0
+60,11,39.35,Two year,Fiber optic,4,Electronic check,0
+50,66,62.1,One year,DSL,1,Electronic check,0
+18,3,115.94,Two year,Fiber optic,3,Bank transfer,1
+49,10,76.95,Month-to-month,Fiber optic,2,Credit card,1
+39,2,48.73,Two year,DSL,2,Credit card,0
+34,62,56.34,Month-to-month,No,0,Mailed check,1
+54,50,98.43,Month-to-month,Fiber optic,2,Bank transfer,1
+60,7,56.0,Two year,No,1,Electronic check,0
+58,25,81.78,Month-to-month,Fiber optic,1,Electronic check,1
+32,40,76.38,Month-to-month,Fiber optic,1,Credit card,0
+40,19,57.79,Two year,Fiber optic,0,Electronic check,0
+49,18,176.81,Two year,No,3,Electronic check,0
+59,6,96.65,One year,Fiber optic,4,Electronic check,1
+37,2,33.36,One year,DSL,4,Electronic check,0
+42,54,80.81,Month-to-month,DSL,2,Electronic check,1
+28,55,57.56,Month-to-month,DSL,0,Bank transfer,1
+27,24,105.47,Month-to-month,Fiber optic,3,Mailed check,1
+57,9,54.62,One year,No,2,Credit card,0
+65,10,71.64,One year,DSL,1,Credit card,0
+43,31,91.79,One year,Fiber optic,2,Mailed check,0
+60,54,106.04,One year,DSL,3,Electronic check,0
+50,52,46.4,Month-to-month,No,2,Mailed check,0
+35,36,65.61,Month-to-month,Fiber optic,2,Bank transfer,1
+50,24,62.02,Month-to-month,Fiber optic,4,Electronic check,0
+68,2,57.75,One year,Fiber optic,0,Bank transfer,0
+44,4,151.97,Month-to-month,Fiber optic,3,Mailed check,1
+68,54,88.19,Two year,DSL,5,Bank transfer,0
+18,22,45.29,Month-to-month,DSL,1,Mailed check,0
+57,1,108.27,Month-to-month,Fiber optic,1,Electronic check,1
+46,2,175.27,Month-to-month,Fiber optic,3,Credit card,1
+40,26,113.35,One year,No,1,Credit card,0
+46,1,40.84,One year,No,1,Electronic check,0
+18,4,61.79,Month-to-month,Fiber optic,2,Credit card,1
+41,19,124.49,Month-to-month,Fiber optic,2,Mailed check,1
+50,28,56.51,One year,No,3,Credit card,0
+67,25,89.57,Month-to-month,Fiber optic,1,Credit card,1
+37,6,102.24,Two year,DSL,3,Mailed check,0
+32,29,51.77,One year,Fiber optic,2,Electronic check,0
+37,6,73.24,Month-to-month,DSL,2,Electronic check,0
+58,9,20.51,Month-to-month,No,6,Bank transfer,1
+49,32,49.79,Two year,Fiber optic,3,Bank transfer,0
+37,25,67.79,Month-to-month,DSL,3,Electronic check,0
+52,45,45.53,Month-to-month,Fiber optic,2,Electronic check,0
+46,25,144.09,Two year,Fiber optic,4,Credit card,0
+59,20,42.33,Two year,DSL,0,Credit card,0
+34,2,62.9,Two year,DSL,2,Bank transfer,0
+40,11,79.03,One year,Fiber optic,1,Electronic check,0
+39,7,133.49,Month-to-month,Fiber optic,3,Electronic check,1
+23,6,42.23,Month-to-month,Fiber optic,2,Electronic check,0
+49,86,119.43,One year,Fiber optic,1,Credit card,0
+48,11,75.31,One year,Fiber optic,1,Electronic check,0
+45,53,50.65,Month-to-month,Fiber optic,3,Bank transfer,0
+41,23,90.23,Two year,Fiber optic,1,Electronic check,0

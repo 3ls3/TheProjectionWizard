@@ -1,0 +1,187 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+Okay, here's a high-level Product Requirements Document (PRD) draft for the Projection Wizard refactor, incorporating our discussions.
+
+Product Requirements Document: Projection Wizard Refactor v1.0
+
+1. Introduction
+
+This document outlines the requirements for refactoring "The Projection Wizard." The goal is to transform the existing dual-application structure into a single, modular, and robust end-to-end machine learning pipeline with an improved user experience. This refactor prioritizes clear inter-module contracts, testability, and developer collaboration.
+
+2. Goals
+
+Unified Pipeline: Create a single, linear Streamlit application guiding users from data upload to model outputs.
+
+Modularity: Restructure the codebase into independent "buckets" (directories) for each pipeline stage, facilitating parallel development and maintenance.
+
+Clear Handoffs: Implement immutable file-based artefacts (e.g., cleaned_data.csv, metadata.json, status.json) for communication between buckets, stored in run-specific directories.
+
+Improved User Experience: Guide users through critical decision points (target selection, schema confirmation) with intelligent assistance.
+
+Enhanced Testability: Separate business logic from UI components to enable unit testing and implement a CI smoke test.
+
+Foundation for Scalability: Design for local disk storage initially, with a clear path towards containerization and cloud storage/database integration.
+
+3. Target User Persona
+
+Data analysts, citizen data scientists, or individuals with domain expertise who want to quickly build and understand ML models from tabular CSV data without extensive coding.
+
+4. Proposed Pipeline Flow & Bucket Structure
+
+The pipeline will consist of the following stages, mapped to dedicated code buckets:
+
+Stage #	User/System Action	Bucket	Key Outputs (in data/runs/<run_id>/)	UI Page(s) Involved
+1	Upload & Initial Scan	ingest/	original_data.csv, metadata.json (initial), status.json	ui/01_upload_page.py
+2	Target Confirmation	schema/	metadata.json (target info updated), status.json	ui/02_target_page.py
+3	Key Feature Schema Assist & Confirmation	schema/	metadata.json (key feature schemas updated), status.json	ui/03_schema_page.py
+4	Data Validation (Great Expectations)	validation/	validation.json, metadata.json (val status), status.json	ui/04_validation_page.py
+5	Data Preparation (Cleaning, Encoding, Profiling)	prep/	cleaned_data.csv, ydata_profile.html, metadata.json (prep steps), status.json	ui/05_prep_page.py
+6	AutoML (PyCaret - Clf/Reg)	automl/	model/model.joblib, model/scaler.pkl, metadata.json (model info), status.json	ui/06_automl_page.py
+7	Model Explainability (Global SHAP)	explain/	plots/shap_summary.png, metadata.json (explain paths), status.json	ui/07_explain_page.py
+8	Results & Downloads	N/A (UI uses artefacts)	(Presents existing artefacts)	ui/08_results_page.py
+
+Shared Buckets:
+
+common/: constants.py, schemas.py (Pydantic models), logger.py, storage.py (atomic writers).
+
+scripts/: run_app.sh, run_smoke_test.py.
+
+5. Key User Interactions & System Logic
+
+5.1. Data Ingestion (Stage 1 - ingest/)
+
+User uploads a CSV file.
+
+System saves the original file and an initial metadata.json (filename, timestamp, basic stats, auto-detected dtypes) and status.json.
+
+A unique run_id (timestamp + UUID) is generated, creating a directory: data/runs/<run_id>/.
+
+5.2. Target Column & Task Definition (Stage 2 - schema/)
+
+System heuristically suggests a target column and infers task type (classification/regression) and a basic target "encoding" (e.g., numeric, binary, ordinal).
+
+User confirms/changes the target column and its "encoding"/ML-ready type.
+
+metadata.json is updated with confirmed target information.
+
+5.3. Key Feature Schema Confirmation (Stage 3 - schema/ with "schema-assist" sub-step)
+
+System performs very minimal "light cleaning" (strictly for metric calculation stability, state not persisted for prep bucket) on a copy of the data.
+
+System calculates simple importance metrics (e.g., Mutual Info, Correlation) against the confirmed target to identify ~5-10 potentially influential columns.
+
+UI presents these key columns, showing auto-detected dtypes and suggested encoding roles (e.g., "categorical-nominal", "categorical-ordinal", "numeric-continuous").
+
+User confirms/adjusts dtypes and encoding roles for these surfaced columns. They can optionally review/adjust all columns.
+
+metadata.json is updated with these user-confirmed schema details. For non-surfaced/non-adjusted columns, system-inferred types and default encoding roles are retained.
+
+5.4. Data Validation (Stage 4 - validation/)
+
+System generates a Great Expectations suite based on the (partially) user-confirmed schema in metadata.json.
+
+System runs validation against the original data (or a minimally processed version if essential for GE).
+
+validation.json (raw GE results + summary) is saved. metadata.json and status.json are updated.
+UI displays validation results. If critical errors, user may be prompted or blocked.
+
+5.5. Data Preparation (Stage 5 - prep/)
+
+System performs full cleaning (missing values, duplicates, etc.) based on strategies (some potentially configurable later).
+
+System applies encoding to features based on their assigned roles in metadata.json (e.g., "categorical-nominal" -> OneHot).
+
+System generates a ydata-profiling report.
+
+cleaned_data.csv, ydata_profile.html are saved. metadata.json (cleaning steps, final dtypes, encoding applied) and status.json are updated.
+
+5.6. AutoML (Stage 6 - automl/)
+
+System uses PyCaret (initially) for classification or regression on cleaned_data.csv.
+
+Best model, scaler, and performance metrics are saved.
+
+model/model.joblib, model/scaler.pkl, metadata.json (model details, metrics) and status.json are updated.
+
+5.7. Model Explainability (Stage 7 - explain/)
+
+System generates a global SHAP summary plot for the best model.
+
+plots/shap_summary.png is saved. metadata.json and status.json are updated.
+
+5.8. Results & Downloads (Stage 8 - UI)
+
+UI presents a dashboard summarizing the run: key metadata, validation summary, link to profiling report, model performance, SHAP plot.
+
+Provides download links for cleaned_data.csv, metadata.json, validation.json, model files (zipped), plots.
+
+6. Core System Mechanics & Decisions
+
+Run Identification & Artefact Storage: UUID-based folders under data/runs/<run_id>/ containing all run-specific, non-binary artefacts. Model binaries and scalers in data/runs/<run_id>/model/. Plots in data/runs/<run_id>/plots/.
+
+Inter-Bucket Communication: Each bucket reads inputs from the run_id directory and writes its outputs and an updated status.json (e.g., {"stage":"validation", "status":"completed", "errors":[]}). Subsequent buckets check this status.
+
+Configuration:
+
+common/constants.py: Default paths, stage names, core AutoML settings.
+
+common/schemas.py: Pydantic models for metadata.json and status.json (and validation.json summary).
+
+UI ↔ Bucket Communication: UI pages call single functions in corresponding buckets (e.g., schema.run_target_confirmation(run_id)), which operate on files within data/runs/<run_id>/ and return status/path information. st.session_state["run_id"] tracks the active run.
+
+Error Handling: Buckets update status.json with status:"failed" and error details. UI reads this to display messages and potentially block progression.
+
+Logging: A run-scoped logger (common/logger.get_logger(run_id)) writes to data/runs/<run_id>/pipeline.log.
+
+Atomic Writes: A helper (common/storage.write_json_atomic(filepath, data)) will be used for metadata.json and status.json to prevent corruption.
+
+Headless Runner: scripts/run_smoke_test.py (or projection_wizard.runner) will execute the pipeline end-to-end for CI/testing, accepting CSV path and optional target/task.
+
+Run Index: data/runs/index.csv will log key details of each run for a "Run History" UI page.
+
+Python Version: Target Python 3.10 initially.
+
+7. Non-Goals (for this refactor iteration)
+
+Full-fledged database backend (SQLite or cloud DB).
+
+User authentication and multi-tenancy.
+
+Advanced AutoML features (e.g., AutoGluon, extensive hyperparameter tuning UI).
+
+Row-level/LIME explainability.
+
+Deployment to complex orchestrated environments (beyond single VM/container).
+
+Real-time prediction endpoints.
+
+8. Success Metrics
+
+Successful end-to-end pipeline execution via both UI and headless script.
+
+All core logic resides outside UI components and is organized into specified buckets.
+
+run_smoke_test.py passes in CI.
+
+Reduced merge conflicts and improved developer velocity.
+
+User can successfully upload a CSV and receive a trained model, predictions, and key reports.
+
+9. Future Considerations & Long-Term Vision
+While the current refactor focuses on establishing a modular, locally runnable pipeline with file-based artefacts, the long-term vision includes:
+Backend Integration (Supabase on Lovable):
+Migrating artefact storage (metadata, status, large files like datasets and models) from the local file system to Supabase (PostgreSQL for structured data, Supabase Storage for blobs).
+The common/storage.py module is designed as an abstraction layer to facilitate this transition; its backend implementation will change while function signatures ideally remain stable for the pipeline buckets.
+Configuration in common/constants.py will expand to include Supabase connection details, managed via environment variables.
+User Authentication & Multi-Tenancy: Leveraging Supabase's authentication to support multiple users, ensuring data isolation and run ownership. Each run_id will be associated with a user_id.
+Enhanced User Interaction with LLM Layer:
+Exploring the integration of a Language Model (LLM) to provide more intelligent assistance and natural language interaction for user feedback stages, particularly for:
+Explaining why certain features are flagged as important for schema review.
+Allowing users to provide feedback or ask questions about schema/encoding choices in natural language.
+Potentially generating more nuanced suggestions for data cleaning or feature engineering based on data characteristics and user goals.
+Advanced AutoML & Explainability: Incorporating tools like AutoGluon, more sophisticated hyperparameter tuning options, and row-level LIME/detailed SHAP explanations.
+Scalability & Performance: Optimizing for larger datasets and concurrent runs once deployed with a robust backend.
+These considerations are not part of the immediate refactor scope but inform design choices that promote future adaptability (e.g., modularity, clear storage APIs).

@@ -2,6 +2,11 @@
 # ⚠️  PARALLEL DEVELOPMENT COORDINATION REQUIRED ⚠️  
 # =============================================================================
 #
+# PYTHON VERSION REQUIREMENT: 3.10.x or 3.11.x ONLY!
+# - PyCaret (core ML library) does NOT support Python 3.12+
+# - Use `pyenv local 3.10.6` or `pyenv local 3.11.x` before setup
+# - This is enforced in pyproject.toml: requires-python = ">=3.10,<3.12"
+#
 # This file is modified by ALL team members:
 # - API developer: Adds FastAPI, uvicorn, async libraries
 # - Pipeline developer: May upgrade ML libraries, add optimization packages  

@@ -12,7 +12,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 # Import route modules
-from api.routes.schema import router as schema_router
+from api.routes.endpoints import router as schema_router
 
 # Create FastAPI application
 app = FastAPI(

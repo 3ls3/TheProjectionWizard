@@ -60,27 +60,58 @@ TheProjectionWizard/
 
 ## Setup
 
+### ⚠️ Python Version Requirements
+
+**IMPORTANT**: This project requires **Python 3.10.x or 3.11.x ONLY**.
+
+- ❌ Python 3.12+ is **NOT supported** (PyCaret compatibility)
+- ❌ Python 3.9 and below are **NOT supported**
+- ✅ Python 3.10.6 is **recommended**
+
 ### Prerequisites
-- Python 3.10+
-- pip or conda
+- Python 3.10.6 or 3.11.x (see requirements above)
+- pyenv (recommended for Python version management)
+- pip
 
 ### Installation
 
-1. Clone the repository:
+1. **Clone the repository**:
 ```bash
 git clone <repository-url>
 cd TheProjectionWizard
 ```
 
-2. Create and activate a virtual environment:
+2. **Check Python compatibility** (REQUIRED):
+```bash
+# Run this BEFORE creating virtual environment
+python setup_check.py
+```
+
+3. **Set correct Python version** (if needed):
+```bash
+# Install Python 3.10.6 using pyenv (if not already installed)
+pyenv install 3.10.6
+pyenv local 3.10.6
+
+# Verify the change
+python setup_check.py
+```
+
+4. **Create and activate virtual environment**:
 ```bash
 python -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 ```
 
-3. Install dependencies:
+5. **Install dependencies**:
 ```bash
 pip install -r requirements.txt
+```
+
+6. **Verify installation**:
+```bash
+# Use convenience script for full verification
+./activate_env.sh
 ```
 
 ## Usage

@@ -38,7 +38,7 @@ name = "projection-wizard"
 version = "1.0.0"
 description = "A modular end-to-end machine learning pipeline for tabular data"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.12"
 keywords = ["machine-learning", "automl", "data-science", "streamlit"]
 authors = [
     {name = "The Projection Wizard Team"},
@@ -51,6 +51,8 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
+# NOTE: This project requires Python 3.10.x or 3.11.x due to PyCaret compatibility
+# Python 3.12+ is not supported by PyCaret as of v3.3.2
 dependencies = [
     "pandas>=2.0.0",
     "numpy>=1.24.0",

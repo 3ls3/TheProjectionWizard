@@ -6,10 +6,11 @@ Provides endpoints for the main ML pipeline functionality.
 from fastapi import (
     APIRouter, UploadFile, File, HTTPException, Query, BackgroundTasks
 )
+from fastapi.responses import FileResponse
 from uuid import uuid4
 import pandas as pd
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Dict
 import tempfile
 from pathlib import Path
 
@@ -261,20 +262,73 @@ async def upload_csv(file: UploadFile = File(...)):
         errors.raise_internal_server_error(f"File upload failed: {str(e)}")
 
 
+def _get_column_statistics(series: pd.Series) -> "ColumnStatistics":
+    """Get statistics for a single column."""
+    from .schema import ColumnStatistics
+    
+    # Get sample values (first 3 non-null values)
+    sample_values = []
+    non_null_values = series.dropna()
+    if len(non_null_values) > 0:
+        sample_values = [str(val) for val in non_null_values.head(3).tolist()]
+    
+    return ColumnStatistics(
+        unique_values=series.nunique(),
+        missing_values=series.isna().sum(),
+        missing_percentage=round((series.isna().sum() / len(series)) * 100, 1),
+        data_type=str(series.dtype),
+        sample_values=sample_values
+    )
+
+
+def _get_ml_type_options() -> Dict[str, List["MLTypeOption"]]:
+    """Get ML type options grouped by task type."""
+    from .schema import MLTypeOption
+    
+    # ML type descriptions from the Streamlit page
+    ml_type_descriptions = {
+        "binary_01": "Binary classification with 0/1 numeric labels",
+        "binary_numeric": "Binary classification with numeric labels (not 0/1)",
+        "binary_text_labels": "Binary classification with text labels (e.g., 'yes'/'no')",
+        "binary_boolean": "Binary classification with True/False boolean values",
+        "multiclass_int_labels": "Multi-class classification with integer labels",
+        "multiclass_text_labels": "Multi-class classification with text labels",
+        "high_cardinality_text": "Classification with many unique text categories (may need preprocessing)",
+        "numeric_continuous": "Regression with continuous numeric values"
+    }
+    
+    classification_types = [
+        "binary_01", "binary_numeric", "binary_text_labels", "binary_boolean",
+        "multiclass_int_labels", "multiclass_text_labels", "high_cardinality_text"
+    ]
+    
+    regression_types = ["numeric_continuous"]
+    
+    return {
+        "classification": [
+            MLTypeOption(value=ml_type, description=ml_type_descriptions[ml_type])
+            for ml_type in classification_types
+        ],
+        "regression": [
+            MLTypeOption(value=ml_type, description=ml_type_descriptions[ml_type])
+            for ml_type in regression_types
+        ]
+    }
+
+
 @router.get("/target-suggestion", response_model=TargetSuggestionResponse)
 def target_suggestion(run_id: str = Query(...)):
     """
     Get target column and task type suggestions for a run.
 
     Analyzes the uploaded dataset to suggest the most likely target column
-    and task type (classification vs regression).
+    and task type, and provides all necessary data for frontend UI.
 
     Args:
         run_id: The ID of the run to analyze
 
     Returns:
-        TargetSuggestionResponse with suggested column, task type, and
-        confidence
+        TargetSuggestionResponse with enhanced data for frontend
 
     Raises:
         HTTPException: If run not found or analysis fails
@@ -320,6 +374,17 @@ def target_suggestion(run_id: str = Query(...)):
                 )
             )
 
+        # Get statistics for all columns
+        columns_stats = {}
+        for col in df.columns:
+            columns_stats[col] = _get_column_statistics(df[col])
+
+        # Create data preview
+        data_preview = _create_preview(df, num_rows=5)
+
+        # Get ML type options
+        ml_type_options = _get_ml_type_options()
+
         # For now, set a static confidence score
         # In the future, this could be calculated based on heuristics
         confidence = 0.87
@@ -332,17 +397,23 @@ def target_suggestion(run_id: str = Query(...)):
                 "endpoint": "target-suggestion",
                 "run_id": run_id,
                 "suggested_column": suggested_col,
-                "task_type": suggested_task,
-                "confidence": confidence
+                "suggested_task_type": suggested_task,
+                "suggested_ml_type": suggested_ml_type,
+                "confidence": confidence,
+                "total_columns": len(columns_stats)
             },
             f"Target suggestion completed for run {run_id}: "
-            f"'{suggested_col}' ({suggested_task})"
+            f"'{suggested_col}' ({suggested_task}, {suggested_ml_type})"
         )
 
         return TargetSuggestionResponse(
+            columns=columns_stats,
             suggested_column=suggested_col,
-            task_type=suggested_task,
-            confidence=confidence
+            suggested_task_type=suggested_task,
+            suggested_ml_type=suggested_ml_type,
+            confidence=confidence,
+            available_ml_types=ml_type_options,
+            data_preview=data_preview
         )
 
     except HTTPException:
@@ -412,18 +483,6 @@ def confirm_target(req: TargetConfirmationRequest):
         if not _validate_run_exists(req.run_id):
             errors.raise_run_not_found(req.run_id)
 
-        # Load original data to determine ml_type
-        df = storage.read_original_data(req.run_id)
-        if df is None:
-            errors.raise_results_not_available(
-                req.run_id, f"Original data not found for run '{req.run_id}'"
-            )
-
-        # Get the ml_type from the suggestion logic
-        suggested_col, suggested_task, suggested_ml_type = (
-            tgt_logic.suggest_target_and_task(df)
-        )
-
         # Load existing metadata.json
         metadata = storage.read_metadata(req.run_id)
         if metadata is None:
@@ -433,11 +492,11 @@ def confirm_target(req: TargetConfirmationRequest):
                 "timestamp": datetime.now(timezone.utc).isoformat()
             }
 
-        # Update metadata with target information
+        # Update metadata with target information (use user-provided ml_type)
         metadata['target_info'] = {
             "name": req.confirmed_column,
             "task_type": req.task_type,
-            "ml_type": suggested_ml_type or "unknown_type",
+            "ml_type": req.ml_type,
             "user_confirmed_at": datetime.now(timezone.utc).isoformat()
         }
 
@@ -456,10 +515,10 @@ def confirm_target(req: TargetConfirmationRequest):
                 "run_id": req.run_id,
                 "confirmed_column": req.confirmed_column,
                 "task_type": req.task_type,
-                "ml_type": suggested_ml_type
+                "ml_type": req.ml_type
             },
             f"Target confirmed for run {req.run_id}: "
-            f"'{req.confirmed_column}' ({req.task_type})"
+            f"'{req.confirmed_column}' ({req.task_type}, {req.ml_type})"
         )
 
         return {"status": "ok"}
@@ -496,20 +555,47 @@ def confirm_target(req: TargetConfirmationRequest):
         )
 
 
+def _get_available_dtypes() -> Dict[str, str]:
+    """Get available data types with user-friendly descriptions."""
+    return {
+        "object": "Text/String",
+        "int64": "Integer Numbers",
+        "float64": "Decimal Numbers", 
+        "bool": "True/False (Boolean)",
+        "datetime64[ns]": "Date/Time",
+        "category": "Category"
+    }
+
+
+def _get_available_encoding_roles() -> Dict[str, str]:
+    """Get available encoding roles with descriptions."""
+    return {
+        "numeric-continuous": "Numeric (Continuous) - e.g., price, temperature",
+        "numeric-discrete": "Numeric (Discrete) - e.g., count, age",
+        "categorical-nominal": "Categorical (No Order) - e.g., color, brand",
+        "categorical-ordinal": "Categorical (Ordered) - e.g., small/medium/large",
+        "text": "Text (for NLP or hashing) - e.g., descriptions, comments",
+        "datetime": "Date/Time features - e.g., timestamp, date",
+        "boolean": "Boolean (True/False) - e.g., is_active, has_discount",
+        "target": "Target variable (prediction goal)"
+    }
+
+
 @router.get("/feature-suggestion", response_model=FeatureSuggestionResponse)
 def feature_suggestion(run_id: str = Query(...), top_n: int = 5):
     """
     Get feature schema suggestions for a run.
 
     Analyzes the dataset to identify key features and suggest appropriate
-    data types and encoding roles for each column.
+    data types and encoding roles for each column. Provides all necessary
+    data for building an interactive frontend UI.
 
     Args:
         run_id: The ID of the run to analyze
         top_n: Number of top features to prioritize (default: 5)
 
     Returns:
-        FeatureSuggestionResponse with feature schemas
+        FeatureSuggestionResponse with enhanced feature data for frontend
 
     Raises:
         HTTPException: If run not found, target not confirmed, or
@@ -552,27 +638,40 @@ def feature_suggestion(run_id: str = Query(...), top_n: int = 5):
         metadata = storage.read_metadata(run_id)
         target_info = metadata['target_info']
 
-        # Get all feature schemas
-        all_schemas = feat_logic.suggest_initial_feature_schemas(df)
+        # Get all feature schemas from pipeline logic
+        all_initial_schemas = feat_logic.suggest_initial_feature_schemas(df)
 
         # Identify key features
         key_features = feat_logic.identify_key_features(
             df, target_info, num_features_to_surface=top_n
         )
 
-        # Create filtered schemas with key features first
-        filtered_schemas = {}
-
-        # Add key features first
-        for feature in key_features:
-            if feature in all_schemas:
-                filtered_schemas[feature] = all_schemas[feature]
-
-        # Add remaining features (excluding target column)
+        # Build enhanced feature schemas with statistics
+        from .schema import FeatureSchema
+        feature_schemas = {}
         target_column = target_info['name']
-        for col, schema in all_schemas.items():
-            if col != target_column and col not in filtered_schemas:
-                filtered_schemas[col] = schema
+        
+        for col in df.columns:
+            if col == target_column:
+                continue  # Skip target column
+                
+            # Get basic schema from pipeline logic
+            basic_schema = all_initial_schemas[col]
+            
+            # Add enhanced information
+            feature_schemas[col] = FeatureSchema(
+                initial_dtype=basic_schema['initial_dtype'],
+                suggested_encoding_role=basic_schema['suggested_encoding_role'],
+                statistics=_get_column_statistics(df[col]),
+                is_key_feature=col in key_features
+            )
+
+        # Create data preview
+        data_preview = _create_preview(df, num_rows=5)
+
+        # Get available options for UI dropdowns
+        available_dtypes = _get_available_dtypes()
+        available_encoding_roles = _get_available_encoding_roles()
 
         # Log successful completion
         logger.log_structured_event(
@@ -581,16 +680,21 @@ def feature_suggestion(run_id: str = Query(...), top_n: int = 5):
             {
                 "endpoint": "feature-suggestion",
                 "run_id": run_id,
-                "total_features": len(filtered_schemas),
+                "total_features": len(feature_schemas),
                 "key_features_count": len(key_features),
                 "top_n": top_n
             },
             f"Feature suggestion completed for run {run_id}: "
-            f"{len(filtered_schemas)} features, {len(key_features)} key features"
+            f"{len(feature_schemas)} features, {len(key_features)} key features"
         )
 
         return FeatureSuggestionResponse(
-            feature_schemas=filtered_schemas
+            feature_schemas=feature_schemas,
+            key_features=key_features,
+            available_dtypes=available_dtypes,
+            available_encoding_roles=available_encoding_roles,
+            target_info=target_info,
+            data_preview=data_preview
         )
 
     except HTTPException:
@@ -945,3 +1049,110 @@ def get_results(run_id: str = Query(...)):
             }
         )
         errors.raise_internal_server_error(f"Results retrieval failed: {str(e)}")
+
+
+@router.get("/download/{run_id}/{filename}")
+async def download_file(run_id: str, filename: str):
+    """
+    Download result files (plots, reports, etc.) for a completed run.
+
+    Serves files from the run's step directories, primarily for explainability
+    plots and other generated artifacts.
+
+    Args:
+        run_id: The ID of the run
+        filename: The name of the file to download
+
+    Returns:
+        FileResponse with the requested file
+
+    Raises:
+        HTTPException: If run not found or file not available
+    """
+
+    # Get logger for this operation
+    download_logger = logger.get_structured_logger(run_id, "api_download")
+
+    # Log request start
+    logger.log_structured_event(
+        download_logger,
+        "api_request_started",
+        {"endpoint": "download", "run_id": run_id, "filename": filename},
+        f"Starting file download for run {run_id}: {filename}"
+    )
+
+    try:
+        # Validate run exists
+        if not _validate_run_exists(run_id):
+            errors.raise_run_not_found(run_id)
+
+        # Get run directory
+        run_dir = storage.get_run_dir(run_id)
+
+        # Look for file in common output directories
+        possible_paths = [
+            run_dir / "step_6_explain" / filename,  # SHAP plots
+            run_dir / "step_5_automl" / filename,   # Model artifacts
+            run_dir / filename,                     # Root level files
+        ]
+
+        file_path = None
+        for path in possible_paths:
+            if path.exists() and path.is_file():
+                file_path = path
+                break
+
+        if file_path is None:
+            logger.log_structured_error(
+                download_logger,
+                "api_request_failed",
+                f"File not found: {filename}",
+                {"endpoint": "download", "run_id": run_id, "filename": filename}
+            )
+            raise HTTPException(
+                status_code=404,
+                detail=errors.create_error_detail(
+                    f"File '{filename}' not found for run '{run_id}'",
+                    "file_not_found",
+                    {"run_id": run_id, "filename": filename}
+                )
+            )
+
+        # Log successful completion
+        logger.log_structured_event(
+            download_logger,
+            "api_request_succeeded",
+            {
+                "endpoint": "download",
+                "run_id": run_id,
+                "filename": filename,
+                "file_path": str(file_path),
+                "file_size": file_path.stat().st_size
+            },
+            f"File download initiated for run {run_id}: {filename}"
+        )
+
+        return FileResponse(
+            path=str(file_path),
+            filename=filename,
+            media_type="application/octet-stream"
+        )
+
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
+    except Exception as e:
+        # Log unexpected errors
+        logger.log_structured_error(
+            download_logger,
+            "api_request_failed",
+            f"Unexpected error downloading file: {str(e)}",
+            {
+                "endpoint": "download",
+                "run_id": run_id,
+                "filename": filename,
+                "error": str(e),
+                "error_type": type(e).__name__
+            }
+        )
+        errors.raise_internal_server_error(f"File download failed: {str(e)}")

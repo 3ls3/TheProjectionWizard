@@ -8,7 +8,7 @@ pipeline metadata structures.
 """
 
 from pydantic import BaseModel, Field
-from typing import Dict, Optional, Literal, List, Tuple
+from typing import Dict, Optional, Literal, List, Tuple, Any
 
 
 class UploadResponse(BaseModel):
@@ -21,33 +21,105 @@ class UploadResponse(BaseModel):
     )
 
 
+class ColumnStatistics(BaseModel):
+    """Statistics for a single column."""
+    unique_values: int
+    missing_values: int
+    missing_percentage: float
+    data_type: str
+    sample_values: List[str] = Field(
+        default_factory=list, description="Sample values for preview"
+    )
+
+
+class MLTypeOption(BaseModel):
+    """An ML type option with description."""
+    value: str
+    description: str
+
+
 class TargetSuggestionResponse(BaseModel):
-    """Response model for target column suggestion endpoint."""
+    """Enhanced response model for target column suggestion endpoint."""
     api_version: Literal["v1"] = "v1"
+    
+    # All available columns with their statistics
+    columns: Dict[str, ColumnStatistics]
+    
+    # AI suggestions
     suggested_column: str
-    task_type: Literal["classification", "regression"]
+    suggested_task_type: Literal["classification", "regression"]
+    suggested_ml_type: str
     confidence: Optional[float] = None
+    
+    # Available options for UI dropdowns
+    available_task_types: List[str] = Field(
+        default_factory=lambda: ["classification", "regression"]
+    )
+    available_ml_types: Dict[str, List[MLTypeOption]] = Field(
+        default_factory=dict, description="ML type options grouped by task type"
+    )
+    
+    # Data preview
+    data_preview: List[List[str]] = Field(
+        default_factory=list, description="Sample data rows"
+    )
 
 
 class TargetConfirmationRequest(BaseModel):
-    """Request model for target column confirmation endpoint."""
+    """Enhanced request model for target column confirmation endpoint."""
     run_id: str
     confirmed_column: str
     task_type: Literal["classification", "regression"]
+    ml_type: str = Field(..., description="The ML type for the target variable")
+
+
+class FeatureSchema(BaseModel):
+    """Schema information for a feature."""
+    initial_dtype: str
+    suggested_encoding_role: str
+    
+    # Enhanced information for UI
+    statistics: ColumnStatistics
+    is_key_feature: bool = False
 
 
 class FeatureSuggestionResponse(BaseModel):
-    """Response model for feature schema suggestions endpoint."""
+    """Enhanced response model for feature schema suggestions endpoint."""
     api_version: Literal["v1"] = "v1"
-    feature_schemas: Dict[str, Dict[str, str]] = Field(
-        ..., description="Column names mapped to schema suggestions"
+    
+    # All feature schemas with enhanced information
+    feature_schemas: Dict[str, FeatureSchema]
+    
+    # Key features identified (ordered by importance)
+    key_features: List[str] = Field(
+        default_factory=list, description="Key features ordered by importance"
+    )
+    
+    # Available options for UI dropdowns
+    available_dtypes: Dict[str, str] = Field(
+        default_factory=dict, description="Available data types with descriptions"
+    )
+    available_encoding_roles: Dict[str, str] = Field(
+        default_factory=dict, description="Available encoding roles with descriptions"
+    )
+    
+    # Target information for context
+    target_info: Dict[str, Any] = Field(
+        default_factory=dict, description="Target column information"
+    )
+    
+    # Data preview
+    data_preview: List[List[str]] = Field(
+        default_factory=list, description="Sample data rows"
     )
 
 
 class FeatureConfirmationRequest(BaseModel):
     """Request model for feature schema confirmation endpoint."""
     run_id: str
-    confirmed_schemas: Dict[str, Dict[str, str]]
+    confirmed_schemas: Dict[str, Dict[str, str]] = Field(
+        ..., description="User-confirmed schemas with 'final_dtype' and 'final_encoding_role'"
+    )
 
 
 class PipelineStatusResponse(BaseModel):
@@ -74,8 +146,11 @@ class FinalResultsResponse(BaseModel):
 
 __all__ = [
     "UploadResponse",
+    "ColumnStatistics",
+    "MLTypeOption",
     "TargetSuggestionResponse",
     "TargetConfirmationRequest",
+    "FeatureSchema",
     "FeatureSuggestionResponse",
     "FeatureConfirmationRequest",
     "PipelineStatusResponse",

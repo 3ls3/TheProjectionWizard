@@ -181,7 +181,7 @@ def run_explainability_stage_gcs(run_id: str,
             {
                 "target_column": target_info.name,
                 "task_type": target_info.task_type,
-                "model_name": automl_info.best_model_name,
+                "model_name": automl_info.get('best_model_name'),
                 "pipeline_gcs_path": automl_info.get('pycaret_pipeline_gcs_path', automl_info.get('pycaret_pipeline_path')),
                 "storage_type": "gcs"
             },
@@ -238,10 +238,10 @@ def run_explainability_stage_gcs(run_id: str,
                 "pipeline_loaded",
                 {
                     "pipeline_gcs_path": pipeline_gcs_path,
-                    "model_name": automl_info.best_model_name,
+                    "model_name": automl_info.get('best_model_name'),
                     "storage_type": "gcs"
                 },
-                f"PyCaret pipeline loaded from GCS: {automl_info.best_model_name}"
+                f"PyCaret pipeline loaded from GCS: {automl_info.get('best_model_name')}"
             )
             
         except Exception as e:

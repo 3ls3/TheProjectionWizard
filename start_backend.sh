@@ -1,11 +1,15 @@
 #!/bin/bash
 
-# Script to start the FastAPI backend server
+# Script to start the FastAPI backend server for The Projection Wizard
 # Make sure to activate the virtual environment first
 
-echo "Starting The Projection Wizard API backend..."
-echo "Server will be available at: http://localhost:8000"
+echo "🔮 Starting The Projection Wizard API backend..."
+echo "Server will be available at: http://localhost:8000" 
 echo "API docs will be available at: http://localhost:8000/docs"
+echo ""
+echo "✅ Fixed background pipeline logging issues"
+echo "✅ Using Application Default Credentials for GCS"
+echo "✅ CORS configured for frontend domain"
 echo ""
 echo "Press Ctrl+C to stop the server"
 echo ""
@@ -15,6 +19,10 @@ unset GOOGLE_APPLICATION_CREDENTIALS
 
 # Set CORS origins including current ngrok URL (update this when ngrok URL changes)
 export ALLOWED_ORIGINS="https://www.predictingwizard.com,https://lovable.dev,http://localhost:3001,https://cdba-2003-ec-df23-4700-dda-bd6a-6957-367.ngrok-free.app"
+
+echo "🔗 Current ngrok URL: https://cdba-2003-ec-df23-4700-dda-bd6a-6957-367.ngrok-free.app"
+echo "📝 Update VITE_API_URL in your frontend to use the ngrok URL above"
+echo ""
 
 # Activate virtual environment and start the server
 source .venv/bin/activate

@@ -36,7 +36,14 @@ def _update_orchestrator_status_gcs(run_id: str,
         # Download current status.json
         status_bytes = download_run_file(run_id, "status.json")
         if not status_bytes:
-            logger.error(f"Could not download status.json for orchestrator update: {run_id}")
+            # Get a logger instance for error logging
+            error_logger = logger.get_structured_logger(run_id, "orchestrator_status_update")
+            logger.log_structured_error(
+                error_logger,
+                "status_download_failed",
+                f"Could not download status.json for orchestrator update: {run_id}",
+                {"run_id": run_id, "function": "_update_orchestrator_status_gcs"}
+            )
             return False
         
         # Parse current status
@@ -75,11 +82,20 @@ def _update_orchestrator_status_gcs(run_id: str,
         
         success = upload_run_file(run_id, "status.json", status_io)
         if success:
-            logger.info(f"Updated orchestrator status to '{orchestrator_status}' for run {run_id}")
+            # Get a logger instance for info logging
+            info_logger = logger.get_structured_logger(run_id, "orchestrator_status_update")
+            info_logger.info(f"Updated orchestrator status to '{orchestrator_status}' for run {run_id}")
         return success
         
     except Exception as e:
-        logger.error(f"Failed to update orchestrator status for run {run_id}: {str(e)}")
+        # Get a logger instance for error logging
+        error_logger = logger.get_structured_logger(run_id, "orchestrator_status_update")
+        logger.log_structured_error(
+            error_logger,
+            "status_update_failed",
+            f"Failed to update orchestrator status for run {run_id}: {str(e)}",
+            {"run_id": run_id, "error": str(e), "error_type": type(e).__name__}
+        )
         return False
 
 

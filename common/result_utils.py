@@ -130,7 +130,7 @@ def build_results_gcs(run_id: str,
     # Extract explainability info
     explain_info = metadata.get('explain_info', {})
     explainability = {
-        "available": bool(explain_info),
+        "available": "true" if explain_info else "false",
         "method": explain_info.get('tool_used', 'None'),
         "plot_filename": None
     }

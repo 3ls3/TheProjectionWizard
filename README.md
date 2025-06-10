@@ -144,53 +144,72 @@ The API will be available at:
 
 ### Docker Deployment
 
-The project includes Docker support for containerized deployment to Google Cloud Run.
+The project supports containerized deployment with both FastAPI backend and React frontend using Docker Compose.
 
-#### Local Docker Testing
+#### Architecture
+- **Backend**: FastAPI server serving REST API endpoints (port 8000)
+- **Frontend**: React/Vite application for modern UI (port 3000)
+- **Communication**: Frontend communicates with backend via HTTP API calls
+
+#### Quick Start
 ```bash
-# Build and run locally
-make run-docker
-# Opens at http://localhost:8501
+# Build and start both services
+docker-compose up --build
+
+# Or run in detached mode
+docker-compose up -d --build
 ```
 
-#### Cloud Deployment
-1. **Setup GCP Project** (one-time):
-```bash
-# Initialize GCP project and enable APIs
-make gcp-init
-```
+**Access the application:**
+- **Frontend**: http://localhost:3000 (Main UI)
+- **Backend API**: http://localhost:8000 (FastAPI docs at /docs)
 
-2. **Configure Docker authentication** (one-time):
+#### Development Workflow
 ```bash
-gcloud auth configure-docker ${REGION}-docker.pkg.dev
-```
+# Start services
+docker-compose up
 
-3. **Push image to Artifact Registry**:
-```bash
-# Push with default tag (wizard:latest)
-make push-image
+# View logs
+docker-compose logs -f backend
+docker-compose logs -f frontend
 
-# Push with custom tag
-IMAGE_TAG=wizard:v1.2.3 make push-image
-```
+# Stop services
+docker-compose down
 
-4. **Deploy to Cloud Run**:
-```bash
-# Deploy the pushed image to Cloud Run
-make deploy
+# Rebuild after code changes
+docker-compose up --build
 ```
-This will deploy your application as a public web service with:
-- 1 CPU, 2Gi memory
-- 15 minute timeout
-- Max 2 instances 
-- Public access (no authentication required)
 
 #### Environment Configuration
-Copy `.env.example` to `.env` and set your GCP project details:
+Configuration is handled via `.env` file:
 ```bash
-PROJECT_ID=your-gcp-project-id
-REGION=europe-west1
-IMAGE_TAG=wizard:latest  # Optional, defaults to wizard:latest
+# API Settings
+VITE_API_URL=http://localhost:8000
+BACKEND_PORT=8000
+FRONTEND_PORT=3000
+
+# Development settings
+NODE_ENV=development
+PYTHONUNBUFFERED=1
+```
+
+#### Service Architecture
+- **backend**: FastAPI service with data volume mounting for persistent runs
+- **frontend**: React application with Vite dev server
+- **Networks**: Isolated Docker network for service communication
+- **Health checks**: Backend health monitoring with automatic frontend dependency
+
+#### Data Persistence
+Upload data and pipeline runs are persisted via Docker volume:
+```bash
+# Data is mounted from host ./data to container /app/data
+# Pipeline runs stored in ./data/runs/{run_id}/
+```
+
+#### Cloud Deployment (Optional)
+For cloud deployment, update `.env` with your cloud endpoints:
+```bash
+VITE_API_URL=https://your-api-domain.com
 ```
 
 ### Running the CLI Pipeline (Headless)

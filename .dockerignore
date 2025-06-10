@@ -1,6 +1,9 @@
 # Python artefacts
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.Python
 
 # Editor / OS
 .vscode/
@@ -11,11 +14,42 @@ __pycache__/
 .venv/
 env/
 venv/
+ENV/
+env.bak/
+venv.bak/
 
 # Test artefacts & large local data
-data/
-tests/reports/
+data/runs/*
+!data/runs/.gitkeep
+api/data/runs/*
+!api/data/runs/.gitkeep
+
+# Logs
+*.log
+logs/
 
 # Git
 .git/
-.gitignore 
+.gitignore
+
+# Docker
+.dockerignore
+Dockerfile
+docker-compose.yml
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Tests (comment out if you want to include tests in container)
+tests/
+
+# Node modules (will be in frontend container)
+node_modules/
+frontend/node_modules/
+
+# Environment files
+.env
+.env.local
+.env.production 

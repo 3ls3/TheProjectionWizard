@@ -146,6 +146,7 @@ data/runs/
 data/test_runs/
 !data/runs/.gitkeep
 !data/fixtures/
+api/data/runs/
 
 # IDE specific
 .vscode/

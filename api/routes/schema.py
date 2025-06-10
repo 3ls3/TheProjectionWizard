@@ -1,200 +1,275 @@
 """
-Schema-related API routes for The Projection Wizard.
-Provides endpoints for feature suggestions and schema operations.
+API-facing Pydantic models for The Projection Wizard.
+Defines clean request/response schemas for FastAPI endpoints.
+
+These models are the single source of truth for the API contract between
+frontend and backend. They are intentionally thin and do not leak internal
+pipeline metadata structures.
 """
 
-from fastapi import APIRouter, HTTPException, Query
-from typing import Dict, List, Any
-import sys
-from pathlib import Path
-
-# Add project root to path
-sys.path.append(str(Path(__file__).parent.parent.parent))
-
-# Import from pipeline modules
-from pipeline.step_2_schema.feature_definition_logic import (
-    identify_key_features, 
-    suggest_initial_feature_schemas
-)
-from api.utils.io_helpers import (
-    load_original_data_csv, 
-    load_metadata_json, 
-    validate_run_exists, 
-    validate_required_files,
-    DataLoadError
-)
-
-router = APIRouter()
+from pydantic import BaseModel, Field
+from typing import Dict, Optional, Literal, List, Tuple, Any
 
 
-@router.get("/feature_suggestions")
-async def get_feature_suggestions(
-    run_id: str = Query(..., description="The ID of the run to analyze"),
-    num_features: int = Query(7, description="Number of key features to identify", ge=1, le=50)
-):
-    """
-    Get feature suggestions for a given run.
-    
-    Returns key features identified through importance analysis and initial
-    dtype/encoding role suggestions for all columns.
-    
-    Args:
-        run_id: The ID of the run to analyze
-        num_features: Number of top features to identify (default: 7)
-        
-    Returns:
-        JSON response containing:
-        - key_features: List of identified important feature names
-        - initial_suggestions: Dict mapping column names to schema suggestions
-        - metadata: Additional information about the analysis
-    """
-    
-    # Validate run exists
-    if not validate_run_exists(run_id):
-        raise HTTPException(
-            status_code=404, 
-            detail=f"Run '{run_id}' not found"
-        )
-    
-    # Check required files exist
-    file_status = validate_required_files(run_id)
-    missing_files = [file for file, exists in file_status.items() if not exists]
-    
-    if missing_files:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Missing required files for run '{run_id}': {', '.join(missing_files)}"
-        )
-    
-    try:
-        # Load data files
-        df = load_original_data_csv(run_id)
-        metadata = load_metadata_json(run_id)
-        
-        if df is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Could not load original_data.csv for run '{run_id}'"
-            )
-            
-        if metadata is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Could not load metadata.json for run '{run_id}'"
-            )
-        
-        # Extract target information from metadata
-        target_info = metadata.get('target_info')
-        if not target_info:
-            raise HTTPException(
-                status_code=400,
-                detail=f"No target column information found in metadata for run '{run_id}'"
-            )
-        
-        # Identify key features
-        key_features = identify_key_features(
-            df_original=df,
-            target_info=target_info,
-            num_features_to_surface=num_features
-        )
-        
-        # Get initial schema suggestions for all columns
-        initial_suggestions = suggest_initial_feature_schemas(df)
-        
-        # Prepare response
-        response = {
-            "key_features": key_features,
-            "initial_suggestions": initial_suggestions,
-            "metadata": {
-                "run_id": run_id,
-                "total_columns": len(df.columns),
-                "total_rows": len(df),
-                "target_column": target_info.get('name'),
-                "task_type": target_info.get('task_type'),
-                "num_key_features_requested": num_features,
-                "num_key_features_identified": len(key_features)
-            }
-        }
-        
-        return response
-        
-    except DataLoadError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to analyze features for run '{run_id}': {str(e)}"
-        )
+class UploadResponse(BaseModel):
+    """Response model for file upload endpoint."""
+    api_version: Literal["v1"] = "v1"
+    run_id: str
+    shape: Tuple[int, int]
+    preview: List[List[str]] = Field(
+        ..., description="First 5 rows as raw strings"
+    )
 
 
-@router.get("/runs/{run_id}/info")
-async def get_run_info(run_id: str):
-    """
-    Get basic information about a run.
-    
-    Args:
-        run_id: The ID of the run
-        
-    Returns:
-        JSON response with run information and file availability
-    """
-    
-    # Check if run exists
-    if not validate_run_exists(run_id):
-        raise HTTPException(
-            status_code=404,
-            detail=f"Run '{run_id}' not found"
-        )
-    
-    # Get file status
-    file_status = validate_required_files(run_id)
-    
-    response = {
-        "run_id": run_id,
-        "files": file_status,
-        "ready_for_analysis": all(file_status.values())
-    }
-    
-    # If metadata is available, include some basic info
-    if file_status.get("metadata_json"):
-        try:
-            metadata = load_metadata_json(run_id)
-            if metadata:
-                response["target_info"] = metadata.get('target_info')
-                response["upload_timestamp"] = metadata.get('timestamp')
-        except:
-            pass  # Don't fail if metadata can't be loaded
-    
-    return response
+class ColumnStatistics(BaseModel):
+    """Statistics for a single column."""
+    unique_values: int
+    missing_values: int
+    missing_percentage: float
+    data_type: str
+    sample_values: List[str] = Field(
+        default_factory=list, description="Sample values for preview"
+    )
 
 
-@router.get("/runs")
-async def list_runs():
-    """
-    List all available runs.
+class MLTypeOption(BaseModel):
+    """An ML type option with description."""
+    value: str
+    description: str
+
+
+class TargetSuggestionResponse(BaseModel):
+    """Enhanced response model for target column suggestion endpoint."""
+    api_version: Literal["v1"] = "v1"
     
-    Returns:
-        JSON response with list of available run IDs
-    """
+    # All available columns with their statistics
+    columns: Dict[str, ColumnStatistics]
     
-    try:
-        project_root = Path(__file__).parent.parent.parent
-        runs_dir = project_root / "data" / "runs"
-        
-        if not runs_dir.exists():
-            return {"runs": []}
-        
-        # Get all subdirectories in runs directory
-        run_ids = [d.name for d in runs_dir.iterdir() if d.is_dir()]
-        run_ids.sort()  # Sort alphabetically
-        
-        return {
-            "runs": run_ids,
-            "total_runs": len(run_ids)
-        }
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to list runs: {str(e)}"
-        ) 
+    # AI suggestions
+    suggested_column: str
+    suggested_task_type: Literal["classification", "regression"]
+    suggested_ml_type: str
+    confidence: Optional[float] = None
+    
+    # Available options for UI dropdowns
+    available_task_types: List[str] = Field(
+        default_factory=lambda: ["classification", "regression"]
+    )
+    available_ml_types: Dict[str, List[MLTypeOption]] = Field(
+        default_factory=dict, description="ML type options grouped by task type"
+    )
+    
+    # Data preview
+    data_preview: List[List[str]] = Field(
+        default_factory=list, description="Sample data rows"
+    )
+
+
+class TargetConfirmationRequest(BaseModel):
+    """Enhanced request model for target column confirmation endpoint."""
+    run_id: str
+    confirmed_column: str
+    task_type: Literal["classification", "regression"]
+    ml_type: str = Field(..., description="The ML type for the target variable")
+
+
+class TargetConfirmationResponse(BaseModel):
+    """Response model for target confirmation endpoint."""
+    api_version: Literal["v1"] = "v1"
+    status: Literal["success"] = "success"
+    message: str = "Target configuration saved successfully"
+    target_info: Dict[str, Any] = Field(
+        default_factory=dict, description="Confirmed target information"
+    )
+
+
+class FeatureSchema(BaseModel):
+    """Schema information for a feature."""
+    initial_dtype: str
+    suggested_encoding_role: str
+    
+    # Enhanced information for UI
+    statistics: ColumnStatistics
+    is_key_feature: bool = False
+
+
+class FeatureSuggestionResponse(BaseModel):
+    """Enhanced response model for feature schema suggestions endpoint."""
+    api_version: Literal["v1"] = "v1"
+    
+    # All feature schemas with enhanced information
+    feature_schemas: Dict[str, FeatureSchema]
+    
+    # Key features identified (ordered by importance)
+    key_features: List[str] = Field(
+        default_factory=list, description="Key features ordered by importance"
+    )
+    
+    # Available options for UI dropdowns
+    available_dtypes: Dict[str, str] = Field(
+        default_factory=dict, description="Available data types with descriptions"
+    )
+    available_encoding_roles: Dict[str, str] = Field(
+        default_factory=dict, description="Available encoding roles with descriptions"
+    )
+    
+    # Target information for context
+    target_info: Dict[str, Any] = Field(
+        default_factory=dict, description="Target column information"
+    )
+    
+    # Data preview
+    data_preview: List[List[str]] = Field(
+        default_factory=list, description="Sample data rows"
+    )
+
+
+class FeatureConfirmationRequest(BaseModel):
+    """Enhanced request model for feature schema confirmation endpoint."""
+    run_id: str
+    confirmed_schemas: Dict[str, Dict[str, str]] = Field(
+        ..., description="User-confirmed schemas with 'final_dtype' and 'final_encoding_role'"
+    )
+    
+    # Optional metadata for better tracking
+    total_features_reviewed: Optional[int] = Field(
+        None, description="Total number of features the user reviewed"
+    )
+    key_features_modified: Optional[List[str]] = Field(
+        None, description="List of key features that were modified by the user"
+    )
+
+
+class FeatureConfirmationResponse(BaseModel):
+    """Response model for feature confirmation endpoint."""
+    api_version: Literal["v1"] = "v1"
+    status: Literal["pipeline_started"] = "pipeline_started"
+    message: str = "Feature schemas confirmed and pipeline started"
+    
+    # Summary of what was confirmed
+    summary: Dict[str, Any] = Field(
+        default_factory=dict, description="Summary of confirmed features and next steps"
+    )
+
+
+class PipelineStatusResponse(BaseModel):
+    """Response model for pipeline status endpoint."""
+    api_version: Literal["v1"] = "v1"
+    stage: str = Field(
+        ..., description="Current pipeline stage (e.g. 'prep', 'automl', 'completed')"
+    )
+    status: Literal["pending", "running", "completed", "failed"]
+    message: Optional[str] = None
+    progress_pct: Optional[int] = Field(
+        None, description="Coarse progress percentage (0-100)"
+    )
+
+
+class RunSummary(BaseModel):
+    """Summary information about the pipeline run."""
+    run_id: str
+    timestamp: Optional[str] = None
+    original_filename: Optional[str] = None
+    initial_shape: Optional[Tuple[int, int]] = None
+    target_info: Optional[Dict[str, Any]] = None
+
+
+class PipelineStatusInfo(BaseModel):
+    """Detailed pipeline status information."""
+    stage: str
+    status: Literal["pending", "running", "completed", "failed"]
+    message: Optional[str] = None
+    errors: Optional[List[str]] = None
+
+
+class ValidationSummaryInfo(BaseModel):
+    """Validation summary information."""
+    overall_success: bool
+    total_expectations: int
+    successful_expectations: int
+    failed_expectations: int
+
+
+class DataPrepSummary(BaseModel):
+    """Data preparation summary information."""
+    final_shape: Optional[Tuple[int, int]] = None
+    cleaning_steps: List[str] = Field(default_factory=list)
+    profiling_report_available: bool = False
+    profiling_report_filename: Optional[str] = None
+
+
+class AutoMLSummary(BaseModel):
+    """AutoML model summary information."""
+    tool_used: Optional[str] = None
+    best_model_name: Optional[str] = None
+    target_column: Optional[str] = None
+    task_type: Optional[str] = None
+    performance_metrics: Dict[str, float] = Field(default_factory=dict)
+    model_file_available: bool = False
+
+
+class ExplainabilitySummary(BaseModel):
+    """Model explainability summary information."""
+    tool_used: Optional[str] = None
+    features_explained: Optional[int] = None
+    samples_used: Optional[int] = None
+    shap_plot_available: bool = False
+    shap_plot_filename: Optional[str] = None
+
+
+class AvailableDownloads(BaseModel):
+    """Information about available downloadable files."""
+    original_data: bool = False
+    cleaned_data: bool = False
+    metadata_json: bool = False
+    validation_report: bool = False
+    profile_report: bool = False
+    model_artifacts: bool = False
+    shap_plot: bool = False
+    pipeline_log: bool = False
+    
+    # File size information (in KB)
+    file_sizes: Dict[str, float] = Field(default_factory=dict)
+
+
+class FinalResultsResponse(BaseModel):
+    """Comprehensive response model for final pipeline results endpoint."""
+    api_version: Literal["v1"] = "v1"
+    
+    # Core results (original structure maintained for backwards compatibility)
+    model_metrics: Dict[str, float]
+    top_features: List[str]
+    explainability: Dict[str, str]
+    download_url: Optional[str] = None
+    
+    # Enhanced detailed information
+    run_summary: RunSummary
+    pipeline_status: PipelineStatusInfo
+    validation_summary: Optional[ValidationSummaryInfo] = None
+    data_prep_summary: Optional[DataPrepSummary] = None
+    automl_summary: Optional[AutoMLSummary] = None
+    explainability_summary: Optional[ExplainabilitySummary] = None
+    available_downloads: AvailableDownloads
+
+
+__all__ = [
+    "UploadResponse",
+    "ColumnStatistics",
+    "MLTypeOption",
+    "TargetSuggestionResponse",
+    "TargetConfirmationRequest",
+    "TargetConfirmationResponse",
+    "FeatureSchema",
+    "FeatureSuggestionResponse",
+    "FeatureConfirmationRequest",
+    "FeatureConfirmationResponse",
+    "PipelineStatusResponse",
+    "RunSummary",
+    "PipelineStatusInfo",
+    "ValidationSummaryInfo",
+    "DataPrepSummary",
+    "AutoMLSummary",
+    "ExplainabilitySummary",
+    "AvailableDownloads",
+    "FinalResultsResponse",
+]

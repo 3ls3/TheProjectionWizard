@@ -45,6 +45,7 @@ shap>=0.42.0
 streamlit>=1.28.0
 fastapi>=0.104.0
 uvicorn>=0.24.0
+python-multipart>=0.0.6  # Required for FastAPI file uploads
 
 # Data Validation and Schema
 pydantic>=2.4.0

@@ -1,6 +1,7 @@
 """
 Great Expectations logic for The Projection Wizard.
 Contains functions to generate expectation suites and run validation.
+Refactored for GCS-based storage.
 """
 
 import pandas as pd
@@ -9,14 +10,19 @@ from great_expectations.expectations.expectation_configuration import Expectatio
 from typing import Dict, List, Optional, Any
 import warnings
 import logging
+import json
+import io
 
 # Import project modules
-import sys
-from pathlib import Path
-sys.path.append(str(Path(__file__).parent.parent))
-
-from common import logger, constants
+from common import constants
 from common.schemas import FeatureSchemaInfo, TargetInfo
+from api.utils.gcs_utils import (
+    download_run_file, upload_run_file, check_run_file_exists,
+    PROJECT_BUCKET_NAME
+)
+
+# Configure logging for this module
+logger = logging.getLogger(__name__)
 
 
 def _map_dtype_to_ge_type(dtype_str: str) -> str:
@@ -162,6 +168,71 @@ def _get_target_value_expectations(target_info: TargetInfo, column_name: str) ->
     return expectations
 
 
+def generate_ge_suite_from_metadata_gcs(
+    run_id: str,
+    gcs_bucket_name: str = PROJECT_BUCKET_NAME
+) -> Optional[dict]:
+    """
+    Generate a Great Expectations suite based on user-confirmed schema metadata from GCS.
+    
+    Args:
+        run_id: The run ID
+        gcs_bucket_name: GCS bucket name
+        
+    Returns:
+        Dictionary representing a Great Expectations expectation suite, or None if error
+    """
+    try:
+        logger.info(f"Generating GE suite from GCS metadata for run {run_id}")
+        
+        # Download metadata.json from GCS
+        metadata_bytes = download_run_file(run_id, constants.METADATA_FILENAME)
+        if metadata_bytes is None:
+            logger.error(f"Could not download metadata.json for run {run_id}")
+            return None
+        
+        metadata_dict = json.loads(metadata_bytes.decode('utf-8'))
+        
+        # Extract feature_schemas and target_info
+        feature_schemas_dict = metadata_dict.get('feature_schemas', {})
+        target_info_dict = metadata_dict.get('target_info')
+        
+        if not feature_schemas_dict:
+            logger.error("Feature schemas not found in metadata")
+            return None
+        
+        # Convert dictionaries to schema objects
+        feature_schemas = {}
+        for col_name, schema_dict in feature_schemas_dict.items():
+            feature_schemas[col_name] = FeatureSchemaInfo(**schema_dict)
+        
+        target_info = None
+        if target_info_dict:
+            target_info = TargetInfo(**target_info_dict)
+        
+        # Download original_data.csv to get column list
+        csv_bytes = download_run_file(run_id, constants.ORIGINAL_DATA_FILENAME)
+        if csv_bytes is None:
+            logger.error(f"Could not download original_data.csv for run {run_id}")
+            return None
+        
+        # Read CSV to get column names
+        df = pd.read_csv(io.BytesIO(csv_bytes))
+        df_columns = list(df.columns)
+        
+        # Generate the suite
+        return generate_ge_suite_from_metadata(
+            feature_schemas, 
+            target_info, 
+            df_columns,
+            run_id
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to generate GE suite from GCS metadata: {str(e)}")
+        return None
+
+
 def generate_ge_suite_from_metadata(
     feature_schemas: Dict[str, FeatureSchemaInfo], 
     target_info: Optional[TargetInfo], 
@@ -180,9 +251,6 @@ def generate_ge_suite_from_metadata(
     Returns:
         Dictionary representing a Great Expectations expectation suite
     """
-    # Initialize logger for this function
-    run_logger = logger.get_stage_logger(run_id, constants.VALIDATION_STAGE)
-    
     expectations = []
     
     # Table-level expectations
@@ -226,7 +294,7 @@ def generate_ge_suite_from_metadata(
             schema_encoding_role = schema_info.encoding_role
         else:
             # Column not found in feature schemas - log warning and skip type-specific expectations
-            run_logger.warning(f"Column '{col_name}' not found in feature_schemas. Skipping type-specific expectations.")
+            logger.warning(f"Column '{col_name}' not found in feature_schemas. Skipping type-specific expectations.")
             continue
         
         # Map dtype to GE type
@@ -307,7 +375,7 @@ def generate_ge_suite_from_metadata(
         }
     }
     
-    run_logger.info(f"Generated GE suite with {len(expectations)} expectations for {len(df_columns)} columns")
+    logger.info(f"Generated GE suite with {len(expectations)} expectations for {len(df_columns)} columns")
     
     return ge_suite
 
@@ -324,9 +392,6 @@ def run_ge_validation_on_dataframe(df: pd.DataFrame, ge_suite: dict, run_id: str
     Returns:
         Dictionary representing the Great Expectations validation results
     """
-    # Initialize logger for this function
-    run_logger = logger.get_stage_logger(run_id, constants.VALIDATION_STAGE)
-    
     try:
         # Suppress Great Expectations warnings for cleaner output
         with warnings.catch_warnings():
@@ -334,10 +399,10 @@ def run_ge_validation_on_dataframe(df: pd.DataFrame, ge_suite: dict, run_id: str
             
             # Create a Great Expectations dataset from the pandas DataFrame
             # Using the from_pandas method which creates a PandasDataset with the suite attached
-            run_logger.info(f"Creating GE dataset from DataFrame with shape {df.shape}")
+            logger.info(f"Creating GE dataset from DataFrame with shape {df.shape}")
             
             # Use the most compatible approach - direct validation on dataframe
-            run_logger.info("Running Great Expectations validation...")
+            logger.info("Running Great Expectations validation...")
             
             # Create a simple context if needed
             try:
@@ -417,7 +482,7 @@ def run_ge_validation_on_dataframe(df: pd.DataFrame, ge_suite: dict, run_id: str
                         result["success"] = True
                         
                 except Exception as e:
-                    run_logger.warning(f"Error validating {expectation_type}: {str(e)}")
+                    logger.warning(f"Error validating {expectation_type}: {str(e)}")
                     result["success"] = False
                 
                 # Update statistics - ensure boolean values
@@ -438,8 +503,6 @@ def run_ge_validation_on_dataframe(df: pd.DataFrame, ge_suite: dict, run_id: str
             if total > 0:
                 validation_results["statistics"]["success_percent"] = (successful / total) * 100.0
             
-
-            
             # Results are already in dictionary format
             results_dict = validation_results
             
@@ -448,7 +511,7 @@ def run_ge_validation_on_dataframe(df: pd.DataFrame, ge_suite: dict, run_id: str
             total_count = results_dict.get("statistics", {}).get("evaluated_expectations", 0)
             success_percentage = (success_count / total_count * 100) if total_count > 0 else 0
             
-            run_logger.info(f"Validation completed: {success_count}/{total_count} expectations passed ({success_percentage:.1f}%)")
+            logger.info(f"Validation completed: {success_count}/{total_count} expectations passed ({success_percentage:.1f}%)")
             
             # Add metadata to results
             results_dict["meta"] = {
@@ -462,7 +525,7 @@ def run_ge_validation_on_dataframe(df: pd.DataFrame, ge_suite: dict, run_id: str
             
     except Exception as e:
         error_msg = f"Failed to run GE validation: {str(e)}"
-        run_logger.error(error_msg)
+        logger.error(error_msg)
         
         # Return error result in GE format
         return {
@@ -479,4 +542,45 @@ def run_ge_validation_on_dataframe(df: pd.DataFrame, ge_suite: dict, run_id: str
                 "validation_timestamp": pd.Timestamp.now().isoformat(),
                 "error": error_msg
             }
-        } 
+        }
+
+
+def run_ge_validation_from_gcs(
+    run_id: str,
+    gcs_bucket_name: str = PROJECT_BUCKET_NAME
+) -> Optional[dict]:
+    """
+    Run Great Expectations validation on data from GCS.
+    
+    Args:
+        run_id: The run ID
+        gcs_bucket_name: GCS bucket name
+        
+    Returns:
+        Dictionary representing the Great Expectations validation results, or None if error
+    """
+    try:
+        logger.info(f"Running GE validation from GCS for run {run_id}")
+        
+        # Generate GE suite from GCS metadata
+        ge_suite = generate_ge_suite_from_metadata_gcs(run_id, gcs_bucket_name)
+        if ge_suite is None:
+            logger.error("Failed to generate GE suite from GCS metadata")
+            return None
+        
+        # Download original_data.csv from GCS
+        csv_bytes = download_run_file(run_id, constants.ORIGINAL_DATA_FILENAME)
+        if csv_bytes is None:
+            logger.error(f"Could not download original_data.csv for run {run_id}")
+            return None
+        
+        # Load DataFrame from bytes
+        df = pd.read_csv(io.BytesIO(csv_bytes))
+        logger.info(f"Loaded DataFrame with shape {df.shape}")
+        
+        # Run validation
+        return run_ge_validation_on_dataframe(df, ge_suite, run_id)
+        
+    except Exception as e:
+        logger.error(f"Failed to run GE validation from GCS: {str(e)}")
+        return None 

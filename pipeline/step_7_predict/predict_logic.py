@@ -1,6 +1,7 @@
 """
 Prediction logic for The Projection Wizard.
 Handles loading trained models and generating predictions with proper feature alignment.
+Refactored for GCS-based storage.
 """
 
 import pandas as pd
@@ -8,14 +9,68 @@ import joblib
 from pathlib import Path
 from typing import Any, Optional, Union
 import numpy as np
+import tempfile
 
 from common import logger, constants
+from api.utils.gcs_utils import download_run_file, PROJECT_BUCKET_NAME
+
+
+def load_pipeline_gcs(run_id: str, gcs_bucket_name: str = PROJECT_BUCKET_NAME) -> Optional[Any]:
+    """
+    Load the saved PyCaret/scikit-learn pipeline from GCS.
+
+    Args:
+        run_id: Unique run identifier
+        gcs_bucket_name: GCS bucket name for storage
+
+    Returns:
+        Loaded pipeline object, or None if loading fails
+
+    Raises:
+        FileNotFoundError: If the pipeline file doesn't exist in GCS
+        Exception: If loading fails for other reasons
+    """
+    log = logger.get_logger(run_id, "predict_logic")
+    
+    try:
+        # Construct GCS path to the pipeline file
+        pipeline_gcs_path = f"{constants.MODEL_DIR}/pycaret_pipeline.pkl"
+        
+        log.info(f"Loading pipeline from GCS: {pipeline_gcs_path}")
+        
+        # Download pipeline from GCS
+        pipeline_bytes = download_run_file(run_id, pipeline_gcs_path)
+        if pipeline_bytes is None:
+            raise FileNotFoundError(f"Pipeline file not found in GCS: {pipeline_gcs_path}")
+
+        # Load pipeline from bytes using temporary file
+        with tempfile.NamedTemporaryFile(suffix='.pkl', delete=False) as tmp_file:
+            tmp_file.write(pipeline_bytes)
+            tmp_file.flush()
+            pipeline = joblib.load(tmp_file.name)
+        
+        # Clean up temporary file
+        try:
+            Path(tmp_file.name).unlink()
+        except Exception as cleanup_error:
+            log.warning(f"Could not clean up temporary file {tmp_file.name}: {cleanup_error}")
+
+        # Basic validation that it's a model-like object
+        if not hasattr(pipeline, 'predict'):
+            raise ValueError("Loaded object does not have a 'predict' method")
+
+        log.info("Pipeline loaded successfully from GCS")
+        return pipeline
+
+    except Exception as e:
+        log.error(f"Failed to load pipeline from GCS {pipeline_gcs_path}: {str(e)}")
+        raise Exception(f"Failed to load pipeline from GCS {pipeline_gcs_path}: {str(e)}")
 
 
 def load_pipeline(run_dir: Union[str, Path]) -> Optional[Any]:
     """
-    Load the saved PyCaret/scikit-learn pipeline from the model directory.
-
+    Legacy compatibility function - warns about local filesystem usage.
+    
     Args:
         run_dir: Path to the run directory (can be string or Path object)
 
@@ -32,6 +87,10 @@ def load_pipeline(run_dir: Union[str, Path]) -> Optional[Any]:
 
     # Construct path to the pipeline file
     pipeline_path = run_dir / constants.MODEL_DIR / "pycaret_pipeline.pkl"
+
+    log = logger.get_logger("legacy", "predict_logic")
+    log.warning("Using legacy load_pipeline function for local filesystem")
+    log.warning("Consider using load_pipeline_gcs for GCS storage")
 
     try:
         # Check if file exists

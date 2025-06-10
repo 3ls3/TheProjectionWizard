@@ -1,39 +1,48 @@
 """
 Prediction Runner for The Projection Wizard.
 Orchestrates prediction operations including model loading, data processing, and result generation.
+Refactored for GCS-based storage.
 """
 
 import pandas as pd
 from pathlib import Path
 from typing import Optional, Union, Dict, Any
 from datetime import datetime
+import tempfile
+import io
 
 from common import logger, storage, constants, schemas
+from api.utils.gcs_utils import (
+    download_run_file, upload_run_file, check_run_file_exists, 
+    PROJECT_BUCKET_NAME
+)
 from . import predict_logic, plot_utils
 
 
-def run_prediction_stage(
+def run_prediction_stage_gcs(
     run_id: str,
     input_data: Union[pd.DataFrame, str, Path],
     output_dir: Optional[Union[str, Path]] = None,
-    generate_plots: bool = True
+    generate_plots: bool = True,
+    gcs_bucket_name: str = PROJECT_BUCKET_NAME
 ) -> bool:
     """
-    Execute the complete prediction stage for a given run with input data.
+    Execute the complete prediction stage for a given run with input data using GCS storage.
 
     This function orchestrates:
-    1. Loading the trained model and metadata
+    1. Loading the trained model and metadata from GCS
     2. Processing input data and generating predictions
-    3. Creating visualizations (if enabled)
-    4. Saving results to files
+    3. Creating visualizations (if enabled) and saving to GCS
+    4. Saving results to GCS
 
     Args:
         run_id: Unique run identifier
         input_data: Input data for predictions - can be:
             - pd.DataFrame: Direct DataFrame input
             - str/Path: Path to CSV file to load
-        output_dir: Directory to save results (defaults to run directory)
+        output_dir: Directory to save results (ignored in GCS version, uses GCS paths)
         generate_plots: Whether to generate visualization plots
+        gcs_bucket_name: GCS bucket name for storage
 
     Returns:
         True if prediction completes successfully, False otherwise
@@ -42,25 +51,24 @@ def run_prediction_stage(
     log = logger.get_stage_logger(run_id, "PREDICT")
 
     try:
-        log.info(f"Starting prediction stage for run {run_id}")
+        log.info(f"Starting prediction stage for run {run_id} (GCS-based)")
 
         # =============================
-        # 1. LOAD METADATA AND MODEL
+        # 1. LOAD METADATA AND MODEL FROM GCS
         # =============================
-        log.info("Loading metadata and trained model...")
+        log.info("Loading metadata and trained model from GCS...")
 
         # Load metadata
         metadata = storage.read_json(run_id, constants.METADATA_FILENAME)
         if not metadata:
-            raise Exception("Could not load metadata")
+            raise Exception("Could not load metadata from GCS")
 
         target_info = schemas.TargetInfo(**metadata['target_info'])
         log.info(f"Target: {target_info.name}, Task: {target_info.task_type}")
 
-        # Load trained model
-        run_dir = storage.get_run_dir(run_id)
-        model = predict_logic.load_pipeline(run_dir)
-        log.info("Model loaded successfully")
+        # Load trained model from GCS
+        model = predict_logic.load_pipeline_gcs(run_id, gcs_bucket_name)
+        log.info("Model loaded successfully from GCS")
 
         # =============================
         # 2. LOAD AND VALIDATE INPUT DATA
@@ -98,31 +106,36 @@ def run_prediction_stage(
         log.info(f"Prediction summary: {summary}")
 
         # =============================
-        # 4. SAVE RESULTS
+        # 4. SAVE RESULTS TO GCS
         # =============================
-        log.info("Saving prediction results...")
+        log.info("Saving prediction results to GCS...")
 
-        # Determine output directory
-        if output_dir is None:
-            output_dir = run_dir / "predictions"
-        else:
-            output_dir = Path(output_dir)
-
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        # Save results CSV
+        # Generate timestamp for file naming
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        results_file = output_dir / f"predictions_{timestamp}.csv"
-        result_df.to_csv(results_file, index=False)
-        log.info(f"Results saved to: {results_file}")
+        
+        # Save results CSV to GCS
+        results_filename = f"predictions/predictions_{timestamp}.csv"
+        results_csv_bytes = io.BytesIO()
+        result_df.to_csv(results_csv_bytes, index=False)
+        upload_success = upload_run_file(run_id, results_filename, results_csv_bytes)
+        
+        if upload_success:
+            log.info(f"Results saved to GCS: {results_filename}")
+        else:
+            raise Exception("Failed to upload results to GCS")
 
-        # Save summary JSON
-        summary_file = output_dir / f"prediction_summary_{timestamp}.json"
-        storage.write_json_atomic(str(summary_file.parent), summary_file.name, summary)
-        log.info(f"Summary saved to: {summary_file}")
+        # Save summary JSON to GCS
+        summary_filename = f"predictions/prediction_summary_{timestamp}.json"
+        summary_json_bytes = io.BytesIO(str(summary).encode())
+        upload_success = upload_run_file(run_id, summary_filename, summary_json_bytes)
+        
+        if upload_success:
+            log.info(f"Summary saved to GCS: {summary_filename}")
+        else:
+            log.warning("Failed to upload summary to GCS")
 
         # =============================
-        # 5. GENERATE PLOTS (IF ENABLED)
+        # 5. GENERATE PLOTS AND SAVE TO GCS (IF ENABLED)
         # =============================
         plot_files = []
 
@@ -132,23 +145,27 @@ def run_prediction_stage(
             try:
                 if target_info.task_type.lower() == "classification":
                     # Create prediction distribution plot
-                    plot_file = output_dir / f"prediction_distribution_{timestamp}.png"
-                    plot_utils.create_prediction_summary_plot(
-                        result_df, target_info.task_type, plot_file,
-                        title=f"Prediction Distribution - {target_info.name}"
+                    plot_gcs_path = f"predictions/plots/prediction_distribution_{timestamp}.png"
+                    plot_success = plot_utils.create_prediction_summary_plot_gcs(
+                        result_df, target_info.task_type, run_id, plot_gcs_path,
+                        title=f"Prediction Distribution - {target_info.name}",
+                        gcs_bucket_name=gcs_bucket_name
                     )
-                    plot_files.append(plot_file)
+                    if plot_success:
+                        plot_files.append(plot_gcs_path)
 
                 elif target_info.task_type.lower() == "regression":
                     # Create prediction distribution plot
-                    plot_file = output_dir / f"prediction_distribution_{timestamp}.png"
-                    plot_utils.create_prediction_summary_plot(
-                        result_df, target_info.task_type, plot_file,
-                        title=f"Prediction Distribution - {target_info.name}"
+                    plot_gcs_path = f"predictions/plots/prediction_distribution_{timestamp}.png"
+                    plot_success = plot_utils.create_prediction_summary_plot_gcs(
+                        result_df, target_info.task_type, run_id, plot_gcs_path,
+                        title=f"Prediction Distribution - {target_info.name}",
+                        gcs_bucket_name=gcs_bucket_name
                     )
-                    plot_files.append(plot_file)
+                    if plot_success:
+                        plot_files.append(plot_gcs_path)
 
-                log.info(f"Generated {len(plot_files)} visualization plots")
+                log.info(f"Generated {len(plot_files)} visualization plots in GCS")
 
             except Exception as e:
                 log.warning(f"Failed to generate plots: {e}")
@@ -157,17 +174,17 @@ def run_prediction_stage(
         # 6. LOG COMPLETION
         # =============================
         log.info("="*50)
-        log.info("PREDICTION STAGE COMPLETED SUCCESSFULLY")
+        log.info("PREDICTION STAGE COMPLETED SUCCESSFULLY (GCS)")
         log.info("="*50)
         log.info(f"Input shape: {input_df.shape}")
         log.info(f"Predictions generated: {len(result_df)}")
         log.info(f"Task type: {target_info.task_type}")
         log.info(f"Target column: {target_info.name}")
-        log.info(f"Output files:")
-        log.info(f"  - {results_file.name}")
-        log.info(f"  - {summary_file.name}")
+        log.info(f"GCS output files:")
+        log.info(f"  - {results_filename}")
+        log.info(f"  - {summary_filename}")
         for plot_file in plot_files:
-            log.info(f"  - {plot_file.name}")
+            log.info(f"  - {plot_file}")
         log.info("="*50)
 
         return True
@@ -178,29 +195,53 @@ def run_prediction_stage(
         return False
 
 
-def make_single_prediction(
+def run_prediction_stage(
+    run_id: str,
+    input_data: Union[pd.DataFrame, str, Path],
+    output_dir: Optional[Union[str, Path]] = None,
+    generate_plots: bool = True
+) -> bool:
+    """
+    Legacy compatibility function - redirects to GCS version.
+    
+    Args:
+        run_id: Unique run identifier
+        input_data: Input data for predictions
+        output_dir: Directory to save results (ignored in GCS version)
+        generate_plots: Whether to generate visualization plots
+
+    Returns:
+        True if prediction completes successfully, False otherwise
+    """
+    logger_instance = logger.get_stage_logger(run_id, "PREDICT")
+    logger_instance.warning("Using legacy run_prediction_stage function - redirecting to GCS version")
+    return run_prediction_stage_gcs(run_id, input_data, output_dir, generate_plots)
+
+
+def make_single_prediction_gcs(
     run_id: str,
     feature_values: Dict[str, Any],
-    return_details: bool = False
+    return_details: bool = False,
+    gcs_bucket_name: str = PROJECT_BUCKET_NAME
 ) -> Union[Any, Dict[str, Any]]:
     """
-    Make a single prediction with provided feature values.
+    Make a single prediction with provided feature values using GCS storage.
 
     Args:
         run_id: Unique run identifier
         feature_values: Dictionary of feature_name -> value
         return_details: Whether to return detailed prediction information
+        gcs_bucket_name: GCS bucket name for storage
 
     Returns:
         Prediction value (if return_details=False) or detailed dictionary (if True)
     """
-    # Load model and metadata
+    # Load model and metadata from GCS
     metadata = storage.read_json(run_id, constants.METADATA_FILENAME)
     if not metadata:
-        raise Exception("Could not load metadata")
+        raise Exception("Could not load metadata from GCS")
 
-    run_dir = storage.get_run_dir(run_id)
-    model = predict_logic.load_pipeline(run_dir)
+    model = predict_logic.load_pipeline_gcs(run_id, gcs_bucket_name)
 
     # Convert feature values to DataFrame
     input_df = pd.DataFrame([feature_values])
@@ -217,18 +258,41 @@ def make_single_prediction(
             'task_type': target_info.task_type,
             'input_features': feature_values,
             'aligned_features': result_df.drop(columns=['prediction']).iloc[0].to_dict(),
-            'timestamp': datetime.now().isoformat()
+            'timestamp': datetime.now().isoformat(),
+            'storage_type': 'gcs',
+            'gcs_bucket': gcs_bucket_name
         }
     else:
         return prediction_value
 
 
-def validate_prediction_stage_inputs(run_id: str) -> bool:
+def make_single_prediction(
+    run_id: str,
+    feature_values: Dict[str, Any],
+    return_details: bool = False
+) -> Union[Any, Dict[str, Any]]:
     """
-    Validate that all required inputs for the prediction stage are available.
+    Legacy compatibility function - redirects to GCS version.
+
+    Args:
+        run_id: Unique run identifier
+        feature_values: Dictionary of feature_name -> value
+        return_details: Whether to return detailed prediction information
+
+    Returns:
+        Prediction value (if return_details=False) or detailed dictionary (if True)
+    """
+    return make_single_prediction_gcs(run_id, feature_values, return_details)
+
+
+def validate_prediction_stage_inputs_gcs(run_id: str,
+                                        gcs_bucket_name: str = PROJECT_BUCKET_NAME) -> bool:
+    """
+    Validate that all required inputs for the prediction stage are available in GCS.
 
     Args:
         run_id: Run identifier
+        gcs_bucket_name: GCS bucket name
 
     Returns:
         True if all inputs are valid, False otherwise
@@ -236,22 +300,16 @@ def validate_prediction_stage_inputs(run_id: str) -> bool:
     log = logger.get_stage_logger(run_id, "PREDICT")
 
     try:
-        # Check if run directory exists
-        run_dir = storage.get_run_dir(run_id)
-        if not run_dir.exists():
-            log.error(f"Run directory does not exist: {run_dir}")
+        # Check if metadata.json exists in GCS
+        if not check_run_file_exists(run_id, constants.METADATA_FILENAME):
+            log.error(f"Metadata file does not exist in GCS: {constants.METADATA_FILENAME}")
             return False
 
-        # Check if metadata.json exists
-        metadata_path = run_dir / constants.METADATA_FILENAME
-        if not metadata_path.exists():
-            log.error(f"Metadata file does not exist: {metadata_path}")
-            return False
-
-        # Check if model file exists
-        model_path = run_dir / constants.MODEL_DIR / "pycaret_pipeline.pkl"
-        if not model_path.exists():
-            log.error(f"Model file does not exist: {model_path}")
+        # Check if model file exists in GCS
+        # Try both GCS path and legacy path
+        model_gcs_path = f"{constants.MODEL_DIR}/pycaret_pipeline.pkl"
+        if not check_run_file_exists(run_id, model_gcs_path):
+            log.error(f"Model file does not exist in GCS: {model_gcs_path}")
             return False
 
         # Try to load and validate metadata structure
@@ -271,7 +329,7 @@ def validate_prediction_stage_inputs(run_id: str) -> bool:
             target_info_dict = metadata_dict['target_info']
             schemas.TargetInfo(**target_info_dict)
 
-            log.info("All prediction stage inputs validated successfully")
+            log.info("All prediction stage inputs validated successfully (GCS)")
             return True
 
         except Exception as e:
@@ -283,9 +341,24 @@ def validate_prediction_stage_inputs(run_id: str) -> bool:
         return False
 
 
-def get_prediction_stage_summary(run_id: str) -> Optional[dict]:
+def validate_prediction_stage_inputs(run_id: str) -> bool:
     """
-    Get a summary of the prediction stage capabilities for a given run.
+    Legacy compatibility function - redirects to GCS version.
+
+    Args:
+        run_id: Run identifier
+
+    Returns:
+        True if all inputs are valid, False otherwise
+    """
+    logger_instance = logger.get_stage_logger(run_id, "PREDICT")
+    logger_instance.warning("Using legacy validate_prediction_stage_inputs function - redirecting to GCS version")
+    return validate_prediction_stage_inputs_gcs(run_id)
+
+
+def get_prediction_stage_summary_gcs(run_id: str) -> Optional[dict]:
+    """
+    Get a summary of the prediction stage capabilities for a given run (GCS version).
 
     Args:
         run_id: Run identifier
@@ -294,7 +367,7 @@ def get_prediction_stage_summary(run_id: str) -> Optional[dict]:
         Dictionary with prediction stage summary or None if not available
     """
     try:
-        if not validate_prediction_stage_inputs(run_id):
+        if not validate_prediction_stage_inputs_gcs(run_id):
             return None
 
         metadata_dict = storage.read_json(run_id, constants.METADATA_FILENAME)
@@ -304,8 +377,9 @@ def get_prediction_stage_summary(run_id: str) -> Optional[dict]:
         # Check if class labels are available (for classification)
         class_labels_available = False
         try:
-            class_labels_data = storage.read_json(run_id, 'class_labels.json')
-            class_labels_available = class_labels_data is not None
+            if check_run_file_exists(run_id, 'class_labels.json'):
+                class_labels_data = storage.read_json(run_id, 'class_labels.json')
+                class_labels_available = class_labels_data is not None
         except:
             pass
 
@@ -316,8 +390,23 @@ def get_prediction_stage_summary(run_id: str) -> Optional[dict]:
             'model_name': automl_info.get('best_model_name', 'Unknown'),
             'model_available': True,
             'class_labels_available': class_labels_available,
-            'can_make_predictions': True
+            'can_make_predictions': True,
+            'storage_type': 'gcs',
+            'gcs_bucket': PROJECT_BUCKET_NAME
         }
 
     except Exception:
         return None
+
+
+def get_prediction_stage_summary(run_id: str) -> Optional[dict]:
+    """
+    Legacy compatibility function - redirects to GCS version.
+
+    Args:
+        run_id: Run identifier
+
+    Returns:
+        Dictionary with prediction stage summary or None if not available
+    """
+    return get_prediction_stage_summary_gcs(run_id)

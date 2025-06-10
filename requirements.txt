@@ -64,5 +64,10 @@ flake8>=6.1.0
 mypy>=1.6.0
 httpx>=0.28.0  # For FastAPI testing
 
+# =============================================================================
+# Cloud Storage Dependencies (Tim - Phase 1 Step 2)
+# =============================================================================
+google-cloud-storage>=3.1.0  # GCS integration for persistent ML pipeline storage
+
 # Jupyter-style interactive files support
 ipykernel>=6.25.0 

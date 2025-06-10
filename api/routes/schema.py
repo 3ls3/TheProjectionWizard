@@ -165,13 +165,91 @@ class PipelineStatusResponse(BaseModel):
     )
 
 
+class RunSummary(BaseModel):
+    """Summary information about the pipeline run."""
+    run_id: str
+    timestamp: Optional[str] = None
+    original_filename: Optional[str] = None
+    initial_shape: Optional[Tuple[int, int]] = None
+    target_info: Optional[Dict[str, Any]] = None
+
+
+class PipelineStatusInfo(BaseModel):
+    """Detailed pipeline status information."""
+    stage: str
+    status: Literal["pending", "running", "completed", "failed"]
+    message: Optional[str] = None
+    errors: Optional[List[str]] = None
+
+
+class ValidationSummaryInfo(BaseModel):
+    """Validation summary information."""
+    overall_success: bool
+    total_expectations: int
+    successful_expectations: int
+    failed_expectations: int
+
+
+class DataPrepSummary(BaseModel):
+    """Data preparation summary information."""
+    final_shape: Optional[Tuple[int, int]] = None
+    cleaning_steps: List[str] = Field(default_factory=list)
+    profiling_report_available: bool = False
+    profiling_report_filename: Optional[str] = None
+
+
+class AutoMLSummary(BaseModel):
+    """AutoML model summary information."""
+    tool_used: Optional[str] = None
+    best_model_name: Optional[str] = None
+    target_column: Optional[str] = None
+    task_type: Optional[str] = None
+    performance_metrics: Dict[str, float] = Field(default_factory=dict)
+    model_file_available: bool = False
+
+
+class ExplainabilitySummary(BaseModel):
+    """Model explainability summary information."""
+    tool_used: Optional[str] = None
+    features_explained: Optional[int] = None
+    samples_used: Optional[int] = None
+    shap_plot_available: bool = False
+    shap_plot_filename: Optional[str] = None
+
+
+class AvailableDownloads(BaseModel):
+    """Information about available downloadable files."""
+    original_data: bool = False
+    cleaned_data: bool = False
+    metadata_json: bool = False
+    validation_report: bool = False
+    profile_report: bool = False
+    model_artifacts: bool = False
+    shap_plot: bool = False
+    pipeline_log: bool = False
+    
+    # File size information (in KB)
+    file_sizes: Dict[str, float] = Field(default_factory=dict)
+
+
 class FinalResultsResponse(BaseModel):
-    """Response model for final pipeline results endpoint."""
+    """Comprehensive response model for final pipeline results endpoint."""
     api_version: Literal["v1"] = "v1"
+    
+    # Core results (original structure maintained for backwards compatibility)
     model_metrics: Dict[str, float]
     top_features: List[str]
     explainability: Dict[str, str]
     download_url: Optional[str] = None
+    
+    # Enhanced detailed information
+    run_summary: RunSummary
+    pipeline_status: PipelineStatusInfo
+    validation_summary: Optional[ValidationSummaryInfo] = None
+    data_prep_summary: Optional[DataPrepSummary] = None
+    automl_summary: Optional[AutoMLSummary] = None
+    explainability_summary: Optional[ExplainabilitySummary] = None
+    available_downloads: AvailableDownloads
 
 
 __all__ = [
@@ -186,5 +264,12 @@ __all__ = [
     "FeatureConfirmationRequest",
     "FeatureConfirmationResponse",
     "PipelineStatusResponse",
+    "RunSummary",
+    "PipelineStatusInfo",
+    "ValidationSummaryInfo",
+    "DataPrepSummary",
+    "AutoMLSummary",
+    "ExplainabilitySummary",
+    "AvailableDownloads",
     "FinalResultsResponse",
 ]

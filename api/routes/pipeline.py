@@ -12,10 +12,17 @@ import pandas as pd
 from datetime import datetime, timezone
 from typing import List, Dict
 import tempfile
+import json
+from io import BytesIO
 from pathlib import Path
 
 from common import storage, logger, constants
 from common import result_utils, errors
+from api.utils.gcs_utils import (
+    upload_run_file, 
+    GCSError, 
+    PROJECT_BUCKET_NAME
+)
 from .schema import (
     UploadResponse,
     TargetSuggestionResponse,
@@ -40,25 +47,105 @@ def _new_run_id() -> str:
 
 
 def _validate_run_exists(run_id: str) -> bool:
-    """Check if a run exists by checking for original_data.csv."""
-    # Don't use get_run_dir as it creates the directory
-    from pathlib import Path
-    run_dir = Path(constants.DATA_DIR_NAME) / "runs" / run_id
-    original_data_path = run_dir / constants.ORIGINAL_DATA_FILE
-    return original_data_path.exists()
+    """Check if a run exists by checking for original_data.csv in GCS."""
+    from api.utils.gcs_utils import check_run_file_exists
+    try:
+        return check_run_file_exists(run_id, "original_data.csv")
+    except Exception:
+        # If GCS check fails, fall back to False
+        return False
 
 
 def _validate_target_confirmed(run_id: str) -> bool:
     """Check if target has been confirmed for this run."""
-    metadata = storage.read_metadata(run_id)
-    return metadata is not None and 'target_info' in metadata
+    from api.utils.gcs_utils import download_run_file
+    try:
+        # Download metadata from GCS
+        metadata_bytes = download_run_file(run_id, "metadata.json")
+        if metadata_bytes is None:
+            return False
+        
+        metadata = json.loads(metadata_bytes.decode('utf-8'))
+        return metadata is not None and 'target_info' in metadata
+    except Exception:
+        # If GCS check fails, fall back to False
+        return False
 
 
-def _write_original_data(run_id: str, df: pd.DataFrame) -> None:
-    """Write original data CSV file for a run."""
-    run_dir = storage.get_run_dir(run_id)
-    csv_path = run_dir / constants.ORIGINAL_DATA_FILE
-    df.to_csv(csv_path, index=False)
+def _upload_original_data_to_gcs(run_id: str, csv_content: bytes) -> None:
+    """Upload original CSV data directly to GCS."""
+    csv_io = BytesIO(csv_content)
+    success = upload_run_file(run_id, "original_data.csv", csv_io)
+    if not success:
+        raise GCSError(f"Failed to upload original data CSV to GCS for run {run_id}")
+
+
+def _create_and_upload_status_json(run_id: str) -> None:
+    """Create initial status.json and upload to GCS."""
+    upload_ts = datetime.now(timezone.utc).isoformat()
+    
+    status_data = {
+        "run_id": run_id,
+        "stage": "upload",
+        "status": "completed",
+        "message": "File uploaded successfully to GCS",
+        "progress_pct": 5,
+        "last_updated": upload_ts,
+        "stages": {
+            "upload": {
+                "status": "completed",
+                "message": "CSV file uploaded to GCS",
+                "timestamp": upload_ts
+            },
+            "target_suggestion": {
+                "status": "pending",
+                "message": "Waiting for target column confirmation"
+            },
+            "feature_suggestion": {
+                "status": "pending", 
+                "message": "Waiting for feature schema confirmation"
+            },
+            "pipeline_execution": {
+                "status": "pending",
+                "message": "Automated pipeline stages not started"
+            }
+        }
+    }
+    
+    status_json_content = json.dumps(status_data, indent=2)
+    status_io = BytesIO(status_json_content.encode('utf-8'))
+    
+    success = upload_run_file(run_id, "status.json", status_io)
+    if not success:
+        raise GCSError(f"Failed to upload status.json to GCS for run {run_id}")
+
+
+def _create_and_upload_metadata_json(run_id: str, filename: str, df: pd.DataFrame) -> None:
+    """Create initial metadata.json and upload to GCS."""
+    upload_ts = datetime.now(timezone.utc).isoformat()
+    
+    metadata = {
+        "run_id": run_id,
+        "timestamp": upload_ts,
+        "original_filename": filename,
+        "initial_rows": len(df),
+        "initial_cols": len(df.columns),
+        "initial_dtypes": {col: str(dtype) for col, dtype in df.dtypes.items()},
+        "storage": {
+            "type": "gcs",
+            "bucket": PROJECT_BUCKET_NAME,
+            "csv_path": f"runs/{run_id}/original_data.csv",
+            "metadata_path": f"runs/{run_id}/metadata.json",
+            "status_path": f"runs/{run_id}/status.json"
+        }
+    }
+    
+    metadata_json_content = json.dumps(metadata, indent=2)
+    metadata_io = BytesIO(metadata_json_content.encode('utf-8'))
+    
+    success = upload_run_file(run_id, "metadata.json", metadata_io)
+    if not success:
+        raise GCSError(f"Failed to upload metadata.json to GCS for run {run_id}")
 
 
 def _create_preview(df: pd.DataFrame, num_rows: int = 5) -> List[List[str]]:
@@ -129,8 +216,9 @@ async def upload_csv(file: UploadFile = File(...)):
     """
     Upload a CSV file and initialize a new ML pipeline run.
 
-    Creates a new run directory, saves the original data, and returns
-    basic information about the uploaded dataset.
+    Uploads the CSV file to Google Cloud Storage along with initial 
+    status.json and metadata.json files. All data is stored in GCS 
+    under the runs/{run_id}/ prefix for cloud-native operation.
 
     Args:
         file: The CSV file to upload
@@ -139,7 +227,8 @@ async def upload_csv(file: UploadFile = File(...)):
         UploadResponse with run_id, shape, and data preview
 
     Raises:
-        HTTPException: If file validation fails or processing errors occur
+        HTTPException: If file validation fails, GCS upload fails, or 
+        other processing errors occur
     """
 
     # Generate new run ID and get logger
@@ -190,32 +279,61 @@ async def upload_csv(file: UploadFile = File(...)):
         if df.empty:
             errors.raise_invalid_csv("File is empty or contains no valid data")
 
-        # 3. Persist original CSV
-        _write_original_data(run_id, df)
+        # 3. Upload original CSV to GCS
+        try:
+            _upload_original_data_to_gcs(run_id, content)
+        except GCSError as e:
+            logger.log_structured_error(
+                upload_logger,
+                "gcs_upload_failed",
+                f"Failed to upload CSV to GCS: {str(e)}",
+                {"run_id": run_id, "error": str(e)}
+            )
+            errors.raise_internal_server_error(f"Failed to upload CSV to cloud storage: {str(e)}")
 
-        # 4. Seed minimal metadata.json
-        metadata = {
-            "run_id": run_id,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "original_filename": file.filename or "uploaded.csv",
-            "initial_rows": len(df),
-            "initial_cols": len(df.columns),
-            "initial_dtypes": {col: str(dtype)
-                               for col, dtype in df.dtypes.items()}
-        }
+        # 4. Create and upload initial status.json to GCS
+        try:
+            _create_and_upload_status_json(run_id)
+        except GCSError as e:
+            logger.log_structured_error(
+                upload_logger,
+                "gcs_status_upload_failed",
+                f"Failed to upload status.json to GCS: {str(e)}",
+                {"run_id": run_id, "error": str(e)}
+            )
+            errors.raise_internal_server_error(f"Failed to upload status to cloud storage: {str(e)}")
 
-        storage.write_metadata(run_id, metadata)
+        # 5. Create and upload metadata.json to GCS
+        try:
+            _create_and_upload_metadata_json(run_id, file.filename or "uploaded.csv", df)
+        except GCSError as e:
+            logger.log_structured_error(
+                upload_logger,
+                "gcs_metadata_upload_failed",
+                f"Failed to upload metadata.json to GCS: {str(e)}",
+                {"run_id": run_id, "error": str(e)}
+            )
+            errors.raise_internal_server_error(f"Failed to upload metadata to cloud storage: {str(e)}")
 
-        # Add entry to run index
-        index_entry = {
-            "run_id": run_id,
-            "timestamp": datetime.now(timezone.utc),
-            "original_filename": file.filename or "uploaded.csv",
-            "status": "uploaded"
-        }
-        storage.append_to_run_index(index_entry)
+        # 6. Add entry to local run index (keeping this for backwards compatibility)
+        try:
+            index_entry = {
+                "run_id": run_id,
+                "timestamp": datetime.now(timezone.utc),
+                "original_filename": file.filename or "uploaded.csv",
+                "status": "uploaded"
+            }
+            storage.append_to_run_index(index_entry)
+        except Exception as e:
+            # Log but don't fail the request if run index fails
+            logger.log_structured_error(
+                upload_logger,
+                "run_index_failed",
+                f"Failed to update run index: {str(e)}",
+                {"run_id": run_id, "error": str(e)}
+            )
 
-        # 5. Return UploadResponse(run_id, shape, preview)
+        # 7. Return UploadResponse(run_id, shape, preview)
         shape = (len(df), len(df.columns))
         preview = _create_preview(df)
 
@@ -227,9 +345,11 @@ async def upload_csv(file: UploadFile = File(...)):
                 "endpoint": "upload",
                 "run_id": run_id,
                 "shape": shape,
-                "filename": file.filename
+                "filename": file.filename,
+                "storage_type": "gcs",
+                "bucket": PROJECT_BUCKET_NAME
             },
-            f"Successfully uploaded file '{file.filename}' as run {run_id}"
+            f"Successfully uploaded file '{file.filename}' to GCS as run {run_id}"
         )
 
         return UploadResponse(

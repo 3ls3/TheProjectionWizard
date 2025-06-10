@@ -45,6 +45,9 @@ docs/
 # Tests (comment out if you want to include tests in container)
 tests/
 
+# Streamlit app (exclude from FastAPI backend container)
+app/
+
 # Node modules (will be in frontend container)
 node_modules/
 frontend/node_modules/

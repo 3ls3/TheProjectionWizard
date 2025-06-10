@@ -20,8 +20,10 @@ from .schema import (
     UploadResponse,
     TargetSuggestionResponse,
     TargetConfirmationRequest,
+    TargetConfirmationResponse,
     FeatureSuggestionResponse,
     FeatureConfirmationRequest,
+    FeatureConfirmationResponse,
     PipelineStatusResponse,
     FinalResultsResponse
 )
@@ -442,7 +444,7 @@ def target_suggestion(run_id: str = Query(...)):
         errors.raise_internal_server_error(f"Target analysis failed: {str(e)}")
 
 
-@router.post("/confirm-target", status_code=200)
+@router.post("/confirm-target", response_model=TargetConfirmationResponse)
 def confirm_target(req: TargetConfirmationRequest):
     """
     Confirm the target column and task type for a run.
@@ -521,7 +523,9 @@ def confirm_target(req: TargetConfirmationRequest):
             f"'{req.confirmed_column}' ({req.task_type}, {req.ml_type})"
         )
 
-        return {"status": "ok"}
+        return TargetConfirmationResponse(
+            target_info=metadata['target_info']
+        )
 
     except HTTPException:
         # Log handled HTTP exceptions
@@ -723,7 +727,7 @@ def feature_suggestion(run_id: str = Query(...), top_n: int = 5):
         errors.raise_internal_server_error(f"Feature analysis failed: {str(e)}")
 
 
-@router.post("/confirm-features", status_code=202)
+@router.post("/confirm-features", response_model=FeatureConfirmationResponse)
 def confirm_features(
     req: FeatureConfirmationRequest,
     background_tasks: BackgroundTasks,
@@ -807,6 +811,37 @@ def confirm_features(
         # Schedule background pipeline execution with error handling wrapper
         background_tasks.add_task(_run_pipeline_with_error_handling, req.run_id)
 
+        # Create summary for response
+        total_features = len(all_initial_schemas) - 1  # Exclude target column
+        user_modified_count = len(req.confirmed_schemas)
+        system_default_count = total_features - user_modified_count
+        
+        # Get key features that were modified
+        key_features_modified = []
+        if req.key_features_modified:
+            key_features_modified = req.key_features_modified
+        else:
+            # Fallback: identify which confirmed schemas are key features
+            metadata = storage.read_metadata(req.run_id)
+            target_info = metadata['target_info']
+            df = storage.read_original_data(req.run_id)
+            if df is not None and target_info:
+                key_features = feat_logic.identify_key_features(df, target_info, 5)
+                key_features_modified = [col for col in req.confirmed_schemas.keys() if col in key_features]
+
+        summary = {
+            "total_features": total_features,
+            "user_modified_count": user_modified_count,
+            "system_default_count": system_default_count,
+            "key_features_modified": key_features_modified,
+            "pipeline_status": "started",
+            "next_steps": [
+                "Data validation will begin automatically",
+                "You can check progress at /api/status",
+                "Results will be available at /api/results when complete"
+            ]
+        }
+
         # Log successful completion
         logger.log_structured_event(
             confirm_logger,
@@ -815,13 +850,16 @@ def confirm_features(
                 "endpoint": "confirm-features",
                 "run_id": req.run_id,
                 "confirmed_schemas_count": len(req.confirmed_schemas),
-                "background_task_scheduled": True
+                "background_task_scheduled": True,
+                "summary": summary
             },
             f"Feature confirmation completed for run {req.run_id}, "
             f"background pipeline scheduled"
         )
 
-        return {"status": "pipeline_started"}
+        return FeatureConfirmationResponse(
+            summary=summary
+        )
 
     except HTTPException:
         # Log handled HTTP exceptions

@@ -73,6 +73,16 @@ class TargetConfirmationRequest(BaseModel):
     ml_type: str = Field(..., description="The ML type for the target variable")
 
 
+class TargetConfirmationResponse(BaseModel):
+    """Response model for target confirmation endpoint."""
+    api_version: Literal["v1"] = "v1"
+    status: Literal["success"] = "success"
+    message: str = "Target configuration saved successfully"
+    target_info: Dict[str, Any] = Field(
+        default_factory=dict, description="Confirmed target information"
+    )
+
+
 class FeatureSchema(BaseModel):
     """Schema information for a feature."""
     initial_dtype: str
@@ -115,10 +125,30 @@ class FeatureSuggestionResponse(BaseModel):
 
 
 class FeatureConfirmationRequest(BaseModel):
-    """Request model for feature schema confirmation endpoint."""
+    """Enhanced request model for feature schema confirmation endpoint."""
     run_id: str
     confirmed_schemas: Dict[str, Dict[str, str]] = Field(
         ..., description="User-confirmed schemas with 'final_dtype' and 'final_encoding_role'"
+    )
+    
+    # Optional metadata for better tracking
+    total_features_reviewed: Optional[int] = Field(
+        None, description="Total number of features the user reviewed"
+    )
+    key_features_modified: Optional[List[str]] = Field(
+        None, description="List of key features that were modified by the user"
+    )
+
+
+class FeatureConfirmationResponse(BaseModel):
+    """Response model for feature confirmation endpoint."""
+    api_version: Literal["v1"] = "v1"
+    status: Literal["pipeline_started"] = "pipeline_started"
+    message: str = "Feature schemas confirmed and pipeline started"
+    
+    # Summary of what was confirmed
+    summary: Dict[str, Any] = Field(
+        default_factory=dict, description="Summary of confirmed features and next steps"
     )
 
 
@@ -150,9 +180,11 @@ __all__ = [
     "MLTypeOption",
     "TargetSuggestionResponse",
     "TargetConfirmationRequest",
+    "TargetConfirmationResponse",
     "FeatureSchema",
     "FeatureSuggestionResponse",
     "FeatureConfirmationRequest",
+    "FeatureConfirmationResponse",
     "PipelineStatusResponse",
     "FinalResultsResponse",
 ]

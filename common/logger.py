@@ -1,7 +1,36 @@
 """
 Logging utilities for The Projection Wizard.
-Provides run-scoped logging that writes to stage-specific log files.
+Provides run-scoped logging with cloud-native output to stdout/stderr for Google Cloud Logging.
 Includes both human-readable summaries and machine-parseable JSON logs.
+
+=============================================================================
+⚠️  CLOUD-NATIVE LOGGING REFACTORING ⚠️
+=============================================================================
+
+This logging module has been refactored for cloud-native operation in environments
+like Google Cloud Run. Key changes:
+
+Removed Local File Logging:
+- No more writing to local log files (*.log, *.jsonl)
+- All log output now goes to stdout/stderr for Cloud Logging capture
+- Local file paths and stage-specific log files are obsolete
+
+JSON-First Approach:
+- Structured logging uses JSON formatting for better parsing in Cloud Logging
+- Human-readable logging still available but JSON preferred for production
+- All logs include run_id and stage context for filtering and aggregation
+
+Cloud Logging Integration:
+- stdout logs are automatically captured by Google Cloud Logging
+- JSON logs are parsed and indexed for advanced querying
+- Log levels and structured data preserved for monitoring and alerting
+
+Backward Compatibility:
+- Function signatures remain unchanged for existing pipeline code
+- Same logger names and hierarchies for easy migration
+- Error handling patterns preserved
+
+=============================================================================
 """
 
 import logging
@@ -12,8 +41,7 @@ from typing import Optional, Dict, Any, List, Union
 from datetime import datetime
 import numpy as np
 
-from . import storage
-from .constants import PIPELINE_LOG_FILENAME, STAGE_LOG_FILENAMES, PIPELINE_STAGES
+from .constants import PIPELINE_STAGES
 
 
 def json_serializer(obj):
@@ -41,13 +69,13 @@ def json_serializer(obj):
 
 class JSONFormatter(logging.Formatter):
     """
-    Custom JSON formatter for structured logging.
-    Produces clean JSON-line format suitable for machine parsing.
+    Custom JSON formatter for structured logging compatible with Google Cloud Logging.
+    Produces clean JSON-line format suitable for cloud logging ingestion and parsing.
     """
     
     def format(self, record: logging.LogRecord) -> str:
         """
-        Format a log record as a JSON line.
+        Format a log record as a JSON line for cloud logging.
         
         Args:
             record: The log record to format
@@ -55,11 +83,11 @@ class JSONFormatter(logging.Formatter):
         Returns:
             JSON string representation of the log record
         """
-        # Base log structure
+        # Base log structure compatible with Google Cloud Logging
         log_entry = {
             "timestamp": datetime.fromtimestamp(record.created).isoformat(),
-            "level": record.levelname,
-            "name": record.name,
+            "severity": record.levelname,  # Use 'severity' for Google Cloud Logging
+            "logger": record.name,
             "message": record.getMessage(),
         }
         
@@ -75,48 +103,19 @@ class JSONFormatter(logging.Formatter):
         if hasattr(record, 'extra_json') and isinstance(record.extra_json, dict):
             log_entry.update(record.extra_json)
         
-        # Handle exceptions
+        # Handle exceptions with proper formatting for cloud logging
         if record.exc_info:
             log_entry["exception"] = self.formatException(record.exc_info)
+            log_entry["severity"] = "ERROR"  # Ensure exceptions are marked as errors
         
         return json.dumps(log_entry, ensure_ascii=False, separators=(',', ':'), default=json_serializer)
-
-
-def get_stage_log_filename(stage: str) -> str:
-    """
-    Get the log filename for a specific stage.
-    
-    Args:
-        stage: Pipeline stage name
-        
-    Returns:
-        Log filename for the stage (defaults to pipeline.log if stage not recognized)
-    """
-    return STAGE_LOG_FILENAMES.get(stage, PIPELINE_LOG_FILENAME)
-
-
-def get_structured_log_filename(stage: str) -> str:
-    """
-    Get the structured JSON log filename for a specific stage.
-    
-    Args:
-        stage: Pipeline stage name
-        
-    Returns:
-        JSONL filename for the stage
-    """
-    base_filename = get_stage_log_filename(stage)
-    # Replace .log extension with _structured.jsonl
-    if base_filename.endswith('.log'):
-        return base_filename.replace('.log', '_structured.jsonl')
-    else:
-        return f"{base_filename}_structured.jsonl"
 
 
 def get_logger(run_id: str, logger_name: str = 'pipeline', log_level: str = 'INFO', 
                stage: Optional[str] = None) -> logging.Logger:
     """
-    Get a run-scoped logger that writes to stage-specific log files.
+    Get a run-scoped logger that outputs to stdout for cloud logging capture.
+    Uses JSON formatting for better integration with Google Cloud Logging.
     
     Args:
         run_id: Unique run identifier
@@ -125,7 +124,7 @@ def get_logger(run_id: str, logger_name: str = 'pipeline', log_level: str = 'INF
         stage: Pipeline stage name for stage-specific logging (optional)
         
     Returns:
-        Configured logger instance
+        Configured logger instance that outputs JSON to stdout
     """
     # Create a unique logger name that includes run_id and optionally stage
     if stage:
@@ -143,42 +142,14 @@ def get_logger(run_id: str, logger_name: str = 'pipeline', log_level: str = 'INF
     numeric_level = getattr(logging, log_level.upper(), logging.INFO)
     logger.setLevel(numeric_level)
     
-    # Get run directory (creates if necessary)
-    run_dir = storage.get_run_dir(run_id)
-    
-    # Determine log file based on stage
-    if stage:
-        log_filename = get_stage_log_filename(stage)
-    else:
-        log_filename = PIPELINE_LOG_FILENAME
-        
-    log_file = run_dir / log_filename
-    
-    # File handler for stage-specific or general log
-    file_handler = logging.FileHandler(log_file)
-    file_handler.setLevel(numeric_level)
-    
-    # Console handler for development
+    # Console handler for cloud logging (JSON format preferred)
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(numeric_level)
     
-    # Create formatter with run_id and stage context
-    if stage:
-        stage_display = stage.replace('step_', '').replace('_', ' ').title()
-        formatter = logging.Formatter(
-            fmt=f'%(asctime)s | {run_id} | {stage_display} | %(name)s | %(levelname)s | %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
-    else:
-        formatter = logging.Formatter(
-            fmt=f'%(asctime)s | {run_id} | %(name)s | %(levelname)s | %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
+    # Use JSON formatter for better cloud logging integration
+    json_formatter = JSONFormatter()
+    console_handler.setFormatter(json_formatter)
     
-    file_handler.setFormatter(formatter)
-    console_handler.setFormatter(formatter)
-    
-    logger.addHandler(file_handler)
     logger.addHandler(console_handler)
     
     # Prevent propagation to root logger to avoid duplicate messages
@@ -190,7 +161,8 @@ def get_logger(run_id: str, logger_name: str = 'pipeline', log_level: str = 'INF
 def get_structured_logger(run_id: str, logger_name: str = 'structured', log_level: str = 'INFO',
                          stage: Optional[str] = None) -> logging.Logger:
     """
-    Get a run-scoped structured logger that writes JSON lines to stage-specific JSONL files.
+    Get a run-scoped structured logger that outputs JSON to stdout for cloud logging.
+    Optimized for machine parsing and cloud logging aggregation.
     
     Args:
         run_id: Unique run identifier
@@ -199,7 +171,7 @@ def get_structured_logger(run_id: str, logger_name: str = 'structured', log_leve
         stage: Pipeline stage name for stage-specific logging (optional)
         
     Returns:
-        Configured logger instance that outputs JSON lines
+        Configured logger instance that outputs JSON lines to stdout
     """
     # Create a unique logger name for structured logging
     if stage:
@@ -217,26 +189,15 @@ def get_structured_logger(run_id: str, logger_name: str = 'structured', log_leve
     numeric_level = getattr(logging, log_level.upper(), logging.INFO)
     logger.setLevel(numeric_level)
     
-    # Get run directory (creates if necessary)
-    run_dir = storage.get_run_dir(run_id)
+    # Console handler for structured JSON output to stdout
+    console_handler_structured = logging.StreamHandler(sys.stdout)
+    console_handler_structured.setLevel(numeric_level)
     
-    # Determine JSONL file based on stage
-    if stage:
-        jsonl_filename = get_structured_log_filename(stage)
-    else:
-        jsonl_filename = "pipeline_structured.jsonl"
-        
-    jsonl_file = run_dir / jsonl_filename
-    
-    # File handler for JSONL output
-    file_handler = logging.FileHandler(jsonl_file)
-    file_handler.setLevel(numeric_level)
-    
-    # Use JSON formatter
+    # Use JSON formatter for structured output
     json_formatter = JSONFormatter()
-    file_handler.setFormatter(json_formatter)
+    console_handler_structured.setFormatter(json_formatter)
     
-    logger.addHandler(file_handler)
+    logger.addHandler(console_handler_structured)
     
     # Prevent propagation to root logger
     logger.propagate = False
@@ -246,7 +207,7 @@ def get_structured_logger(run_id: str, logger_name: str = 'structured', log_leve
 
 def get_stage_logger(run_id: str, stage: str, level: int = logging.INFO) -> logging.Logger:
     """
-    Get a stage-specific logger for a run that writes to a stage-specific log file.
+    Get a stage-specific logger for a run that outputs to stdout for cloud logging.
     
     Args:
         run_id: Unique run identifier
@@ -254,7 +215,7 @@ def get_stage_logger(run_id: str, stage: str, level: int = logging.INFO) -> logg
         level: Logging level (default: INFO)
         
     Returns:
-        Configured logger instance with stage context and stage-specific log file
+        Configured logger instance with stage context
     """
     logger = get_logger(run_id, f"stage.{stage}", logging.getLevelName(level), stage=stage)
     return logger
@@ -262,7 +223,7 @@ def get_stage_logger(run_id: str, stage: str, level: int = logging.INFO) -> logg
 
 def get_stage_structured_logger(run_id: str, stage: str, level: int = logging.INFO) -> logging.Logger:
     """
-    Get a stage-specific structured logger that writes JSON lines to stage-specific JSONL files.
+    Get a stage-specific structured logger that outputs JSON to stdout for cloud logging.
     
     Args:
         run_id: Unique run identifier
@@ -278,7 +239,7 @@ def get_stage_structured_logger(run_id: str, stage: str, level: int = logging.IN
 
 def get_general_logger(run_id: str, logger_name: str = 'pipeline', level: int = logging.INFO) -> logging.Logger:
     """
-    Get a general logger for a run that writes to the main pipeline.log file.
+    Get a general logger for a run that outputs to stdout for cloud logging.
     Useful for cross-stage logging or general pipeline operations.
     
     Args:
@@ -287,7 +248,7 @@ def get_general_logger(run_id: str, logger_name: str = 'pipeline', level: int = 
         level: Logging level (default: INFO)
         
     Returns:
-        Configured logger instance that writes to pipeline.log
+        Configured logger instance that outputs to stdout
     """
     logger = get_logger(run_id, logger_name, logging.getLevelName(level), stage=None)
     return logger
@@ -296,6 +257,7 @@ def get_general_logger(run_id: str, logger_name: str = 'pipeline', level: int = 
 def setup_root_logger(level: int = logging.WARNING) -> None:
     """
     Setup root logger to suppress verbose output from dependencies.
+    This function remains unchanged as it's useful for cloud environments too.
     
     Args:
         level: Logging level for root logger (default: WARNING)
@@ -339,7 +301,7 @@ def log_structured_event(logger: logging.Logger, event_type: str,
                          event_data: Optional[Dict[str, Any]] = None,
                          message: str = "") -> None:
     """
-    Log a structured event with consistent schema.
+    Log a structured event with consistent schema for cloud logging.
     
     Args:
         logger: Structured logger instance
@@ -360,7 +322,7 @@ def log_structured_metric(logger: logging.Logger, metric_name: str,
                          metric_type: str = "performance",
                          additional_data: Optional[Dict[str, Any]] = None) -> None:
     """
-    Log a structured metric.
+    Log a structured metric for cloud monitoring and alerting.
     
     Args:
         logger: Structured logger instance
@@ -384,7 +346,7 @@ def log_structured_metric(logger: logging.Logger, metric_name: str,
 def log_structured_error(logger: logging.Logger, error_type: str, error_message: str,
                         error_context: Optional[Dict[str, Any]] = None) -> None:
     """
-    Log a structured error event.
+    Log a structured error event for cloud monitoring and alerting.
     
     Args:
         logger: Structured logger instance
@@ -408,11 +370,11 @@ class PipelineSummaryLogger:
     """
     High-level pipeline summary logger that creates clear, concise summaries
     of pipeline execution including key metrics and transformations.
-    Also emits structured events alongside human-readable summaries.
+    Outputs to stdout for cloud logging integration with structured events.
     """
     
     def __init__(self, run_id: str):
-        """Initialize the pipeline summary logger."""
+        """Initialize the pipeline summary logger with cloud-native output."""
         self.run_id = run_id
         self.logger = get_general_logger(run_id, "SUMMARY")
         self.structured_logger = get_structured_logger(run_id, "pipeline_events")
@@ -637,7 +599,7 @@ class PipelineSummaryLogger:
         )
         
     def log_pipeline_completion(self, success: bool = True, error_message: Optional[str] = None) -> None:
-        """Log the completion of the entire pipeline."""
+        """Log the completion of the entire pipeline with cloud-native artifact locations."""
         end_time = datetime.now()
         duration = (end_time - self.start_time).total_seconds()
         
@@ -646,18 +608,18 @@ class PipelineSummaryLogger:
             self.logger.info("="*80)
             self.logger.info(f"⏱️  Total Duration: {duration:.1f} seconds ({duration/60:.1f} minutes)")
             self.logger.info(f"🆔 Run ID: {self.run_id}")
-            self.logger.info(f"📁 Results saved to: data/runs/{self.run_id}/")
+            self.logger.info(f"📁 Run artifacts saved to GCS under prefix: runs/{self.run_id}/")
+            self.logger.info(f"📝 Detailed execution logs available in Google Cloud Logging for run_id: {self.run_id}")
             self.logger.info("")
-            self.logger.info("Generated Artifacts:")
+            self.logger.info("Generated Artifacts (in GCS):")
             
-            # List expected artifacts
+            # List expected artifacts in GCS
             artifacts = [
                 "📊 original_data.csv - Raw uploaded data",
                 "🧹 cleaned_data.csv - Preprocessed data ready for ML", 
                 "📋 metadata.json - Complete pipeline metadata",
                 "🤖 model/ - Trained model files",
-                "📈 plots/ - Explainability visualizations",
-                "📝 *.log - Detailed execution logs"
+                "📈 plots/ - Explainability visualizations"
             ]
             
             for artifact in artifacts:
@@ -667,6 +629,7 @@ class PipelineSummaryLogger:
             self.logger.info("="*80)
             self.logger.info(f"⏱️  Duration before failure: {duration:.1f} seconds")
             self.logger.info(f"🆔 Run ID: {self.run_id}")
+            self.logger.info(f"📝 Error logs available in Google Cloud Logging for run_id: {self.run_id}")
             if error_message:
                 self.logger.info(f"❗ Error: {error_message}")
                 
@@ -678,7 +641,8 @@ class PipelineSummaryLogger:
         event_data = {
             "success": success,
             "duration_seconds": duration,
-            "completed_at": end_time.isoformat()
+            "completed_at": end_time.isoformat(),
+            "gcs_prefix": f"runs/{self.run_id}/"
         }
         
         if error_message:
@@ -694,12 +658,12 @@ class PipelineSummaryLogger:
 
 def get_pipeline_summary_logger(run_id: str) -> PipelineSummaryLogger:
     """
-    Get a pipeline summary logger instance.
+    Get a pipeline summary logger instance optimized for cloud logging.
     
     Args:
         run_id: Unique run identifier
         
     Returns:
-        PipelineSummaryLogger instance
+        PipelineSummaryLogger instance with cloud-native output
     """
     return PipelineSummaryLogger(run_id) 

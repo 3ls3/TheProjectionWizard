@@ -19,7 +19,7 @@ from pathlib import Path
 from common import storage, logger, constants
 from common import result_utils, errors
 from api.utils.gcs_utils import (
-    upload_run_file, 
+    upload_run_file, download_run_file, check_run_file_exists,
     GCSError, 
     PROJECT_BUCKET_NAME
 )
@@ -1212,20 +1212,20 @@ def get_results(run_id: str = Query(...)):
 @router.get("/download/{run_id}/{filename}")
 async def download_file(run_id: str, filename: str):
     """
-    Download result files (plots, reports, etc.) for a completed run.
+    Download result files (plots, reports, etc.) for a completed run from GCS.
 
-    Serves files from the run's step directories, primarily for explainability
-    plots and other generated artifacts.
+    Downloads files from GCS storage and streams them to the client,
+    primarily for explainability plots and other generated artifacts.
 
     Args:
         run_id: The ID of the run
         filename: The name of the file to download
 
     Returns:
-        FileResponse with the requested file
+        FileResponse with the requested file content from GCS
 
     Raises:
-        HTTPException: If run not found or file not available
+        HTTPException: If run not found or file not available in GCS
     """
 
     # Get logger for this operation
@@ -1236,7 +1236,7 @@ async def download_file(run_id: str, filename: str):
         download_logger,
         "api_request_started",
         {"endpoint": "download", "run_id": run_id, "filename": filename},
-        f"Starting file download for run {run_id}: {filename}"
+        f"Starting GCS file download for run {run_id}: {filename}"
     )
 
     try:
@@ -1244,57 +1244,96 @@ async def download_file(run_id: str, filename: str):
         if not _validate_run_exists(run_id):
             errors.raise_run_not_found(run_id)
 
-        # Get run directory
-        run_dir = storage.get_run_dir(run_id)
-
-        # Look for file in common output directories
-        possible_paths = [
-            run_dir / "step_6_explain" / filename,  # SHAP plots
-            run_dir / "step_5_automl" / filename,   # Model artifacts
-            run_dir / filename,                     # Root level files
+        # Look for file in common GCS paths
+        possible_gcs_paths = [
+            f"plots/{filename}",                   # SHAP plots
+            f"step_6_explain/{filename}",          # Explainability outputs
+            f"step_5_automl/{filename}",           # Model artifacts
+            f"model/{filename}",                   # Model files
+            filename,                              # Root level files
         ]
 
-        file_path = None
-        for path in possible_paths:
-            if path.exists() and path.is_file():
-                file_path = path
-                break
+        file_content = None
+        found_gcs_path = None
+        
+        for gcs_path in possible_gcs_paths:
+            if check_run_file_exists(run_id, gcs_path):
+                file_content = download_run_file(run_id, gcs_path)
+                if file_content:
+                    found_gcs_path = gcs_path
+                    break
 
-        if file_path is None:
+        if file_content is None:
             logger.log_structured_error(
                 download_logger,
                 "api_request_failed",
-                f"File not found: {filename}",
-                {"endpoint": "download", "run_id": run_id, "filename": filename}
+                f"File not found in GCS: {filename}",
+                {"endpoint": "download", "run_id": run_id, "filename": filename, "gcs_bucket": PROJECT_BUCKET_NAME}
             )
             raise HTTPException(
                 status_code=404,
                 detail=errors.create_error_detail(
-                    f"File '{filename}' not found for run '{run_id}'",
+                    f"File '{filename}' not found for run '{run_id}' in GCS",
                     "file_not_found",
-                    {"run_id": run_id, "filename": filename}
+                    {"run_id": run_id, "filename": filename, "storage_type": "gcs"}
                 )
             )
 
-        # Log successful completion
-        logger.log_structured_event(
-            download_logger,
-            "api_request_succeeded",
-            {
-                "endpoint": "download",
-                "run_id": run_id,
-                "filename": filename,
-                "file_path": str(file_path),
-                "file_size": file_path.stat().st_size
-            },
-            f"File download initiated for run {run_id}: {filename}"
-        )
+        # Create a temporary file to serve via FileResponse
+        import tempfile
+        import os
+        
+        # Create temporary file with proper extension
+        file_extension = Path(filename).suffix
+        temp_fd, temp_path = tempfile.mkstemp(suffix=file_extension)
+        
+        try:
+            # Write GCS content to temporary file
+            with os.fdopen(temp_fd, 'wb') as tmp_file:
+                tmp_file.write(file_content)
+            
+            # Log successful completion
+            logger.log_structured_event(
+                download_logger,
+                "api_request_succeeded",
+                {
+                    "endpoint": "download",
+                    "run_id": run_id,
+                    "filename": filename,
+                    "gcs_path": found_gcs_path,
+                    "file_size": len(file_content),
+                    "storage_type": "gcs",
+                    "bucket": PROJECT_BUCKET_NAME
+                },
+                f"GCS file download initiated for run {run_id}: {filename} ({len(file_content)} bytes)"
+            )
 
-        return FileResponse(
-            path=str(file_path),
-            filename=filename,
-            media_type="application/octet-stream"
-        )
+            # Return FileResponse that will clean up temp file after serving
+            class TempFileResponse(FileResponse):
+                def __init__(self, *args, **kwargs):
+                    self.temp_path = kwargs.pop('temp_path', None)
+                    super().__init__(*args, **kwargs)
+                
+                async def __call__(self, scope, receive, send):
+                    try:
+                        await super().__call__(scope, receive, send)
+                    finally:
+                        # Clean up temporary file
+                        if self.temp_path and os.path.exists(self.temp_path):
+                            os.unlink(self.temp_path)
+
+            return TempFileResponse(
+                path=temp_path,
+                filename=filename,
+                media_type="application/octet-stream",
+                temp_path=temp_path
+            )
+            
+        except Exception as e:
+            # Clean up temp file if error occurs
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+            raise
 
     except HTTPException:
         # Re-raise HTTP exceptions as-is
@@ -1304,13 +1343,14 @@ async def download_file(run_id: str, filename: str):
         logger.log_structured_error(
             download_logger,
             "api_request_failed",
-            f"Unexpected error downloading file: {str(e)}",
+            f"Unexpected error downloading file from GCS: {str(e)}",
             {
                 "endpoint": "download",
                 "run_id": run_id,
                 "filename": filename,
                 "error": str(e),
-                "error_type": type(e).__name__
+                "error_type": type(e).__name__,
+                "storage_type": "gcs"
             }
         )
-        errors.raise_internal_server_error(f"File download failed: {str(e)}")
+        errors.raise_internal_server_error(f"File download from GCS failed: {str(e)}")

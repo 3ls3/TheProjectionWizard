@@ -1,6 +1,7 @@
 """
 Explainability Stage Runner for The Projection Wizard.
 Orchestrates the complete model explainability stage using SHAP for global explanations.
+Refactored for GCS-based storage.
 """
 
 import pandas as pd
@@ -9,8 +10,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Tuple
 import warnings
+import tempfile
+import io
 
 from common import storage, constants, schemas, logger
+from api.utils.gcs_utils import (
+    download_run_file, upload_run_file, check_run_file_exists, 
+    PROJECT_BUCKET_NAME
+)
 from . import shap_logic
 
 # Suppress warnings during SHAP processing
@@ -19,19 +26,21 @@ warnings.filterwarnings('ignore', category=UserWarning)
 warnings.filterwarnings('ignore', category=RuntimeWarning)
 
 
-def run_explainability_stage(run_id: str) -> bool:
+def run_explainability_stage_gcs(run_id: str,
+                                gcs_bucket_name: str = PROJECT_BUCKET_NAME) -> bool:
     """
-    Execute the explainability stage to generate SHAP global feature importance analysis.
+    Execute the explainability stage to generate SHAP global feature importance analysis using GCS storage.
     
     This stage:
-    1. Loads the trained PyCaret pipeline and metadata
-    2. Loads the cleaned ML-ready data
+    1. Loads the trained PyCaret pipeline and metadata from GCS
+    2. Loads the cleaned ML-ready data from GCS
     3. Validates inputs for SHAP analysis
-    4. Generates and saves a SHAP summary plot
+    4. Generates and saves a SHAP summary plot to GCS
     5. Updates metadata with explainability results
     
     Args:
         run_id: Unique run identifier
+        gcs_bucket_name: GCS bucket name for storage
         
     Returns:
         True if stage completes successfully, False otherwise
@@ -45,17 +54,17 @@ def run_explainability_stage(run_id: str) -> bool:
     
     try:
         # Log stage start
-        log.info(f"Starting explainability stage for run {run_id}")
+        log.info(f"Starting explainability stage for run {run_id} (GCS-based)")
         log.info("="*50)
-        log.info("EXPLAINABILITY STAGE - SHAP GLOBAL ANALYSIS")
+        log.info("EXPLAINABILITY STAGE - SHAP GLOBAL ANALYSIS (GCS)")
         log.info("="*50)
         
         # Structured log: Stage started
         logger.log_structured_event(
             structured_log,
             "stage_started",
-            {"stage": constants.EXPLAIN_STAGE},
-            "Explainability stage started"
+            {"stage": constants.EXPLAIN_STAGE, "storage_type": "gcs"},
+            "Explainability stage started (GCS-based)"
         )
         
         # Check if validation stage failed - prevent explainability from running
@@ -86,7 +95,7 @@ def run_explainability_stage(run_id: str) -> bool:
             status_data = {
                 "stage": constants.EXPLAIN_STAGE,
                 "status": "running",
-                "message": "Model explainability analysis in progress..."
+                "message": "Model explainability analysis in progress (GCS-based)..."
             }
             storage.write_json_atomic(run_id, constants.STATUS_FILENAME, status_data)
             
@@ -94,8 +103,8 @@ def run_explainability_stage(run_id: str) -> bool:
             logger.log_structured_event(
                 structured_log,
                 "status_updated",
-                {"status": "running", "stage": constants.EXPLAIN_STAGE},
-                "Status updated to running"
+                {"status": "running", "stage": constants.EXPLAIN_STAGE, "storage_type": "gcs"},
+                "Status updated to running (GCS-based)"
             )
             
         except Exception as e:
@@ -108,9 +117,9 @@ def run_explainability_stage(run_id: str) -> bool:
             )
         
         # =============================
-        # 1. LOAD AND VALIDATE INPUTS
+        # 1. LOAD AND VALIDATE INPUTS FROM GCS
         # =============================
-        log.info("Loading inputs: metadata, model pipeline, and cleaned data")
+        log.info("Loading inputs from GCS: metadata, model pipeline, and cleaned data")
         
         # Load metadata.json
         try:
@@ -137,9 +146,6 @@ def run_explainability_stage(run_id: str) -> bool:
             _update_status_failed(run_id, "Empty or invalid metadata")
             return False
         
-        # Get run directory
-        run_dir = storage.get_run_dir(run_id)
-        
         # Structured log: Metadata loaded
         logger.log_structured_event(
             structured_log,
@@ -147,13 +153,13 @@ def run_explainability_stage(run_id: str) -> bool:
             {
                 "file": constants.METADATA_FILENAME,
                 "metadata_keys": list(metadata_dict.keys()),
-                "run_directory": str(run_dir)
+                "storage_type": "gcs"
             },
-            "Metadata loaded successfully"
+            "Metadata loaded successfully from GCS"
         )
         
         # Validate required metadata components
-        validation_success, metadata_components = _validate_metadata_for_explainability(
+        validation_success, metadata_components = _validate_metadata_for_explainability_gcs(
             metadata_dict, log
         )
         if not validation_success:
@@ -176,69 +182,102 @@ def run_explainability_stage(run_id: str) -> bool:
                 "target_column": target_info.name,
                 "task_type": target_info.task_type,
                 "model_name": automl_info.best_model_name,
-                "pipeline_path": automl_info.pycaret_pipeline_path
+                "pipeline_gcs_path": automl_info.get('pycaret_pipeline_gcs_path', automl_info.get('pycaret_pipeline_path')),
+                "storage_type": "gcs"
             },
             f"Metadata validation passed: {target_info.name} ({target_info.task_type})"
         )
         
-        # Load PyCaret pipeline
+        # Load PyCaret pipeline from GCS
         try:
-            pycaret_pipeline_path = run_dir / automl_info.pycaret_pipeline_path
+            # Get pipeline path (check both GCS and legacy paths)
+            pipeline_gcs_path = automl_info.get('pycaret_pipeline_gcs_path')
+            if not pipeline_gcs_path:
+                # Fallback to legacy path and convert to GCS path
+                legacy_path = automl_info.get('pycaret_pipeline_path', '')
+                if legacy_path:
+                    pipeline_gcs_path = f"{constants.MODEL_DIR}/pycaret_pipeline.pkl"
+                else:
+                    raise Exception("No pipeline path found in automl_info")
             
-            if not pycaret_pipeline_path.exists():
-                log.error(f"PyCaret pipeline not found: {pycaret_pipeline_path}")
+            log.info(f"Loading PyCaret pipeline from GCS: {pipeline_gcs_path}")
+            
+            if not check_run_file_exists(run_id, pipeline_gcs_path):
+                log.error(f"PyCaret pipeline not found in GCS: {pipeline_gcs_path}")
                 logger.log_structured_error(
                     structured_log,
                     "pipeline_file_not_found",
-                    f"PyCaret pipeline not found: {pycaret_pipeline_path}",
-                    {"stage": constants.EXPLAIN_STAGE, "pipeline_path": str(pycaret_pipeline_path)}
+                    f"PyCaret pipeline not found in GCS: {pipeline_gcs_path}",
+                    {"stage": constants.EXPLAIN_STAGE, "pipeline_gcs_path": pipeline_gcs_path}
                 )
-                _update_status_failed(run_id, "PyCaret pipeline file not found")
+                _update_status_failed(run_id, "PyCaret pipeline file not found in GCS")
                 return False
             
-            log.info(f"Loading PyCaret pipeline from: {pycaret_pipeline_path}")
-            pycaret_pipeline = joblib.load(pycaret_pipeline_path)
-            log.info("PyCaret pipeline loaded successfully")
+            # Download pipeline from GCS to temporary file
+            pipeline_bytes = download_run_file(run_id, pipeline_gcs_path)
+            if pipeline_bytes is None:
+                raise Exception("Failed to download pipeline from GCS")
+            
+            # Load pipeline from bytes using temporary file
+            with tempfile.NamedTemporaryFile(suffix='.pkl', delete=False) as tmp_file:
+                tmp_file.write(pipeline_bytes)
+                tmp_file.flush()
+                pycaret_pipeline = joblib.load(tmp_file.name)
+            
+            # Clean up temporary file
+            try:
+                Path(tmp_file.name).unlink()
+            except Exception as cleanup_error:
+                log.warning(f"Could not clean up temporary file {tmp_file.name}: {cleanup_error}")
+            
+            log.info("PyCaret pipeline loaded successfully from GCS")
             
             # Structured log: Pipeline loaded
             logger.log_structured_event(
                 structured_log,
                 "pipeline_loaded",
                 {
-                    "pipeline_path": str(pycaret_pipeline_path),
-                    "model_name": automl_info.best_model_name
+                    "pipeline_gcs_path": pipeline_gcs_path,
+                    "model_name": automl_info.best_model_name,
+                    "storage_type": "gcs"
                 },
-                f"PyCaret pipeline loaded: {automl_info.best_model_name}"
+                f"PyCaret pipeline loaded from GCS: {automl_info.best_model_name}"
             )
             
         except Exception as e:
-            log.error(f"Failed to load PyCaret pipeline: {e}")
+            log.error(f"Failed to load PyCaret pipeline from GCS: {e}")
             logger.log_structured_error(
                 structured_log,
                 "pipeline_load_failed",
-                f"Failed to load PyCaret pipeline: {e}",
-                {"stage": constants.EXPLAIN_STAGE, "pipeline_path": str(pycaret_pipeline_path)}
+                f"Failed to load PyCaret pipeline from GCS: {e}",
+                {"stage": constants.EXPLAIN_STAGE, "pipeline_gcs_path": pipeline_gcs_path}
             )
-            _update_status_failed(run_id, f"Failed to load model pipeline: {str(e)}")
+            _update_status_failed(run_id, f"Failed to load model pipeline from GCS: {str(e)}")
             return False
         
-        # Load cleaned data
+        # Load cleaned data from GCS
         try:
-            cleaned_data_path = run_dir / constants.CLEANED_DATA_FILE
+            log.info(f"Loading cleaned data from GCS: {constants.CLEANED_DATA_FILE}")
             
-            if not cleaned_data_path.exists():
-                log.error(f"Cleaned data file not found: {cleaned_data_path}")
+            if not check_run_file_exists(run_id, constants.CLEANED_DATA_FILE):
+                log.error(f"Cleaned data file not found in GCS: {constants.CLEANED_DATA_FILE}")
                 logger.log_structured_error(
                     structured_log,
                     "cleaned_data_not_found",
-                    f"Cleaned data file not found: {cleaned_data_path}",
-                    {"stage": constants.EXPLAIN_STAGE, "data_path": str(cleaned_data_path)}
+                    f"Cleaned data file not found in GCS: {constants.CLEANED_DATA_FILE}",
+                    {"stage": constants.EXPLAIN_STAGE, "data_file": constants.CLEANED_DATA_FILE}
                 )
-                _update_status_failed(run_id, "Cleaned data file not found")
+                _update_status_failed(run_id, "Cleaned data file not found in GCS")
                 return False
             
-            df_ml_ready = pd.read_csv(cleaned_data_path)
-            log.info(f"Loaded cleaned data: shape {df_ml_ready.shape}")
+            # Download cleaned data from GCS
+            cleaned_data_bytes = download_run_file(run_id, constants.CLEANED_DATA_FILE)
+            if cleaned_data_bytes is None:
+                raise Exception("Failed to download cleaned data from GCS")
+            
+            # Load CSV from bytes
+            df_ml_ready = pd.read_csv(io.BytesIO(cleaned_data_bytes))
+            log.info(f"Loaded cleaned data from GCS: shape {df_ml_ready.shape}")
             
             if df_ml_ready.empty:
                 log.error("Cleaned data is empty")
@@ -257,20 +296,21 @@ def run_explainability_stage(run_id: str) -> bool:
                 "data_loaded",
                 {
                     "data_shape": {"rows": df_ml_ready.shape[0], "columns": df_ml_ready.shape[1]},
-                    "data_file": constants.CLEANED_DATA_FILE
+                    "data_file": constants.CLEANED_DATA_FILE,
+                    "storage_type": "gcs"
                 },
-                f"Cleaned data loaded: {df_ml_ready.shape}"
+                f"Cleaned data loaded from GCS: {df_ml_ready.shape}"
             )
             
         except Exception as e:
-            log.error(f"Failed to load cleaned data: {e}")
+            log.error(f"Failed to load cleaned data from GCS: {e}")
             logger.log_structured_error(
                 structured_log,
                 "data_load_failed",
-                f"Failed to load cleaned data: {e}",
-                {"stage": constants.EXPLAIN_STAGE, "data_path": str(cleaned_data_path)}
+                f"Failed to load cleaned data from GCS: {e}",
+                {"stage": constants.EXPLAIN_STAGE, "data_file": constants.CLEANED_DATA_FILE}
             )
-            _update_status_failed(run_id, f"Failed to read cleaned data: {str(e)}")
+            _update_status_failed(run_id, f"Failed to read cleaned data from GCS: {str(e)}")
             return False
         
         # Prepare feature data (remove target column)
@@ -386,16 +426,9 @@ def run_explainability_stage(run_id: str) -> bool:
             return False
         
         # =============================
-        # 3. GENERATE SHAP SUMMARY PLOT
+        # 3. GENERATE SHAP SUMMARY PLOT AND SAVE TO GCS
         # =============================
         log.info("Generating SHAP summary plot...")
-        
-        # Create plots directory and define plot path
-        plots_dir = run_dir / constants.PLOTS_DIR
-        plots_dir.mkdir(exist_ok=True)
-        plot_save_path = plots_dir / constants.SHAP_SUMMARY_PLOT
-        
-        log.info(f"SHAP plot will be saved to: {plot_save_path}")
         
         # Structured log: Plot generation started
         logger.log_structured_event(
@@ -403,19 +436,22 @@ def run_explainability_stage(run_id: str) -> bool:
             "plot_generation_started",
             {
                 "plot_type": "shap_summary",
-                "plots_directory": str(plots_dir),
-                "plot_file": constants.SHAP_SUMMARY_PLOT
+                "plot_file": constants.SHAP_SUMMARY_PLOT,
+                "storage_type": "gcs"
             },
-            "SHAP summary plot generation started"
+            "SHAP summary plot generation started (GCS-based)"
         )
         
         try:
-            # Generate SHAP summary plot
-            plot_success = shap_logic.generate_shap_summary_plot(
+            # Generate SHAP summary plot and save to GCS
+            plot_gcs_path = f"{constants.PLOTS_DIR}/{constants.SHAP_SUMMARY_PLOT}"
+            plot_success = shap_logic.generate_shap_summary_plot_gcs(
                 pycaret_pipeline=pycaret_pipeline,
                 X_data_sample=X_data,
-                plot_save_path=plot_save_path,
+                run_id=run_id,
+                plot_gcs_path=plot_gcs_path,
                 task_type=target_info.task_type,
+                gcs_bucket_name=gcs_bucket_name,
                 logger=log
             )
             
@@ -430,7 +466,7 @@ def run_explainability_stage(run_id: str) -> bool:
                 _update_status_failed(run_id, "SHAP plot generation failed")
                 return False
             
-            log.info("SHAP summary plot generated successfully")
+            log.info(f"SHAP summary plot generated and saved to GCS: {plot_gcs_path}")
             
             # Structured log: Plot generated
             logger.log_structured_event(
@@ -438,10 +474,10 @@ def run_explainability_stage(run_id: str) -> bool:
                 "plot_generated",
                 {
                     "plot_type": "shap_summary",
-                    "plots_directory": str(plots_dir),
-                    "plot_file": constants.SHAP_SUMMARY_PLOT
+                    "plot_gcs_path": plot_gcs_path,
+                    "storage_type": "gcs"
                 },
-                "SHAP summary plot generated successfully"
+                f"SHAP summary plot generated and saved to GCS: {plot_gcs_path}"
             )
             
         except Exception as e:
@@ -461,16 +497,18 @@ def run_explainability_stage(run_id: str) -> bool:
         log.info("Updating metadata with explainability results...")
         
         try:
-            # Create explainability info
+            # Create explainability info with GCS paths
             explain_info = {
                 'tool_used': 'SHAP',
                 'explanation_type': 'global_summary',
-                'shap_summary_plot_path': str(Path(constants.PLOTS_DIR) / constants.SHAP_SUMMARY_PLOT),
+                'shap_summary_plot_gcs_path': plot_gcs_path,  # GCS path instead of local path
                 'explain_completed_at': datetime.utcnow().isoformat(),
                 'target_column': target_info.name,
                 'task_type': target_info.task_type,
                 'features_explained': len(X_data.columns),
-                'samples_used_for_explanation': len(X_data)
+                'samples_used_for_explanation': len(X_data),
+                'storage_type': 'gcs',
+                'gcs_bucket': gcs_bucket_name
             }
             
             # Update metadata with explainability info
@@ -486,9 +524,9 @@ def run_explainability_stage(run_id: str) -> bool:
                 {
                     "file": constants.METADATA_FILENAME,
                     "metadata_keys": list(metadata_dict.keys()),
-                    "run_directory": str(run_dir)
+                    "storage_type": "gcs"
                 },
-                "Metadata updated with explainability information"
+                "Metadata updated with explainability information (GCS-based)"
             )
             
         except Exception as e:
@@ -511,7 +549,7 @@ def run_explainability_stage(run_id: str) -> bool:
             status_data = {
                 "stage": constants.EXPLAIN_STAGE,
                 "status": "completed",
-                "message": "Model explainability analysis completed successfully"
+                "message": "Model explainability analysis completed successfully (GCS-based)"
             }
             storage.write_json_atomic(run_id, constants.STATUS_FILENAME, status_data)
             
@@ -519,8 +557,8 @@ def run_explainability_stage(run_id: str) -> bool:
             logger.log_structured_event(
                 structured_log,
                 "status_updated",
-                {"status": "completed", "stage": constants.EXPLAIN_STAGE},
-                "Status updated to completed"
+                {"status": "completed", "stage": constants.EXPLAIN_STAGE, "storage_type": "gcs"},
+                "Status updated to completed (GCS-based)"
             )
             
         except Exception as e:
@@ -537,9 +575,9 @@ def run_explainability_stage(run_id: str) -> bool:
         stage_duration = (end_time - start_time).total_seconds()
         
         log.info("="*50)
-        log.info("EXPLAINABILITY STAGE COMPLETED SUCCESSFULLY")
+        log.info("EXPLAINABILITY STAGE COMPLETED SUCCESSFULLY (GCS)")
         log.info("="*50)
-        log.info(f"SHAP summary plot saved to: {plot_save_path}")
+        log.info(f"SHAP summary plot saved to GCS: {plot_gcs_path}")
         log.info(f"Features explained: {len(X_data.columns)}")
         log.info(f"Samples used: {len(X_data)}")
         
@@ -554,9 +592,10 @@ def run_explainability_stage(run_id: str) -> bool:
                 "completed_at": end_time.isoformat(),
                 "plots_generated": [constants.SHAP_SUMMARY_PLOT],
                 "features_explained": len(X_data.columns),
-                "samples_used": len(X_data)
+                "samples_used": len(X_data),
+                "storage_type": "gcs"
             },
-            f"Explainability stage completed successfully in {stage_duration:.1f}s"
+            f"Explainability stage completed successfully in {stage_duration:.1f}s (GCS-based)"
         )
         
         return True
@@ -573,12 +612,27 @@ def run_explainability_stage(run_id: str) -> bool:
         return False
 
 
-def _validate_metadata_for_explainability(
+def run_explainability_stage(run_id: str) -> bool:
+    """
+    Legacy compatibility function - redirects to GCS version.
+    
+    Args:
+        run_id: Unique run identifier
+        
+    Returns:
+        True if stage completes successfully, False otherwise
+    """
+    logger_instance = logger.get_stage_logger(run_id, constants.EXPLAIN_STAGE)
+    logger_instance.warning("Using legacy run_explainability_stage function - redirecting to GCS version")
+    return run_explainability_stage_gcs(run_id)
+
+
+def _validate_metadata_for_explainability_gcs(
     metadata_dict: dict, 
     log: logger.logging.Logger
-) -> Tuple[bool, Optional[Tuple[schemas.TargetInfo, schemas.AutoMLInfo]]]:
+) -> Tuple[bool, Optional[Tuple[schemas.TargetInfo, dict]]]:
     """
-    Validate that metadata contains required information for explainability stage.
+    Validate that metadata contains required information for explainability stage (GCS version).
     
     Args:
         metadata_dict: Loaded metadata dictionary
@@ -607,24 +661,53 @@ def _validate_metadata_for_explainability(
             log.error("No automl_info found in metadata - AutoML stage must be completed first")
             return False, None
         
-        try:
-            automl_info = schemas.AutoMLInfo(**automl_info_dict)
-            log.info(f"AutoML info loaded: tool='{automl_info.tool_used}', model='{automl_info.best_model_name}'")
-        except Exception as e:
-            log.error(f"Failed to parse automl_info: {e}")
+        # Use dict directly instead of schema since we need to handle both GCS and legacy paths
+        log.info(f"AutoML info loaded: tool='{automl_info_dict.get('tool_used')}', model='{automl_info_dict.get('best_model_name')}'")
+        
+        # Validate pipeline path exists in automl_info (check both GCS and legacy paths)
+        pipeline_gcs_path = automl_info_dict.get('pycaret_pipeline_gcs_path')
+        pipeline_legacy_path = automl_info_dict.get('pycaret_pipeline_path')
+        
+        if not pipeline_gcs_path and not pipeline_legacy_path:
+            log.error("No pipeline path found in automl_info")
             return False, None
         
-        # Validate pipeline path exists in automl_info
-        if not automl_info.pycaret_pipeline_path:
-            log.error("No pycaret_pipeline_path found in automl_info")
-            return False, None
-        
-        log.info("Metadata validation passed for explainability stage")
-        return True, (target_info, automl_info)
+        log.info("Metadata validation passed for explainability stage (GCS)")
+        return True, (target_info, automl_info_dict)
         
     except Exception as e:
         log.error(f"Metadata validation error: {e}")
         return False, None
+
+
+def _validate_metadata_for_explainability(
+    metadata_dict: dict, 
+    log: logger.logging.Logger
+) -> Tuple[bool, Optional[Tuple[schemas.TargetInfo, schemas.AutoMLInfo]]]:
+    """
+    Legacy compatibility function - redirects to GCS version.
+    
+    Args:
+        metadata_dict: Loaded metadata dictionary
+        log: Logger instance
+        
+    Returns:
+        Tuple of (is_valid, (target_info, automl_info) or None)
+    """
+    log.warning("Using legacy _validate_metadata_for_explainability function - redirecting to GCS version")
+    is_valid, components = _validate_metadata_for_explainability_gcs(metadata_dict, log)
+    
+    if is_valid and components:
+        target_info, automl_info_dict = components
+        # Convert dict to schema for backward compatibility
+        try:
+            automl_info = schemas.AutoMLInfo(**automl_info_dict)
+            return True, (target_info, automl_info)
+        except Exception as e:
+            log.error(f"Failed to convert automl_info to schema: {e}")
+            return False, None
+    
+    return is_valid, None
 
 
 def _update_status_failed(run_id: str, error_message: str) -> None:
@@ -647,12 +730,14 @@ def _update_status_failed(run_id: str, error_message: str) -> None:
         print(f"Warning: Could not update failed status for run {run_id}: {e}")
 
 
-def validate_explainability_stage_inputs(run_id: str) -> bool:
+def validate_explainability_stage_inputs_gcs(run_id: str,
+                                            gcs_bucket_name: str = PROJECT_BUCKET_NAME) -> bool:
     """
-    Validate that all required inputs exist for the explainability stage.
+    Validate that all required inputs exist for the explainability stage in GCS.
     
     Args:
         run_id: Unique run identifier
+        gcs_bucket_name: GCS bucket name
         
     Returns:
         True if all inputs are valid, False otherwise
@@ -664,28 +749,32 @@ def validate_explainability_stage_inputs(run_id: str) -> bool:
             return False
         
         # Validate metadata components
-        validation_success, _ = _validate_metadata_for_explainability(
+        validation_success, _ = _validate_metadata_for_explainability_gcs(
             metadata_dict, logger.get_logger(run_id, "validation")
         )
         if not validation_success:
             return False
         
-        # Check files exist
-        run_dir = storage.get_run_dir(run_id)
+        # Check files exist in GCS
         
         # Check cleaned data
-        cleaned_data_path = run_dir / constants.CLEANED_DATA_FILE
-        if not cleaned_data_path.exists():
+        if not check_run_file_exists(run_id, constants.CLEANED_DATA_FILE):
             return False
         
-        # Check PyCaret pipeline
+        # Check PyCaret pipeline in GCS
         automl_info_dict = metadata_dict.get('automl_info', {})
-        pipeline_path = automl_info_dict.get('pycaret_pipeline_path')
-        if not pipeline_path:
-            return False
         
-        pycaret_pipeline_path = run_dir / pipeline_path
-        if not pycaret_pipeline_path.exists():
+        # Check for GCS path first, then legacy path
+        pipeline_gcs_path = automl_info_dict.get('pycaret_pipeline_gcs_path')
+        if not pipeline_gcs_path:
+            # Try to construct from legacy path
+            pipeline_legacy_path = automl_info_dict.get('pycaret_pipeline_path')
+            if pipeline_legacy_path:
+                pipeline_gcs_path = f"{constants.MODEL_DIR}/pycaret_pipeline.pkl"
+            else:
+                return False
+        
+        if not check_run_file_exists(run_id, pipeline_gcs_path):
             return False
         
         return True
@@ -694,9 +783,24 @@ def validate_explainability_stage_inputs(run_id: str) -> bool:
         return False
 
 
-def get_explainability_stage_summary(run_id: str) -> Optional[dict]:
+def validate_explainability_stage_inputs(run_id: str) -> bool:
     """
-    Get summary information about the explainability stage results.
+    Legacy compatibility function - redirects to GCS version.
+    
+    Args:
+        run_id: Unique run identifier
+        
+    Returns:
+        True if all inputs are valid, False otherwise
+    """
+    logger_instance = logger.get_logger(run_id, "validation")
+    logger_instance.warning("Using legacy validate_explainability_stage_inputs function - redirecting to GCS version")
+    return validate_explainability_stage_inputs_gcs(run_id)
+
+
+def get_explainability_stage_summary_gcs(run_id: str) -> Optional[dict]:
+    """
+    Get summary information about the explainability stage results (GCS version).
     
     Args:
         run_id: Unique run identifier
@@ -717,8 +821,15 @@ def get_explainability_stage_summary(run_id: str) -> Optional[dict]:
         target_info_dict = metadata_dict.get('target_info', {})
         automl_info_dict = metadata_dict.get('automl_info', {})
         
-        run_dir = storage.get_run_dir(run_id)
-        plot_path = run_dir / explain_info.get('shap_summary_plot_path', '')
+        # Check for GCS path
+        plot_gcs_path = explain_info.get('shap_summary_plot_gcs_path')
+        if not plot_gcs_path:
+            # Fallback to legacy path conversion
+            legacy_plot_path = explain_info.get('shap_summary_plot_path')
+            if legacy_plot_path:
+                plot_gcs_path = f"{constants.PLOTS_DIR}/{constants.SHAP_SUMMARY_PLOT}"
+        
+        plot_file_exists = check_run_file_exists(run_id, plot_gcs_path) if plot_gcs_path else False
         
         summary = {
             'explain_completed': True,
@@ -729,13 +840,28 @@ def get_explainability_stage_summary(run_id: str) -> Optional[dict]:
             'features_explained': explain_info.get('features_explained'),
             'samples_used': explain_info.get('samples_used_for_explanation'),
             'completed_at': explain_info.get('explain_completed_at'),
-            'plot_file_exists': plot_path.exists() if plot_path else False,
-            'plot_path': str(plot_path) if plot_path and plot_path.exists() else None,
+            'plot_file_exists': plot_file_exists,
+            'plot_gcs_path': plot_gcs_path if plot_file_exists else None,
             'best_model_name': automl_info_dict.get('best_model_name'),
-            'performance_metrics': automl_info_dict.get('performance_metrics', {})
+            'performance_metrics': automl_info_dict.get('performance_metrics', {}),
+            'storage_type': explain_info.get('storage_type', 'unknown'),
+            'gcs_bucket': explain_info.get('gcs_bucket', 'unknown')
         }
         
         return summary
         
     except Exception:
-        return None 
+        return None
+
+
+def get_explainability_stage_summary(run_id: str) -> Optional[dict]:
+    """
+    Legacy compatibility function - redirects to GCS version.
+    
+    Args:
+        run_id: Unique run identifier
+        
+    Returns:
+        Dictionary with explainability stage summary, or None if not completed
+    """
+    return get_explainability_stage_summary_gcs(run_id) 

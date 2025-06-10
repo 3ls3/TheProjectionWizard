@@ -1,6 +1,7 @@
 """
 SHAP Logic for The Projection Wizard.
 Core logic for generating SHAP explanations and summary plots.
+Refactored for GCS-based storage.
 """
 
 import shap
@@ -11,6 +12,10 @@ import logging
 from pathlib import Path
 from typing import Any, Optional, Union, Callable
 import warnings
+import tempfile
+import io
+
+from api.utils.gcs_utils import upload_run_file, PROJECT_BUCKET_NAME
 
 # Suppress some warnings that might come from SHAP/matplotlib
 warnings.filterwarnings('ignore', category=FutureWarning, module='shap')
@@ -87,6 +92,252 @@ def _create_prediction_function(pipeline: Any, task_type: str, logger: Optional[
             raise ValueError("Pipeline has no suitable prediction method for regression")
 
 
+def generate_shap_summary_plot_gcs(
+    pycaret_pipeline: Any, 
+    X_data_sample: pd.DataFrame, 
+    run_id: str,
+    plot_gcs_path: str,
+    task_type: str,
+    gcs_bucket_name: str = PROJECT_BUCKET_NAME,
+    logger: Optional[logging.Logger] = None
+) -> bool:
+    """
+    Generate a SHAP summary plot for the given PyCaret pipeline and save it to GCS.
+    
+    Args:
+        pycaret_pipeline: The loaded PyCaret pipeline object (from pycaret_pipeline.pkl)
+        X_data_sample: A pandas DataFrame sample of the features (without target column)
+        run_id: Unique run identifier for GCS storage
+        plot_gcs_path: GCS path where the plot will be saved (e.g., "plots/shap_summary.png")
+        task_type: "classification" or "regression" to guide SHAP explainer type
+        gcs_bucket_name: GCS bucket name for storage
+        logger: Optional logger for detailed logging
+        
+    Returns:
+        True if plot generation and saving to GCS were successful, False otherwise
+    """
+    if logger is None:
+        logger = logging.getLogger(__name__)
+    
+    try:
+        logger.info(f"Starting SHAP summary plot generation for {task_type} task (GCS-based)")
+        logger.info(f"Input data sample shape: {X_data_sample.shape}")
+        logger.info(f"Plot GCS path: {plot_gcs_path}")
+        logger.info(f"GCS bucket: {gcs_bucket_name}")
+        
+        # =====================================
+        # 1. PREPARE DATA SAMPLE FOR SHAP
+        # =====================================
+        
+        # Limit sample size for performance if needed
+        max_sample_size = 500
+        if len(X_data_sample) > max_sample_size:
+            logger.info(f"Sampling {max_sample_size} rows from {len(X_data_sample)} for SHAP performance")
+            X_sample = X_data_sample.sample(n=max_sample_size, random_state=42)
+        else:
+            X_sample = X_data_sample.copy()
+        
+        logger.info(f"Using {len(X_sample)} samples for SHAP explanation")
+        
+        # Ensure data is numeric (should be after prep stage, but validate)
+        if not all(X_sample.dtypes.apply(lambda x: np.issubdtype(x, np.number))):
+            logger.warning("Non-numeric columns detected in data sample")
+            # Log column types for debugging
+            for col, dtype in X_sample.dtypes.items():
+                if not np.issubdtype(dtype, np.number):
+                    logger.warning(f"  Non-numeric column '{col}': {dtype}")
+        
+        # Convert boolean columns to integers to prevent SHAP isfinite errors
+        bool_columns = X_sample.select_dtypes(include=['bool']).columns
+        if len(bool_columns) > 0:
+            logger.info(f"Converting {len(bool_columns)} boolean columns to integers for SHAP compatibility")
+            X_sample = X_sample.copy()
+            X_sample[bool_columns] = X_sample[bool_columns].astype(int)
+            logger.info("Boolean to integer conversion completed")
+        
+        # Final validation that all columns are numeric
+        non_numeric_cols = []
+        for col in X_sample.columns:
+            if not np.issubdtype(X_sample[col].dtype, np.number):
+                non_numeric_cols.append(f"{col} ({X_sample[col].dtype})")
+        
+        if non_numeric_cols:
+            logger.error(f"Still have non-numeric columns after conversion: {non_numeric_cols}")
+            return False
+        
+        # =====================================
+        # 2. CREATE SHAP EXPLAINER
+        # =====================================
+        
+        logger.info("Creating SHAP explainer...")
+        
+        try:
+            # Get appropriate prediction function
+            prediction_function = _create_prediction_function(pycaret_pipeline, task_type, logger)
+            
+            # Create SHAP explainer
+            logger.info("Creating SHAP explainer with adaptive prediction function")
+            explainer = shap.Explainer(prediction_function, X_sample)
+            
+            logger.info("SHAP explainer created successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to create SHAP explainer: {e}")
+            # Try fallback approach with Kernel explainer
+            try:
+                logger.info("Attempting fallback with KernelExplainer...")
+                prediction_function = _create_prediction_function(pycaret_pipeline, task_type, logger)
+                explainer = shap.KernelExplainer(
+                    prediction_function, 
+                    shap.sample(X_sample, min(50, len(X_sample)))
+                )
+                logger.info("Fallback KernelExplainer created successfully")
+            except Exception as e2:
+                logger.error(f"Fallback explainer also failed: {e2}")
+                return False
+        
+        # =====================================
+        # 3. CALCULATE SHAP VALUES
+        # =====================================
+        
+        logger.info("Calculating SHAP values...")
+        
+        try:
+            # Calculate SHAP values for the sample
+            shap_values = explainer(X_sample)
+            logger.info("SHAP values calculated successfully")
+            
+            # Log shape information for debugging
+            if hasattr(shap_values, 'values'):
+                logger.info(f"SHAP values shape: {shap_values.values.shape}")
+            else:
+                logger.info(f"SHAP values type: {type(shap_values)}")
+            
+        except Exception as e:
+            logger.error(f"Failed to calculate SHAP values: {e}")
+            return False
+        
+        # =====================================
+        # 4. HANDLE MULTI-CLASS CLASSIFICATION
+        # =====================================
+        
+        # For classification with multiple outputs (multi-class), select appropriate values
+        shap_values_for_plot = shap_values
+        
+        if task_type == "classification" and hasattr(shap_values, 'values'):
+            if len(shap_values.values.shape) == 3:  # Multi-class case
+                logger.info(f"Multi-class classification detected, shape: {shap_values.values.shape}")
+                # Use the positive class (index 1) for binary, or sum for multi-class
+                if shap_values.values.shape[2] == 2:
+                    # Binary classification - use positive class
+                    logger.info("Using positive class (index 1) for binary classification")
+                    shap_values_for_plot = shap.Explanation(
+                        values=shap_values.values[:, :, 1],
+                        base_values=shap_values.base_values[:, 1] if hasattr(shap_values, 'base_values') else None,
+                        data=shap_values.data if hasattr(shap_values, 'data') else X_sample.values,
+                        feature_names=list(X_sample.columns)
+                    )
+                else:
+                    # Multi-class - use mean absolute values across classes
+                    logger.info("Using mean absolute values across classes for multi-class")
+                    mean_abs_values = np.mean(np.abs(shap_values.values), axis=2)
+                    shap_values_for_plot = shap.Explanation(
+                        values=mean_abs_values,
+                        base_values=None,
+                        data=shap_values.data if hasattr(shap_values, 'data') else X_sample.values,
+                        feature_names=list(X_sample.columns)
+                    )
+        
+        # =====================================
+        # 5. GENERATE PLOT AND SAVE TO GCS
+        # =====================================
+        
+        logger.info("Generating SHAP summary plot...")
+        
+        try:
+            # Create a new figure to ensure clean state
+            plt.figure(figsize=(10, 8))
+            
+            # Generate SHAP summary plot
+            # Use bar plot for cleaner visualization in MVP
+            shap.summary_plot(
+                shap_values_for_plot, 
+                X_sample, 
+                show=False,  # Don't show, just prepare for saving
+                plot_type="bar",  # Bar plot is cleaner for MVP
+                max_display=20  # Limit to top 20 features for readability
+            )
+            
+            # Improve plot appearance
+            plt.title(f"SHAP Feature Importance - {task_type.title()}", fontsize=14, fontweight='bold')
+            plt.xlabel("Mean |SHAP Value|", fontsize=12)
+            plt.tight_layout()
+            
+            # Save plot to temporary file first, then upload to GCS
+            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_file:
+                temp_plot_path = tmp_file.name
+            
+            try:
+                # Save the plot to temporary file
+                plt.savefig(
+                    temp_plot_path, 
+                    bbox_inches='tight', 
+                    dpi=150,  # Good quality for reports
+                    facecolor='white',
+                    edgecolor='none'
+                )
+                
+                # Close the figure to free memory
+                plt.close()
+                
+                logger.info(f"Plot saved to temporary file: {temp_plot_path}")
+                
+                # Verify file was created and has reasonable size
+                temp_path_obj = Path(temp_plot_path)
+                if temp_path_obj.exists():
+                    file_size_kb = temp_path_obj.stat().st_size / 1024
+                    logger.info(f"Temporary plot file size: {file_size_kb:.1f} KB")
+                    
+                    if file_size_kb < 1:  # Less than 1KB probably indicates an issue
+                        logger.warning("Plot file size is very small, may indicate an issue")
+                        return False
+                else:
+                    logger.error("Temporary plot file was not created")
+                    return False
+                
+                # Upload to GCS
+                upload_success = upload_run_file(run_id, plot_gcs_path, temp_plot_path)
+                
+                if upload_success:
+                    logger.info(f"SHAP summary plot successfully uploaded to GCS: {plot_gcs_path}")
+                else:
+                    logger.error("Failed to upload plot to GCS")
+                    return False
+                
+            finally:
+                # Clean up temporary file
+                try:
+                    if Path(temp_plot_path).exists():
+                        Path(temp_plot_path).unlink()
+                        logger.info("Temporary plot file cleaned up")
+                except Exception as cleanup_error:
+                    logger.warning(f"Could not clean up temporary plot file {temp_plot_path}: {cleanup_error}")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to generate or save SHAP plot to GCS: {e}")
+            # Ensure we close any open figures
+            plt.close('all')
+            return False
+    
+    except Exception as e:
+        logger.error(f"Unexpected error in SHAP plot generation (GCS): {e}")
+        # Ensure we close any open figures in case of error
+        plt.close('all')
+        return False
+
+
 def generate_shap_summary_plot(
     pycaret_pipeline: Any, 
     X_data_sample: pd.DataFrame, 
@@ -95,12 +346,12 @@ def generate_shap_summary_plot(
     logger: Optional[logging.Logger] = None
 ) -> bool:
     """
-    Generate a SHAP summary plot for the given PyCaret pipeline and save it as an image.
+    Legacy compatibility function - redirects to GCS version.
     
     Args:
         pycaret_pipeline: The loaded PyCaret pipeline object (from pycaret_pipeline.pkl)
         X_data_sample: A pandas DataFrame sample of the features (without target column)
-        plot_save_path: Full Path object where the SHAP summary plot image will be saved
+        plot_save_path: Full Path object where the SHAP summary plot image will be saved (ignored in GCS version)
         task_type: "classification" or "regression" to guide SHAP explainer type
         logger: Optional logger for detailed logging
         
@@ -110,8 +361,11 @@ def generate_shap_summary_plot(
     if logger is None:
         logger = logging.getLogger(__name__)
     
+    logger.warning("Using legacy generate_shap_summary_plot function")
+    logger.warning("This function saves to local filesystem. Consider using generate_shap_summary_plot_gcs for GCS storage.")
+    
     try:
-        logger.info(f"Starting SHAP summary plot generation for {task_type} task")
+        logger.info(f"Starting SHAP summary plot generation for {task_type} task (legacy)")
         logger.info(f"Input data sample shape: {X_data_sample.shape}")
         logger.info(f"Plot save path: {plot_save_path}")
         
@@ -242,10 +496,10 @@ def generate_shap_summary_plot(
                     )
         
         # =====================================
-        # 5. GENERATE AND SAVE PLOT
+        # 5. GENERATE AND SAVE PLOT (LEGACY)
         # =====================================
         
-        logger.info("Generating SHAP summary plot...")
+        logger.info("Generating SHAP summary plot (legacy mode)...")
         
         try:
             # Create a new figure to ensure clean state

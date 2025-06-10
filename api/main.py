@@ -32,7 +32,9 @@ allowed_origins = [
     "http://localhost:8081",
     "http://127.0.0.1:3000",
     "http://127.0.0.1:8080",
-    "http://127.0.0.1:8081"
+    "http://127.0.0.1:8081",
+    "https://lovable.dev/projects/dca90495-2ee9-4de4-86ef-b619f83fc331",
+    "https://www.predictingwizard.com/",
 ]
 
 app.add_middleware(

@@ -1,6 +1,7 @@
 """
 AutoML Stage Runner for The Projection Wizard.
 Orchestrates the complete AutoML stage using PyCaret for model training.
+Refactored for GCS-based storage.
 """
 
 import pandas as pd
@@ -8,24 +9,33 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 import traceback
+import tempfile
+import io
 
 from common import logger, storage, constants, schemas
+from api.utils.gcs_utils import (
+    download_run_file, upload_run_file, check_run_file_exists, 
+    PROJECT_BUCKET_NAME
+)
 from . import pycaret_logic
 
 
-def run_automl_stage(run_id: str, test_mode: bool = False) -> bool:
+def run_automl_stage_gcs(run_id: str, 
+                        test_mode: bool = False,
+                        gcs_bucket_name: str = PROJECT_BUCKET_NAME) -> bool:
     """
-    Execute the complete AutoML stage for a given run.
+    Execute the complete AutoML stage for a given run using GCS storage.
 
     This function orchestrates:
-    1. Loading inputs (metadata.json, cleaned_data.csv)
+    1. Loading inputs (metadata.json, cleaned_data.csv) from GCS
     2. Running PyCaret AutoML experiment
-    3. Saving model and updating metadata
+    3. Saving model to GCS and updating metadata
     4. Updating pipeline status
 
     Args:
         run_id: Unique run identifier
         test_mode: Flag to allow AutoML to work with very small datasets for testing purposes
+        gcs_bucket_name: GCS bucket name for storage
 
     Returns:
         True if stage completes successfully, False otherwise
@@ -44,14 +54,14 @@ def run_automl_stage(run_id: str, test_mode: bool = False) -> bool:
         # =============================
         # 1. VALIDATE INPUTS
         # =============================
-        log.info("Starting AutoML stage validation...")
+        log.info("Starting AutoML stage validation (GCS-based)...")
 
         # Structured log: Stage started
         logger.log_structured_event(
             structured_log,
             "stage_started",
-            {"stage": constants.AUTOML_STAGE, "test_mode": test_mode},
-            "AutoML stage validation started"
+            {"stage": constants.AUTOML_STAGE, "test_mode": test_mode, "storage_type": "gcs"},
+            "AutoML stage validation started (GCS-based)"
         )
 
         # Check if validation stage failed - prevent AutoML from running
@@ -77,7 +87,7 @@ def run_automl_stage(run_id: str, test_mode: bool = False) -> bool:
             log.warning(f"Could not check validation status: {e}")
             # Continue execution - don't fail on status check errors
 
-        if not validate_automl_stage_inputs(run_id):
+        if not validate_automl_stage_inputs_gcs(run_id, gcs_bucket_name):
             log.error("AutoML stage input validation failed")
             logger.log_structured_error(
                 structured_log,
@@ -88,20 +98,20 @@ def run_automl_stage(run_id: str, test_mode: bool = False) -> bool:
             _update_status_failed(run_id, "Input validation failed")
             return False
 
-        log.info("AutoML stage inputs validated successfully")
+        log.info("AutoML stage inputs validated successfully (GCS)")
 
         # Structured log: Validation passed
         logger.log_structured_event(
             structured_log,
             "input_validation_passed",
-            {"stage": constants.AUTOML_STAGE},
-            "AutoML stage input validation passed"
+            {"stage": constants.AUTOML_STAGE, "storage_type": "gcs"},
+            "AutoML stage input validation passed (GCS)"
         )
 
         # =============================
-        # 2. LOAD METADATA AND DATA
+        # 2. LOAD METADATA AND DATA FROM GCS
         # =============================
-        log.info("Loading metadata and cleaned data...")
+        log.info("Loading metadata and cleaned data from GCS...")
 
         try:
             # Load metadata
@@ -111,12 +121,21 @@ def run_automl_stage(run_id: str, test_mode: bool = False) -> bool:
 
             log.info(f"Target info loaded: column='{target_info.name}', task_type='{target_info.task_type}'")
 
-            # Load cleaned data
-            df_ml_ready = storage.read_cleaned_data(run_id)
-            if df_ml_ready is None:
-                raise Exception("Could not load cleaned data")
+            # Load cleaned data from GCS
+            if not check_run_file_exists(run_id, constants.CLEANED_DATA_FILE):
+                raise Exception(f"Cleaned data file not found in GCS: {constants.CLEANED_DATA_FILE}")
 
-            log.info(f"Cleaned data loaded: shape={df_ml_ready.shape}")
+            # Download cleaned data from GCS
+            cleaned_data_bytes = download_run_file(run_id, constants.CLEANED_DATA_FILE)
+            if cleaned_data_bytes is None:
+                raise Exception("Failed to download cleaned data from GCS")
+
+            # Load CSV from bytes
+            df_ml_ready = pd.read_csv(io.BytesIO(cleaned_data_bytes))
+            if df_ml_ready is None or df_ml_ready.empty:
+                raise Exception("Cleaned data is empty or could not be loaded")
+
+            log.info(f"Cleaned data loaded from GCS: shape={df_ml_ready.shape}")
 
             # Structured log: Data loaded
             logger.log_structured_event(
@@ -125,20 +144,21 @@ def run_automl_stage(run_id: str, test_mode: bool = False) -> bool:
                 {
                     "target_column": target_info.name,
                     "task_type": target_info.task_type,
-                    "data_shape": {"rows": df_ml_ready.shape[0], "columns": df_ml_ready.shape[1]}
+                    "data_shape": {"rows": df_ml_ready.shape[0], "columns": df_ml_ready.shape[1]},
+                    "source": "gcs"
                 },
-                f"Training data loaded: {df_ml_ready.shape}"
+                f"Training data loaded from GCS: {df_ml_ready.shape}"
             )
 
         except Exception as e:
-            log.error(f"Failed to load inputs: {e}")
+            log.error(f"Failed to load inputs from GCS: {e}")
             logger.log_structured_error(
                 structured_log,
                 "data_loading_failed",
-                f"Failed to load inputs: {str(e)}",
+                f"Failed to load inputs from GCS: {str(e)}",
                 {"stage": constants.AUTOML_STAGE}
             )
-            _update_status_failed(run_id, f"Failed to load inputs: {str(e)}")
+            _update_status_failed(run_id, f"Failed to load inputs from GCS: {str(e)}")
             return False
 
         # =============================
@@ -154,19 +174,20 @@ def run_automl_stage(run_id: str, test_mode: bool = False) -> bool:
                 "tool": "PyCaret",
                 "dataset_shape": {"rows": df_ml_ready.shape[0], "columns": df_ml_ready.shape[1]},
                 "target_column": target_info.name,
-                "task_type": target_info.task_type
+                "task_type": target_info.task_type,
+                "storage_type": "gcs"
             },
-            "AutoML training started with PyCaret"
+            "AutoML training started with PyCaret (GCS-based)"
         )
 
         try:
-            # Run PyCaret AutoML
-            best_model, metrics, model_name = pycaret_logic.run_pycaret_experiment(
+            # Run PyCaret AutoML with GCS support
+            best_model, metrics, model_name = pycaret_logic.run_pycaret_experiment_gcs(
                 df_ml_ready=df_ml_ready,
                 target_column_name=target_info.name,
                 task_type=target_info.task_type,
                 run_id=run_id,
-                pycaret_model_dir=storage.get_run_dir(run_id) / constants.MODEL_DIR,
+                gcs_bucket_name=gcs_bucket_name,
                 test_mode=test_mode
             )
 
@@ -180,7 +201,8 @@ def run_automl_stage(run_id: str, test_mode: bool = False) -> bool:
                 {
                     "model_name": model_name,
                     "metrics": metrics,
-                    "tool": "PyCaret"
+                    "tool": "PyCaret",
+                    "storage_type": "gcs"
                 },
                 f"AutoML training completed: {model_name}"
             )
@@ -207,42 +229,41 @@ def run_automl_stage(run_id: str, test_mode: bool = False) -> bool:
             return False
 
         # =============================
-        # 4. SAVE MODEL
+        # 4. VERIFY MODEL SAVED TO GCS
         # =============================
-        log.info("Saving trained model...")
+        log.info("Verifying trained model saved to GCS...")
 
         try:
-            # Verify model was saved by the pycaret_experiment function
-            run_dir = storage.get_run_dir(run_id)
-            model_dir = run_dir / constants.MODEL_DIR
-            model_path = model_dir / "pycaret_pipeline.pkl"
+            # Check if model was saved to GCS by the pycaret_experiment function
+            model_filename = "pycaret_pipeline.pkl"
+            model_gcs_path = f"{constants.MODEL_DIR}/{model_filename}"
 
-            if model_path.exists():
-                log.info(f"Model verified saved at: {model_path}")
+            if check_run_file_exists(run_id, model_gcs_path):
+                log.info(f"Model verified saved to GCS: {model_gcs_path}")
 
                 # Structured log: Model saved
                 logger.log_structured_event(
                     structured_log,
                     "model_saved",
                     {
-                        "model_path": str(model_path.relative_to(run_dir)),
+                        "model_gcs_path": model_gcs_path,
                         "model_name": model_name,
-                        "file_size_bytes": model_path.stat().st_size
+                        "storage_type": "gcs"
                     },
-                    f"Model saved: {model_path.name}"
+                    f"Model saved to GCS: {model_gcs_path}"
                 )
             else:
-                raise FileNotFoundError(f"Model was not saved at expected location: {model_path}")
+                raise FileNotFoundError(f"Model was not saved to GCS at expected location: {model_gcs_path}")
 
         except Exception as e:
-            log.error(f"Failed to save model: {e}")
+            log.error(f"Failed to verify model in GCS: {e}")
             logger.log_structured_error(
                 structured_log,
                 "model_save_failed",
-                f"Failed to save model: {str(e)}",
+                f"Failed to verify model in GCS: {str(e)}",
                 {"stage": constants.AUTOML_STAGE}
             )
-            _update_status_failed(run_id, f"Failed to save model: {str(e)}")
+            _update_status_failed(run_id, f"Failed to verify model in GCS: {str(e)}")
             return False
 
         # =============================
@@ -251,16 +272,18 @@ def run_automl_stage(run_id: str, test_mode: bool = False) -> bool:
         log.info("Updating metadata with AutoML results...")
 
         try:
-            # Create automl_info dictionary
+            # Create automl_info dictionary with GCS paths
             automl_info = {
                 'tool_used': 'PyCaret',
                 'best_model_name': model_name,
-                'pycaret_pipeline_path': str(Path(constants.MODEL_DIR) / 'pycaret_pipeline.pkl'),  # Relative to run_dir
+                'pycaret_pipeline_gcs_path': model_gcs_path,  # GCS path instead of local path
                 'performance_metrics': metrics,
                 'automl_completed_at': datetime.now(timezone.utc).isoformat(),
                 'target_column': target_info.name,
                 'task_type': target_info.task_type,
-                'dataset_shape_for_training': list(df_ml_ready.shape)
+                'dataset_shape_for_training': list(df_ml_ready.shape),
+                'storage_type': 'gcs',
+                'gcs_bucket': gcs_bucket_name
             }
 
             # =============================
@@ -270,10 +293,17 @@ def run_automl_stage(run_id: str, test_mode: bool = False) -> bool:
                 try:
                     log.info("Extracting class labels for classification task...")
 
-                    # Load the trained model to extract class labels
+                    # Download the trained model from GCS to extract class labels
+                    model_bytes = download_run_file(run_id, model_gcs_path)
+                    if model_bytes is None:
+                        raise Exception("Could not download model from GCS for class label extraction")
+
+                    # Load model from bytes
                     import joblib
-                    model_path = storage.get_run_dir(run_id) / constants.MODEL_DIR / "pycaret_pipeline.pkl"
-                    trained_pipeline = joblib.load(model_path)
+                    with tempfile.NamedTemporaryFile() as tmp_file:
+                        tmp_file.write(model_bytes)
+                        tmp_file.flush()
+                        trained_pipeline = joblib.load(tmp_file.name)
 
                     # Extract class labels from the model
                     class_labels = None
@@ -311,17 +341,28 @@ def run_automl_stage(run_id: str, test_mode: bool = False) -> bool:
                         automl_info['class_labels'] = class_labels
                         log.info(f"Added {len(class_labels)} class labels to automl_info")
 
-                        # Save class labels to separate JSON file for quick access
+                        # Save class labels to separate JSON file in GCS for quick access
                         class_labels_data = {
                             'class_labels': class_labels,
                             'task_type': target_info.task_type,
                             'target_column': target_info.name,
                             'extracted_at': datetime.now(timezone.utc).isoformat(),
-                            'extraction_method': 'model_classes_attribute'
+                            'extraction_method': 'model_classes_attribute',
+                            'storage_type': 'gcs'
                         }
 
-                        storage.write_json_atomic(run_id, 'class_labels.json', class_labels_data)
-                        log.info("Class labels saved to class_labels.json")
+                        # Upload class labels to GCS
+                        class_labels_json = io.BytesIO(
+                            str.encode(
+                                str(class_labels_data).replace("'", '"')  # Simple JSON conversion
+                            )
+                        )
+                        upload_success = upload_run_file(run_id, 'class_labels.json', class_labels_json)
+                        
+                        if upload_success:
+                            log.info("Class labels saved to GCS: class_labels.json")
+                        else:
+                            log.warning("Failed to save class labels to GCS")
 
                         # Structured log: Class labels extracted
                         logger.log_structured_event(
@@ -329,7 +370,8 @@ def run_automl_stage(run_id: str, test_mode: bool = False) -> bool:
                             "class_labels_extracted",
                             {
                                 "class_labels": class_labels,
-                                "num_classes": len(class_labels)
+                                "num_classes": len(class_labels),
+                                "storage_type": "gcs"
                             },
                             f"Extracted {len(class_labels)} class labels"
                         )
@@ -359,7 +401,10 @@ def run_automl_stage(run_id: str, test_mode: bool = False) -> bool:
             logger.log_structured_event(
                 structured_log,
                 "metadata_updated",
-                {"automl_info_keys": list(automl_info.keys())},
+                {
+                    "automl_info_keys": list(automl_info.keys()),
+                    "storage_type": "gcs"
+                },
                 "Metadata updated with AutoML results"
             )
 
@@ -381,7 +426,7 @@ def run_automl_stage(run_id: str, test_mode: bool = False) -> bool:
             status_data = {
                 "stage": constants.AUTOML_STAGE,
                 "status": "completed",
-                "message": f"AutoML completed. Best model: {model_name}"
+                "message": f"AutoML completed (GCS-based). Best model: {model_name}"
             }
             storage.write_json_atomic(run_id, constants.STATUS_FILENAME, status_data)
             log.info("Status updated to completed")
@@ -390,8 +435,8 @@ def run_automl_stage(run_id: str, test_mode: bool = False) -> bool:
             logger.log_structured_event(
                 structured_log,
                 "status_updated",
-                {"status": "completed", "stage": constants.AUTOML_STAGE},
-                "AutoML stage status updated to completed"
+                {"status": "completed", "stage": constants.AUTOML_STAGE, "storage_type": "gcs"},
+                "AutoML stage status updated to completed (GCS-based)"
             )
 
         except Exception as e:
@@ -405,7 +450,7 @@ def run_automl_stage(run_id: str, test_mode: bool = False) -> bool:
 
         # Log detailed completion for technical log
         log.info("="*50)
-        log.info("AUTOML STAGE COMPLETED SUCCESSFULLY")
+        log.info("AUTOML STAGE COMPLETED SUCCESSFULLY (GCS)")
         log.info("="*50)
         log.info(f"Dataset shape: {df_ml_ready.shape}")
         log.info(f"Target column: {target_info.name}")
@@ -414,8 +459,8 @@ def run_automl_stage(run_id: str, test_mode: bool = False) -> bool:
         log.info(f"Performance metrics:")
         for metric_name, metric_value in metrics.items():
             log.info(f"  - {metric_name}: {metric_value}")
-        log.info(f"Output files:")
-        log.info(f"  - {constants.MODEL_DIR}/pycaret_pipeline.pkl")
+        log.info(f"GCS files created:")
+        log.info(f"  - {model_gcs_path}")
         log.info(f"  - {constants.METADATA_FILENAME} (updated)")
         log.info(f"  - {constants.STATUS_FILENAME} (updated)")
         if target_info.task_type == "classification" and automl_info.get('class_labels'):
@@ -432,9 +477,10 @@ def run_automl_stage(run_id: str, test_mode: bool = False) -> bool:
                 "duration_seconds": training_duration,
                 "model_name": model_name,
                 "metrics_count": len(metrics),
-                "completed_at": end_time.isoformat()
+                "completed_at": end_time.isoformat(),
+                "storage_type": "gcs"
             },
-            f"AutoML stage completed successfully in {training_duration:.1f}s"
+            f"AutoML stage completed successfully in {training_duration:.1f}s (GCS-based)"
         )
 
         # Log high-level summary for pipeline summary
@@ -465,6 +511,22 @@ def run_automl_stage(run_id: str, test_mode: bool = False) -> bool:
         return False
 
 
+def run_automl_stage(run_id: str, test_mode: bool = False) -> bool:
+    """
+    Legacy compatibility function - redirects to GCS version.
+
+    Args:
+        run_id: Unique run identifier
+        test_mode: Flag to allow AutoML to work with very small datasets for testing purposes
+
+    Returns:
+        True if stage completes successfully, False otherwise
+    """
+    logger_instance = logger.get_stage_logger(run_id, constants.AUTOML_STAGE)
+    logger_instance.warning("Using legacy run_automl_stage function - redirecting to GCS version")
+    return run_automl_stage_gcs(run_id, test_mode)
+
+
 def _update_status_failed(run_id: str, error_message: str) -> None:
     """
     Helper function to update status.json to failed state.
@@ -486,12 +548,14 @@ def _update_status_failed(run_id: str, error_message: str) -> None:
         log.error(f"Could not update status to failed: {e}")
 
 
-def validate_automl_stage_inputs(run_id: str) -> bool:
+def validate_automl_stage_inputs_gcs(run_id: str, 
+                                    gcs_bucket_name: str = PROJECT_BUCKET_NAME) -> bool:
     """
-    Validate that all required inputs for the AutoML stage are available.
+    Validate that all required inputs for the AutoML stage are available in GCS.
 
     Args:
         run_id: Run identifier
+        gcs_bucket_name: GCS bucket name
 
     Returns:
         True if all inputs are valid, False otherwise
@@ -499,28 +563,20 @@ def validate_automl_stage_inputs(run_id: str) -> bool:
     log = logger.get_stage_logger(run_id, constants.AUTOML_STAGE)
 
     try:
-        # Check if run directory exists
-        run_dir = storage.get_run_dir(run_id)
-        if not run_dir.exists():
-            log.error(f"Run directory does not exist: {run_dir}")
+        # Check if metadata.json exists (this might still be in local storage)
+        try:
+            metadata_dict = storage.read_json(run_id, constants.METADATA_FILENAME)
+        except Exception as e:
+            log.error(f"Metadata file does not exist or cannot be read: {e}")
             return False
 
-        # Check if metadata.json exists
-        metadata_path = run_dir / constants.METADATA_FILENAME
-        if not metadata_path.exists():
-            log.error(f"Metadata file does not exist: {metadata_path}")
-            return False
-
-        # Check if cleaned_data.csv exists
-        cleaned_data_path = run_dir / constants.CLEANED_DATA_FILE
-        if not cleaned_data_path.exists():
-            log.error(f"Cleaned data file does not exist: {cleaned_data_path}")
+        # Check if cleaned_data.csv exists in GCS
+        if not check_run_file_exists(run_id, constants.CLEANED_DATA_FILE):
+            log.error(f"Cleaned data file does not exist in GCS: {constants.CLEANED_DATA_FILE}")
             return False
 
         # Try to load and validate metadata structure
         try:
-            metadata_dict = storage.read_json(run_id, constants.METADATA_FILENAME)
-
             # Check for required keys
             if 'target_info' not in metadata_dict:
                 log.error("Missing 'target_info' in metadata")
@@ -547,7 +603,7 @@ def validate_automl_stage_inputs(run_id: str) -> bool:
                     log.error(f"Missing required field in prep_info: {field}")
                     return False
 
-            log.info("All AutoML stage inputs validated successfully")
+            log.info("All AutoML stage inputs validated successfully (GCS)")
             return True
 
         except Exception as e:
@@ -559,9 +615,24 @@ def validate_automl_stage_inputs(run_id: str) -> bool:
         return False
 
 
-def get_automl_stage_summary(run_id: str) -> Optional[dict]:
+def validate_automl_stage_inputs(run_id: str) -> bool:
     """
-    Get a summary of the AutoML stage results for a given run.
+    Legacy compatibility function - redirects to GCS version.
+
+    Args:
+        run_id: Run identifier
+
+    Returns:
+        True if all inputs are valid, False otherwise
+    """
+    logger_instance = logger.get_stage_logger(run_id, constants.AUTOML_STAGE)
+    logger_instance.warning("Using legacy validate_automl_stage_inputs function - redirecting to GCS version")
+    return validate_automl_stage_inputs_gcs(run_id)
+
+
+def get_automl_stage_summary_gcs(run_id: str) -> Optional[dict]:
+    """
+    Get a summary of the AutoML stage results for a given run (GCS version).
 
     Args:
         run_id: Run identifier
@@ -576,8 +647,9 @@ def get_automl_stage_summary(run_id: str) -> Optional[dict]:
         if not automl_info:
             return None
 
-        # Check if model file exists
-        model_file_path = storage.get_run_dir(run_id) / automl_info.get('pycaret_pipeline_path', '')
+        # Check if model file exists in GCS
+        model_gcs_path = automl_info.get('pycaret_pipeline_gcs_path', '')
+        model_file_exists = check_run_file_exists(run_id, model_gcs_path) if model_gcs_path else False
 
         return {
             'run_id': run_id,
@@ -587,9 +659,24 @@ def get_automl_stage_summary(run_id: str) -> Optional[dict]:
             'target_column': automl_info.get('target_column'),
             'performance_metrics': automl_info.get('performance_metrics', {}),
             'training_dataset_shape': automl_info.get('dataset_shape_for_training'),
-            'model_file_exists': model_file_path.exists() if model_file_path else False,
-            'completed_at': automl_info.get('automl_completed_at')
+            'model_file_exists': model_file_exists,
+            'completed_at': automl_info.get('automl_completed_at'),
+            'storage_type': automl_info.get('storage_type', 'unknown'),
+            'gcs_bucket': automl_info.get('gcs_bucket', 'unknown')
         }
 
     except Exception:
         return None
+
+
+def get_automl_stage_summary(run_id: str) -> Optional[dict]:
+    """
+    Legacy compatibility function - redirects to GCS version.
+
+    Args:
+        run_id: Run identifier
+
+    Returns:
+        Dictionary with AutoML stage summary or None if not available
+    """
+    return get_automl_stage_summary_gcs(run_id)

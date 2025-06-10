@@ -1,6 +1,7 @@
 """
 PyCaret interaction logic for The Projection Wizard.
 Handles AutoML training using PyCaret for classification and regression tasks.
+Refactored for GCS-based storage.
 """
 
 import pandas as pd
@@ -8,30 +9,34 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import traceback
 from datetime import datetime
+import tempfile
+import json
+import io
 
 from common import logger, constants
+from api.utils.gcs_utils import upload_run_file, PROJECT_BUCKET_NAME
 
 
-def run_pycaret_experiment(
+def run_pycaret_experiment_gcs(
     df_ml_ready: pd.DataFrame,
     target_column_name: str,
     task_type: str,
     run_id: str,
-    pycaret_model_dir: Path,
+    gcs_bucket_name: str = PROJECT_BUCKET_NAME,
     session_id: int = 123,
     top_n_models_to_compare: int = 3,
     allow_lightgbm_and_xgboost: bool = True,
     test_mode: bool = False
 ) -> Tuple[Optional[Any], Optional[dict], Optional[str]]:
     """
-    Run PyCaret AutoML experiment for classification or regression.
+    Run PyCaret AutoML experiment for classification or regression with GCS storage.
 
     Args:
         df_ml_ready: The ML-ready DataFrame from cleaned_data.csv
         target_column_name: Name of the target column
         task_type: From target_info.task_type ("classification" or "regression")
         run_id: For logging and unique experiment naming
-        pycaret_model_dir: Path object to data/runs/<run_id>/model/ where PyCaret will save its pipeline
+        gcs_bucket_name: GCS bucket name for storing model and artifacts
         session_id: Integer for PyCaret reproducibility
         top_n_models_to_compare: How many top models from compare_models to consider
         allow_lightgbm_and_xgboost: Flag to include/exclude potentially problematic models
@@ -45,12 +50,13 @@ def run_pycaret_experiment(
     log = logger.get_stage_logger(run_id, constants.AUTOML_STAGE)
 
     try:
-        log.info(f"Starting PyCaret experiment for {task_type} task")
+        log.info(f"Starting PyCaret experiment for {task_type} task (GCS-based)")
         log.info(f"Target column: {target_column_name}")
         log.info(f"Dataset shape: {df_ml_ready.shape}")
         log.info(f"Session ID: {session_id}")
         log.info(f"Top N models to compare: {top_n_models_to_compare}")
         log.info(f"Allow LightGBM/XGBoost: {allow_lightgbm_and_xgboost}")
+        log.info(f"GCS bucket: {gcs_bucket_name}")
         if test_mode:
             log.warning("TEST MODE ENABLED - allowing very small datasets")
 
@@ -138,7 +144,7 @@ def run_pycaret_experiment(
             log.info(f"Setup configuration: {type(pc_setup)}")
 
             # =============================
-            # CAPTURE COLUMN MAPPING
+            # CAPTURE COLUMN MAPPING AND SAVE TO GCS
             # =============================
             try:
                 log.info("Capturing column mapping after PyCaret setup...")
@@ -156,6 +162,7 @@ def run_pycaret_experiment(
                         'encoded_columns': encoded_columns,
                         'target_column': target_column_name,
                         'mapping_created_at': str(datetime.now()),
+                        'storage_type': 'gcs',
                         'column_count_change': {
                             'original': len(original_columns),
                             'encoded': len(encoded_columns),
@@ -187,11 +194,19 @@ def run_pycaret_experiment(
 
                     column_mapping['detailed_mapping'] = detailed_mapping
 
-                    # Save column mapping to JSON
-                    from common import storage
-                    storage.write_json_atomic(run_id, 'column_mapping.json', column_mapping)
-                    log.info("Column mapping saved successfully to column_mapping.json")
-                    log.info(f"Mapped {len(detailed_mapping)} original columns to encoded features")
+                    # Save column mapping to GCS
+                    try:
+                        mapping_json = json.dumps(column_mapping, indent=2)
+                        mapping_bytes = io.BytesIO(mapping_json.encode('utf-8'))
+                        upload_success = upload_run_file(run_id, 'column_mapping.json', mapping_bytes)
+                        
+                        if upload_success:
+                            log.info("Column mapping saved successfully to GCS: column_mapping.json")
+                            log.info(f"Mapped {len(detailed_mapping)} original columns to encoded features")
+                        else:
+                            log.warning("Failed to save column mapping to GCS")
+                    except Exception as save_error:
+                        log.error(f"Failed to save column mapping to GCS: {save_error}")
 
                 else:
                     log.warning("Could not retrieve transformed training data from PyCaret")
@@ -201,11 +216,21 @@ def run_pycaret_experiment(
                         'encoded_columns': original_columns,  # Fallback assumption
                         'target_column': target_column_name,
                         'mapping_created_at': str(datetime.now()),
+                        'storage_type': 'gcs',
                         'warning': 'Could not retrieve PyCaret transformed data'
                     }
-                    from common import storage
-                    storage.write_json_atomic(run_id, 'column_mapping.json', column_mapping)
-                    log.warning("Saved basic column mapping without transformation details")
+                    
+                    try:
+                        mapping_json = json.dumps(column_mapping, indent=2)
+                        mapping_bytes = io.BytesIO(mapping_json.encode('utf-8'))
+                        upload_success = upload_run_file(run_id, 'column_mapping.json', mapping_bytes)
+                        
+                        if upload_success:
+                            log.warning("Saved basic column mapping to GCS without transformation details")
+                        else:
+                            log.warning("Failed to save basic column mapping to GCS")
+                    except Exception as save_error:
+                        log.error(f"Failed to save basic column mapping to GCS: {save_error}")
 
             except Exception as mapping_error:
                 log.error(f"Failed to capture column mapping: {mapping_error}")
@@ -316,27 +341,50 @@ def run_pycaret_experiment(
             return None, None, None
 
         # =============================
-        # 4. SAVE MODEL
+        # 4. SAVE MODEL TO GCS
         # =============================
-        log.info("Saving PyCaret pipeline...")
+        log.info("Saving PyCaret pipeline to GCS...")
 
         try:
-            # Ensure the model directory exists
-            pycaret_model_dir.mkdir(parents=True, exist_ok=True)
+            # Save model to temporary file first, then upload to GCS
+            with tempfile.NamedTemporaryFile(suffix='.pkl', delete=False) as tmp_file:
+                temp_model_path = tmp_file.name
 
-            # Save the finalized pipeline
-            model_save_path = str(pycaret_model_dir / 'pycaret_pipeline')
-            save_model(final_pipeline, model_save_path)
+            try:
+                # Save the finalized pipeline to temporary file
+                save_model(final_pipeline, temp_model_path.replace('.pkl', ''))  # PyCaret adds .pkl
 
-            # PyCaret automatically adds .pkl extension
-            actual_model_file = pycaret_model_dir / 'pycaret_pipeline.pkl'
-            if actual_model_file.exists():
-                log.info(f"Model saved successfully: {actual_model_file}")
-            else:
-                log.warning(f"Model file not found at expected location: {actual_model_file}")
+                # Check if the file was created (PyCaret adds .pkl extension)
+                actual_temp_file = temp_model_path
+                if not Path(actual_temp_file).exists():
+                    # Try with .pkl extension
+                    actual_temp_file = temp_model_path.replace('.pkl', '') + '.pkl'
+
+                if Path(actual_temp_file).exists():
+                    log.info(f"Model saved to temporary file: {actual_temp_file}")
+
+                    # Upload to GCS
+                    model_gcs_path = f"{constants.MODEL_DIR}/pycaret_pipeline.pkl"
+                    upload_success = upload_run_file(run_id, model_gcs_path, actual_temp_file)
+
+                    if upload_success:
+                        log.info(f"Model successfully uploaded to GCS: {model_gcs_path}")
+                    else:
+                        raise Exception("Failed to upload model to GCS")
+                else:
+                    raise Exception(f"Model file not created at expected location: {actual_temp_file}")
+
+            finally:
+                # Clean up temporary files
+                for temp_path in [temp_model_path, temp_model_path.replace('.pkl', '') + '.pkl']:
+                    try:
+                        if Path(temp_path).exists():
+                            Path(temp_path).unlink()
+                    except Exception as cleanup_error:
+                        log.warning(f"Could not clean up temporary file {temp_path}: {cleanup_error}")
 
         except Exception as e:
-            log.error(f"Model saving failed: {e}")
+            log.error(f"Model saving to GCS failed: {e}")
             log.error(f"Traceback: {traceback.format_exc()}")
             return None, None, None
 
@@ -422,10 +470,11 @@ def run_pycaret_experiment(
         # =============================
         # SUCCESS
         # =============================
-        log.info("PyCaret experiment completed successfully")
+        log.info("PyCaret experiment completed successfully (GCS-based)")
         log.info(f"Final pipeline type: {type(final_pipeline)}")
         log.info(f"Model name: {best_model_name_str}")
         log.info(f"Performance metrics: {len(performance_metrics)} metrics extracted")
+        log.info(f"Model saved to GCS: {model_gcs_path}")
 
         return final_pipeline, performance_metrics, best_model_name_str
 
@@ -433,6 +482,51 @@ def run_pycaret_experiment(
         log.error(f"Unexpected error in PyCaret experiment: {e}")
         log.error(f"Traceback: {traceback.format_exc()}")
         return None, None, None
+
+
+def run_pycaret_experiment(
+    df_ml_ready: pd.DataFrame,
+    target_column_name: str,
+    task_type: str,
+    run_id: str,
+    pycaret_model_dir: Path,
+    session_id: int = 123,
+    top_n_models_to_compare: int = 3,
+    allow_lightgbm_and_xgboost: bool = True,
+    test_mode: bool = False
+) -> Tuple[Optional[Any], Optional[dict], Optional[str]]:
+    """
+    Legacy compatibility function - redirects to GCS version.
+    
+    Args:
+        df_ml_ready: The ML-ready DataFrame from cleaned_data.csv
+        target_column_name: Name of the target column
+        task_type: From target_info.task_type ("classification" or "regression")
+        run_id: For logging and unique experiment naming
+        pycaret_model_dir: Path object to model directory (ignored in GCS version)
+        session_id: Integer for PyCaret reproducibility
+        top_n_models_to_compare: How many top models from compare_models to consider
+        allow_lightgbm_and_xgboost: Flag to include/exclude potentially problematic models
+        test_mode: Flag to allow AutoML to work with very small datasets for testing purposes
+
+    Returns:
+        Tuple of (final_pycaret_pipeline, performance_metrics, best_model_name_str)
+        Returns (None, None, None) if any step fails
+    """
+    logger_instance = logger.get_stage_logger(run_id, constants.AUTOML_STAGE)
+    logger_instance.warning("Using legacy run_pycaret_experiment function - redirecting to GCS version")
+    
+    return run_pycaret_experiment_gcs(
+        df_ml_ready=df_ml_ready,
+        target_column_name=target_column_name,
+        task_type=task_type,
+        run_id=run_id,
+        gcs_bucket_name=PROJECT_BUCKET_NAME,
+        session_id=session_id,
+        top_n_models_to_compare=top_n_models_to_compare,
+        allow_lightgbm_and_xgboost=allow_lightgbm_and_xgboost,
+        test_mode=test_mode
+    )
 
 
 def validate_pycaret_inputs(

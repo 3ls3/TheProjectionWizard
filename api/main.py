@@ -24,22 +24,35 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# Add CORS middleware  
-# Allow multiple frontend ports for development
-allowed_origins = [
-    "http://localhost:3000",
-    "http://localhost:8080", 
-    "http://localhost:8081",
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:8080",
-    "http://127.0.0.1:8081",
-    "https://lovable.dev/projects/dca90495-2ee9-4de4-86ef-b619f83fc331",
-    "https://www.predictingwizard.com/",
-]
+# Configure CORS origins from environment variable
+allowed_origins_env = os.getenv("ALLOWED_ORIGINS")
+
+if allowed_origins_env == "*":
+    # If the env var is exactly "*", use that for allow_origins
+    configured_origins = ["*"]
+elif allowed_origins_env:
+    # Otherwise, parse it as a comma-separated list
+    configured_origins = [origin.strip() for origin in allowed_origins_env.split(',') if origin.strip()]
+else:
+    # Fallback for local development if ALLOWED_ORIGINS env var is not set
+    print("WARNING: ALLOWED_ORIGINS environment variable not set or empty. Using default dev origins.")
+    configured_origins = [
+        "http://localhost:3000",
+        "http://localhost:8080", 
+        "http://localhost:8081",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:8080",
+        "http://127.0.0.1:8081",
+        "https://lovable.dev/projects/dca90495-2ee9-4de4-86ef-b619f83fc331",
+        "https://www.predictingwizard.com",  # Without trailing slash
+        "https://www.predictingwizard.com/", # With trailing slash
+    ]
+
+print(f"INFO: Configuring CORS with origins: {configured_origins}")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=configured_origins,
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],

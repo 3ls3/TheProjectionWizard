@@ -1,6 +1,7 @@
 """
 Data profiling logic for The Projection Wizard.
 Contains functions for generating ydata-profiling reports of prepared data.
+Refactored for GCS-based storage.
 """
 
 import pandas as pd
@@ -9,9 +10,15 @@ from typing import Optional
 import warnings
 import signal
 import time
+import tempfile
+import io
+import logging
 
-from common import logger
 from common import constants
+from api.utils.gcs_utils import upload_run_file, PROJECT_BUCKET_NAME
+
+# Configure logging for this module
+logger = logging.getLogger(__name__)
 
 
 class TimeoutError(Exception):
@@ -24,19 +31,22 @@ def timeout_handler(signum, frame):
     raise TimeoutError("Profile generation timed out")
 
 
-def generate_profile_report_with_timeout(df_final_prepared: pd.DataFrame, 
-                                       report_path: Path, 
-                                       title: str,
-                                       timeout_seconds: int = 300,
-                                       run_id: Optional[str] = None) -> bool:
+def generate_profile_report_gcs_with_timeout(df_final_prepared: pd.DataFrame, 
+                                           report_filename: str,
+                                           run_id: str,
+                                           title: str,
+                                           timeout_seconds: int = 300,
+                                           gcs_bucket_name: str = PROJECT_BUCKET_NAME) -> bool:
     """
-    Generate profile report with timeout protection.
+    Generate profile report with timeout protection and save to GCS.
     
     Args:
         df_final_prepared: The DataFrame after cleaning and encoding
-        report_path: Full Path object where the HTML report should be saved
+        report_filename: Filename for the HTML report in GCS
+        run_id: Run ID for GCS path
         title: Title for the ydata-profiling report
         timeout_seconds: Maximum time to allow for profile generation (default: 5 minutes)
+        gcs_bucket_name: GCS bucket name
         
     Returns:
         True if report generation successful, False otherwise
@@ -48,7 +58,7 @@ def generate_profile_report_with_timeout(df_final_prepared: pd.DataFrame,
             signal.alarm(timeout_seconds)
         
         # Generate the profile
-        result = generate_profile_report(df_final_prepared, report_path, title, run_id)
+        result = generate_profile_report_gcs(df_final_prepared, report_filename, run_id, title, gcs_bucket_name)
         
         # Cancel the alarm if we succeeded
         if hasattr(signal, 'SIGALRM'):
@@ -57,18 +67,7 @@ def generate_profile_report_with_timeout(df_final_prepared: pd.DataFrame,
         return result
         
     except TimeoutError:
-        # Create logger for timeout error
-        log = logger.get_stage_logger(run_id, constants.PREP_STAGE) if run_id else logger.get_logger("profiling_temp", "profiling")
-        log.error(f"Profile generation timed out after {timeout_seconds} seconds")
-        
-        # Clean up partial file if it exists
-        try:
-            if report_path.exists():
-                report_path.unlink()
-                log.info("Cleaned up partial report file after timeout")
-        except Exception as cleanup_error:
-            log.warning(f"Could not clean up partial file after timeout: {cleanup_error}")
-        
+        logger.error(f"Profile generation timed out after {timeout_seconds} seconds")
         return False
         
     except Exception as e:
@@ -76,8 +75,7 @@ def generate_profile_report_with_timeout(df_final_prepared: pd.DataFrame,
         if hasattr(signal, 'SIGALRM'):
             signal.alarm(0)
         
-        log = logger.get_stage_logger(run_id, constants.PREP_STAGE) if run_id else logger.get_logger("profiling_temp", "profiling")
-        log.error(f"Profile generation failed with exception: {str(e)}")
+        logger.error(f"Profile generation failed with exception: {str(e)}")
         return False
     
     finally:
@@ -86,17 +84,20 @@ def generate_profile_report_with_timeout(df_final_prepared: pd.DataFrame,
             signal.alarm(0)
 
 
-def generate_profile_report(df_final_prepared: pd.DataFrame, 
-                          report_path: Path, 
-                          title: str,
-                          run_id: Optional[str] = None) -> bool:
+def generate_profile_report_gcs(df_final_prepared: pd.DataFrame, 
+                               report_filename: str,
+                               run_id: str, 
+                               title: str,
+                               gcs_bucket_name: str = PROJECT_BUCKET_NAME) -> bool:
     """
-    Generate a ydata-profiling HTML report for the prepared DataFrame.
+    Generate a ydata-profiling HTML report for the prepared DataFrame and save to GCS.
     
     Args:
         df_final_prepared: The DataFrame after cleaning and encoding
-        report_path: Full Path object where the HTML report should be saved
+        report_filename: Filename for the HTML report in GCS
+        run_id: Run ID for GCS path
         title: Title for the ydata-profiling report
+        gcs_bucket_name: GCS bucket name
         
     Returns:
         True if report generation successful, False otherwise
@@ -110,22 +111,14 @@ def generate_profile_report(df_final_prepared: pd.DataFrame,
             try:
                 from pandas_profiling import ProfileReport
             except ImportError:
-                # Create logger for error reporting
-                log = logger.get_stage_logger(run_id, constants.PREP_STAGE) if run_id else logger.get_logger("profiling_temp", "profiling")
-                log.error("Neither ydata-profiling nor pandas-profiling is installed. "
-                         "Please install with: pip install ydata-profiling")
+                logger.error("Neither ydata-profiling nor pandas-profiling is installed. "
+                           "Please install with: pip install ydata-profiling")
                 return False
         
-        # Ensure parent directory exists
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Create a simple logger for this function since we don't have run_id
-        log = logger.get_stage_logger(run_id, constants.PREP_STAGE) if run_id else logger.get_logger("profiling_temp", "profiling")
-        
         # Log start of profiling
-        log.info(f"Starting profile report generation for '{title}'")
-        log.info(f"DataFrame shape: {df_final_prepared.shape}")
-        log.info(f"Report will be saved to: {report_path}")
+        logger.info(f"Starting profile report generation for '{title}'")
+        logger.info(f"DataFrame shape: {df_final_prepared.shape}")
+        logger.info(f"Report will be saved to GCS: runs/{run_id}/{report_filename}")
         
         # Configure profiling settings for robustness and performance
         # Suppress warnings during profiling to avoid cluttering logs
@@ -157,70 +150,73 @@ def generate_profile_report(df_final_prepared: pd.DataFrame,
                 duplicates={"head": 5}  # Limit duplicate examples
             )
         
-        # Save the report
-        log.info("Generating and saving profile report...")
-        profile.to_file(report_path)
+        # Save the report to a temporary file, then upload to GCS
+        logger.info("Generating and saving profile report...")
         
-        # Verify the file was created successfully
-        if report_path.exists() and report_path.stat().st_size > 0:
-            file_size_mb = report_path.stat().st_size / (1024 * 1024)
-            log.info(f"Profile report successfully generated: {report_path}")
-            log.info(f"Report file size: {file_size_mb:.2f} MB")
-            return True
-        else:
-            log.error("Profile report file was not created or is empty")
-            return False
+        with tempfile.NamedTemporaryFile(suffix='.html', delete=False) as tmp_file:
+            temp_path = tmp_file.name
+            
+        try:
+            # Generate report to temporary file
+            profile.to_file(temp_path)
+            
+            # Upload to GCS
+            upload_success = upload_run_file(run_id, report_filename, temp_path)
+            
+            if upload_success:
+                # Get file size for logging
+                temp_size_mb = Path(temp_path).stat().st_size / (1024 * 1024)
+                logger.info(f"Profile report successfully generated and uploaded to GCS")
+                logger.info(f"Report file size: {temp_size_mb:.2f} MB")
+                return True
+            else:
+                logger.error("Failed to upload profile report to GCS")
+                return False
+                
+        finally:
+            # Clean up temporary file
+            try:
+                Path(temp_path).unlink()
+            except Exception as cleanup_error:
+                logger.warning(f"Could not clean up temporary file: {cleanup_error}")
             
     except Exception as e:
-        # Create logger in exception handler too
-        log = logger.get_stage_logger(run_id, constants.PREP_STAGE) if run_id else logger.get_logger("profiling_temp", "profiling")
-        log.error(f"Failed to generate profile report: {str(e)}")
-        log.error(f"Error type: {type(e).__name__}")
-        
-        # Clean up partial file if it exists
-        try:
-            if report_path.exists():
-                report_path.unlink()
-                log.info("Cleaned up partial report file")
-        except Exception as cleanup_error:
-            log.warning(f"Could not clean up partial file: {cleanup_error}")
-        
+        logger.error(f"Failed to generate profile report: {str(e)}")
+        logger.error(f"Error type: {type(e).__name__}")
         return False
 
 
-def generate_profile_report_with_fallback(df_final_prepared: pd.DataFrame, 
-                                        report_path: Path, 
-                                        title: str,
-                                        run_id: Optional[str] = None) -> bool:
+def generate_profile_report_gcs_with_fallback(df_final_prepared: pd.DataFrame, 
+                                             report_filename: str,
+                                             run_id: str,
+                                             title: str,
+                                             gcs_bucket_name: str = PROJECT_BUCKET_NAME) -> bool:
     """
-    Generate a ydata-profiling report with fallback options for better compatibility.
+    Generate a ydata-profiling report with fallback options for better compatibility and save to GCS.
     
     Args:
         df_final_prepared: The DataFrame after cleaning and encoding
-        report_path: Full Path object where the HTML report should be saved
+        report_filename: Filename for the HTML report in GCS
+        run_id: Run ID for GCS path
         title: Title for the ydata-profiling report
-        run_id: Optional run ID for logging context
+        gcs_bucket_name: GCS bucket name
         
     Returns:
         True if report generation successful, False otherwise
     """
-    # Get logger with optional run context
-    log = logger.get_stage_logger(run_id, constants.PREP_STAGE) if run_id else logger.get_logger("profiling_temp", "profiling")
-    
     # First attempt: Full profile report with timeout protection
-    log.info(f"Attempting full profile report generation for '{title}' (with 5-minute timeout)")
-    success = generate_profile_report_with_timeout(df_final_prepared, report_path, title, timeout_seconds=300, run_id=run_id)
+    logger.info(f"Attempting full profile report generation for '{title}' (with 5-minute timeout)")
+    success = generate_profile_report_gcs_with_timeout(
+        df_final_prepared, report_filename, run_id, title, timeout_seconds=300, gcs_bucket_name=gcs_bucket_name
+    )
     
     if success:
         return True
     
     # Fallback 1: Try with minimal profile
-    log.warning("Full profile failed, attempting minimal profile...")
+    logger.warning("Full profile failed, attempting minimal profile...")
     try:
         from ydata_profiling import ProfileReport
-        
-        # Ensure parent directory exists
-        report_path.parent.mkdir(parents=True, exist_ok=True)
         
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -247,30 +243,42 @@ def generate_profile_report_with_fallback(df_final_prepared: pd.DataFrame,
                 samples={"head": 0, "tail": 0},  # No sample display
                 infer_dtypes=False  # Skip dtype inference
             )
-            
-        profile.to_file(report_path)
         
-        if report_path.exists() and report_path.stat().st_size > 0:
-            log.info(f"Minimal profile report successfully generated: {report_path}")
-            return True
+        # Save to temporary file and upload to GCS
+        with tempfile.NamedTemporaryFile(suffix='.html', delete=False) as tmp_file:
+            temp_path = tmp_file.name
             
+        try:
+            profile.to_file(temp_path)
+            upload_success = upload_run_file(run_id, report_filename, temp_path)
+            
+            if upload_success:
+                logger.info(f"Minimal profile report successfully generated and uploaded to GCS")
+                return True
+        finally:
+            # Clean up temporary file
+            try:
+                Path(temp_path).unlink()
+            except Exception:
+                pass
+                
     except Exception as e:
-        log.error(f"Minimal profile also failed: {str(e)}")
+        logger.error(f"Minimal profile also failed: {str(e)}")
     
     # Fallback 2: Create basic HTML summary
-    log.warning("All profiling attempts failed, creating basic HTML summary...")
+    logger.warning("All profiling attempts failed, creating basic HTML summary...")
     try:
         basic_html = _create_basic_html_summary(df_final_prepared, title)
+        html_bytes = basic_html.encode('utf-8')
         
-        with open(report_path, 'w', encoding='utf-8') as f:
-            f.write(basic_html)
-            
-        if report_path.exists() and report_path.stat().st_size > 0:
-            log.info(f"Basic HTML summary created: {report_path}")
+        upload_success = upload_run_file(run_id, report_filename, io.BytesIO(html_bytes))
+        
+        if upload_success:
+            logger.info(f"Basic HTML summary created and uploaded to GCS")
             return True
             
     except Exception as e:
-        log.error(f"Even basic HTML generation failed: {str(e)}")
+        logger.error(f"Even basic HTML generation failed: {str(e)}")
     
     return False
 
@@ -390,4 +398,54 @@ def _create_basic_html_summary(df: pd.DataFrame, title: str) -> str:
     </html>
     """
     
-    return html 
+    return html
+
+
+# Legacy compatibility functions (redirects to GCS versions)
+def generate_profile_report_with_fallback(df_final_prepared: pd.DataFrame, 
+                                        report_path: Path, 
+                                        title: str,
+                                        run_id: Optional[str] = None) -> bool:
+    """
+    Legacy compatibility function - redirects to GCS version.
+    """
+    logger.warning("Using legacy generate_profile_report_with_fallback function - redirecting to GCS version")
+    if run_id is None:
+        logger.error("run_id is required for GCS version")
+        return False
+    
+    report_filename = report_path.name
+    return generate_profile_report_gcs_with_fallback(df_final_prepared, report_filename, run_id, title)
+
+
+def generate_profile_report_with_timeout(df_final_prepared: pd.DataFrame, 
+                                       report_path: Path, 
+                                       title: str,
+                                       timeout_seconds: int = 300,
+                                       run_id: Optional[str] = None) -> bool:
+    """
+    Legacy compatibility function - redirects to GCS version.
+    """
+    logger.warning("Using legacy generate_profile_report_with_timeout function - redirecting to GCS version")
+    if run_id is None:
+        logger.error("run_id is required for GCS version")
+        return False
+    
+    report_filename = report_path.name
+    return generate_profile_report_gcs_with_timeout(df_final_prepared, report_filename, run_id, title, timeout_seconds)
+
+
+def generate_profile_report(df_final_prepared: pd.DataFrame, 
+                          report_path: Path, 
+                          title: str,
+                          run_id: Optional[str] = None) -> bool:
+    """
+    Legacy compatibility function - redirects to GCS version.
+    """
+    logger.warning("Using legacy generate_profile_report function - redirecting to GCS version")
+    if run_id is None:
+        logger.error("run_id is required for GCS version")
+        return False
+    
+    report_filename = report_path.name
+    return generate_profile_report_gcs(df_final_prepared, report_filename, run_id, title) 

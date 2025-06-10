@@ -1,12 +1,17 @@
 """
 Data cleaning logic for The Projection Wizard.
 Contains functions for data cleaning operations in the prep stage.
+Refactored for GCS-based storage.
 """
 
 import pandas as pd
 from typing import Dict, List, Tuple, Optional
+import logging
 
-from common import logger, schemas
+from common import constants, schemas
+
+# Configure logging for this module
+logger = logging.getLogger(__name__)
 
 
 def clean_data(df_original: pd.DataFrame, 

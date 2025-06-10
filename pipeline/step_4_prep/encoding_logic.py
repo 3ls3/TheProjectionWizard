@@ -1,34 +1,44 @@
 """
 Feature encoding logic for The Projection Wizard.
 Contains functions for converting cleaned data into ML-ready formats.
+Refactored for GCS-based storage.
 """
 
 import pandas as pd
 import numpy as np
-from pathlib import Path
 from typing import Dict, List, Tuple, Any, Optional
 import joblib
 import warnings
+import io
+import logging
+import tempfile
 
 # sklearn imports
 from sklearn.preprocessing import StandardScaler, LabelEncoder, OrdinalEncoder
 from sklearn.feature_extraction.text import TfidfVectorizer
 
-from common import logger, storage, constants, schemas
+from common import constants, schemas
+from api.utils.gcs_utils import upload_run_file, PROJECT_BUCKET_NAME
+
+# Configure logging for this module
+logger = logging.getLogger(__name__)
 
 
-def encode_features(df_cleaned: pd.DataFrame, 
-                   feature_schemas: Dict[str, schemas.FeatureSchemaInfo], 
-                   target_info: schemas.TargetInfo,
-                   run_id: str) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+def encode_features_gcs(df_cleaned: pd.DataFrame, 
+                       feature_schemas: Dict[str, schemas.FeatureSchemaInfo], 
+                       target_info: schemas.TargetInfo,
+                       run_id: str,
+                       gcs_bucket_name: str = PROJECT_BUCKET_NAME) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     Encode features for ML based on feature schemas and target information.
+    Saves encoders/scalers to GCS instead of local filesystem.
     
     Args:
         df_cleaned: The DataFrame after cleaning from cleaning_logic.py
         feature_schemas: Dictionary of FeatureSchemaInfo objects
         target_info: TargetInfo object with target information
         run_id: Current run ID, used for saving encoders/scalers
+        gcs_bucket_name: GCS bucket name
         
     Returns:
         Tuple containing:
@@ -39,46 +49,40 @@ def encode_features(df_cleaned: pd.DataFrame,
     df_encoded = df_cleaned.copy()
     encoders_scalers_info = {}
     
-    # Get logger for this run
-    run_logger = logger.get_stage_logger(run_id, constants.PREP_STAGE)
-    
-    # Create model artifacts directory
-    model_artefacts_dir = storage.get_run_dir(run_id) / constants.MODEL_DIR
-    model_artefacts_dir.mkdir(exist_ok=True)
-    
-    run_logger.info(f"Starting feature encoding for {len(df_encoded.columns)} columns")
+    logger.info(f"Starting feature encoding for {len(df_encoded.columns)} columns")
     
     # Step 1: Handle Target Variable Encoding
-    df_encoded, target_encoder_info = _encode_target_variable(
-        df_encoded, target_info, model_artefacts_dir, run_logger
+    df_encoded, target_encoder_info = _encode_target_variable_gcs(
+        df_encoded, target_info, run_id, gcs_bucket_name
     )
     if target_encoder_info:
         encoders_scalers_info.update(target_encoder_info)
     
     # Step 2: Handle Feature Encoding (non-target columns)
-    df_encoded, feature_encoder_info = _encode_features(
-        df_encoded, feature_schemas, target_info, model_artefacts_dir, run_logger
+    df_encoded, feature_encoder_info = _encode_features_gcs(
+        df_encoded, feature_schemas, target_info, run_id, gcs_bucket_name
     )
     encoders_scalers_info.update(feature_encoder_info)
     
-    run_logger.info(f"Encoding completed. Final shape: {df_encoded.shape}")
-    run_logger.info(f"Saved {len(encoders_scalers_info)} encoders/scalers")
+    logger.info(f"Encoding completed. Final shape: {df_encoded.shape}")
+    logger.info(f"Saved {len(encoders_scalers_info)} encoders/scalers to GCS")
     
     return df_encoded, encoders_scalers_info
 
 
-def _encode_target_variable(df: pd.DataFrame, 
-                          target_info: schemas.TargetInfo,
-                          model_artefacts_dir: Path,
-                          logger_instance) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+def _encode_target_variable_gcs(df: pd.DataFrame, 
+                               target_info: schemas.TargetInfo,
+                               run_id: str,
+                               gcs_bucket_name: str) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     Encode the target variable based on its ML type.
+    Saves encoders to GCS.
     
     Args:
         df: DataFrame to modify (modified in place)
         target_info: TargetInfo object
-        model_artefacts_dir: Directory to save encoders
-        logger_instance: Logger instance
+        run_id: Run ID for GCS paths
+        gcs_bucket_name: GCS bucket name
         
     Returns:
         Tuple of (modified DataFrame, encoder info dict)
@@ -88,75 +92,86 @@ def _encode_target_variable(df: pd.DataFrame,
     encoder_info = {}
     
     if target_col not in df.columns:
-        logger_instance.warning(f"Target column '{target_col}' not found in DataFrame")
+        logger.warning(f"Target column '{target_col}' not found in DataFrame")
         return df, encoder_info
         
-    logger_instance.info(f"Encoding target column '{target_col}' with ML type '{ml_type}'")
+    logger.info(f"Encoding target column '{target_col}' with ML type '{ml_type}'")
     
     if ml_type == "binary_01":
         # Ensure column is int 0/1
         unique_vals = df[target_col].unique()
         if set(unique_vals) == {0, 1} or set(unique_vals) == {0.0, 1.0}:
             df[target_col] = df[target_col].astype(int)
-            logger_instance.info(f"Target '{target_col}' already in 0/1 format, converted to int")
+            logger.info(f"Target '{target_col}' already in 0/1 format, converted to int")
         elif set(unique_vals) == {True, False}:
             df[target_col] = df[target_col].astype(int)
-            logger_instance.info(f"Target '{target_col}' converted from boolean to 0/1")
+            logger.info(f"Target '{target_col}' converted from boolean to 0/1")
         else:
             # Map other values to 0/1 (take first unique as 0, second as 1)
             sorted_vals = sorted(unique_vals)
             mapping = {sorted_vals[0]: 0, sorted_vals[1]: 1}
             df[target_col] = df[target_col].map(mapping)
-            logger_instance.info(f"Target '{target_col}' mapped to 0/1: {mapping}")
+            logger.info(f"Target '{target_col}' mapped to 0/1: {mapping}")
             
     elif ml_type == "multiclass_int_labels":
         # Ensure column is int
         df[target_col] = df[target_col].astype(int)
-        logger_instance.info(f"Target '{target_col}' converted to int labels")
+        logger.info(f"Target '{target_col}' converted to int labels")
         
     elif ml_type in ["binary_text_labels", "multiclass_text_labels"]:
         # Use LabelEncoder
         le = LabelEncoder()
         df[target_col] = le.fit_transform(df[target_col])
         
-        # Save the encoder
-        encoder_path = model_artefacts_dir / f"{target_col}_label_encoder.joblib"
-        joblib.dump(le, encoder_path)
+        # Save the encoder to GCS
+        encoder_filename = f"{target_col}_label_encoder.joblib"
+        gcs_path = f"models/{encoder_filename}"
         
-        encoder_info[f"{target_col}_label_encoder"] = {
-            "type": "LabelEncoder",
-            "path": str(encoder_path),
-            "classes": le.classes_.tolist(),
-            "column": target_col
-        }
+        # Serialize encoder to bytes and upload to GCS
+        with tempfile.NamedTemporaryFile() as tmp_file:
+            joblib.dump(le, tmp_file.name)
+            with open(tmp_file.name, 'rb') as f:
+                encoder_bytes = f.read()
         
-        logger_instance.info(f"Target '{target_col}' encoded with LabelEncoder, classes: {le.classes_}")
+        upload_success = upload_run_file(run_id, gcs_path, io.BytesIO(encoder_bytes))
+        
+        if upload_success:
+            encoder_info[f"{target_col}_label_encoder"] = {
+                "type": "LabelEncoder",
+                "gcs_path": gcs_path,
+                "classes": le.classes_.tolist(),
+                "column": target_col
+            }
+            logger.info(f"Target '{target_col}' encoded with LabelEncoder, saved to GCS: {gcs_path}")
+        else:
+            logger.error(f"Failed to save LabelEncoder to GCS: {gcs_path}")
         
     elif ml_type == "numeric_continuous":
         # Ensure it's float
         df[target_col] = df[target_col].astype(float)
-        logger_instance.info(f"Target '{target_col}' converted to float")
+        logger.info(f"Target '{target_col}' converted to float")
         
     else:
-        logger_instance.warning(f"Unknown target ML type '{ml_type}', leaving as-is")
+        logger.warning(f"Unknown target ML type '{ml_type}', leaving as-is")
     
     return df, encoder_info
 
 
-def _encode_features(df: pd.DataFrame,
-                   feature_schemas: Dict[str, schemas.FeatureSchemaInfo],
-                   target_info: schemas.TargetInfo,
-                   model_artefacts_dir: Path,
-                   logger_instance) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+def _encode_features_gcs(df: pd.DataFrame,
+                        feature_schemas: Dict[str, schemas.FeatureSchemaInfo],
+                        target_info: schemas.TargetInfo,
+                        run_id: str,
+                        gcs_bucket_name: str) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     Encode feature columns based on their encoding roles.
+    Saves encoders to GCS.
     
     Args:
         df: DataFrame to modify
         feature_schemas: Dictionary of feature schema info
         target_info: Target information
-        model_artefacts_dir: Directory to save encoders
-        logger_instance: Logger instance
+        run_id: Run ID for GCS paths
+        gcs_bucket_name: GCS bucket name
         
     Returns:
         Tuple of (modified DataFrame, encoders info dict)
@@ -170,30 +185,40 @@ def _encode_features(df: pd.DataFrame,
             continue  # Skip target column
             
         if col not in feature_schemas:
-            logger_instance.warning(f"Column '{col}' not found in feature schemas, skipping encoding")
+            logger.warning(f"Column '{col}' not found in feature schemas, skipping encoding")
             continue
             
         encoding_role = feature_schemas[col].encoding_role
-        logger_instance.info(f"Encoding column '{col}' with role '{encoding_role}'")
+        logger.info(f"Encoding column '{col}' with role '{encoding_role}'")
         
         if encoding_role in ["numeric-continuous", "numeric-discrete"]:
             # Apply StandardScaler
             scaler = StandardScaler()
             df[col] = scaler.fit_transform(df[[col]]).flatten()
             
-            # Save scaler
-            scaler_path = model_artefacts_dir / f"{col}_scaler.joblib"
-            joblib.dump(scaler, scaler_path)
+            # Save scaler to GCS
+            scaler_filename = f"{col}_scaler.joblib"
+            gcs_path = f"models/{scaler_filename}"
             
-            encoders_info[f"{col}_scaler"] = {
-                "type": "StandardScaler",
-                "path": str(scaler_path),
-                "column": col,
-                "mean": scaler.mean_[0],
-                "scale": scaler.scale_[0]
-            }
+            # Serialize scaler to bytes and upload to GCS
+            with tempfile.NamedTemporaryFile() as tmp_file:
+                joblib.dump(scaler, tmp_file.name)
+                with open(tmp_file.name, 'rb') as f:
+                    scaler_bytes = f.read()
             
-            logger_instance.info(f"Applied StandardScaler to '{col}' (mean={scaler.mean_[0]:.3f}, scale={scaler.scale_[0]:.3f})")
+            upload_success = upload_run_file(run_id, gcs_path, io.BytesIO(scaler_bytes))
+            
+            if upload_success:
+                encoders_info[f"{col}_scaler"] = {
+                    "type": "StandardScaler",
+                    "gcs_path": gcs_path,
+                    "column": col,
+                    "mean": float(scaler.mean_[0]),
+                    "scale": float(scaler.scale_[0])
+                }
+                logger.info(f"Applied StandardScaler to '{col}', saved to GCS: {gcs_path}")
+            else:
+                logger.error(f"Failed to save StandardScaler to GCS: {gcs_path}")
             
         elif encoding_role == "categorical-nominal":
             # Use pd.get_dummies for one-hot encoding
@@ -208,7 +233,7 @@ def _encode_features(df: pd.DataFrame,
                 "n_categories": len(new_cols)
             }
             
-            logger_instance.info(f"Applied one-hot encoding to '{col}', created {len(new_cols)} new columns")
+            logger.info(f"Applied one-hot encoding to '{col}', created {len(new_cols)} new columns")
             
         elif encoding_role == "categorical-ordinal":
             # Handle ordinal encoding - for MVP, use simple integer codes
@@ -225,21 +250,21 @@ def _encode_features(df: pd.DataFrame,
                 "method": "categorical_codes"
             }
             
-            logger_instance.info(f"Applied simple ordinal encoding to '{col}' using categorical codes")
+            logger.info(f"Applied simple ordinal encoding to '{col}' using categorical codes")
             
         elif encoding_role == "boolean":
             # Ensure 0/1 or True/False
             unique_vals = df[col].unique()
             if set(unique_vals) <= {True, False}:
                 df[col] = df[col].astype(int)
-                logger_instance.info(f"Boolean column '{col}' converted to 0/1")
+                logger.info(f"Boolean column '{col}' converted to 0/1")
             elif set(unique_vals) <= {0, 1, 0.0, 1.0}:
                 df[col] = df[col].astype(int)
-                logger_instance.info(f"Boolean column '{col}' ensured as int 0/1")
+                logger.info(f"Boolean column '{col}' ensured as int 0/1")
             else:
                 # Handle text boolean values
                 df[col] = _encode_text_boolean(df[col])
-                logger_instance.info(f"Text boolean column '{col}' converted to 0/1")
+                logger.info(f"Text boolean column '{col}' converted to 0/1")
                 
         elif encoding_role == "datetime":
             # Extract datetime features
@@ -258,9 +283,9 @@ def _encode_features(df: pd.DataFrame,
                     "new_features": new_features
                 }
                 
-                logger_instance.info(f"Extracted datetime features from '{col}': {new_features}")
+                logger.info(f"Extracted datetime features from '{col}': {new_features}")
             else:
-                logger_instance.warning(f"Column '{col}' marked as datetime but not datetime type")
+                logger.warning(f"Column '{col}' marked as datetime but not datetime type")
                 
         elif encoding_role == "text":
             # Apply TF-IDF vectorization
@@ -280,37 +305,47 @@ def _encode_features(df: pd.DataFrame,
                 df = pd.concat([df, tfidf_df], axis=1)
                 columns_to_drop.append(col)
                 
-                # Save vectorizer
-                vectorizer_path = model_artefacts_dir / f"{col}_tfidf_vectorizer.joblib"
-                joblib.dump(vectorizer, vectorizer_path)
+                # Save vectorizer to GCS
+                vectorizer_filename = f"{col}_tfidf_vectorizer.joblib"
+                gcs_path = f"models/{vectorizer_filename}"
                 
-                encoders_info[f"{col}_tfidf"] = {
-                    "type": "TfidfVectorizer",
-                    "path": str(vectorizer_path),
-                    "original_column": col,
-                    "new_features": feature_names,
-                    "n_features": len(feature_names),
-                    "max_features": 50
-                }
+                # Serialize vectorizer to bytes and upload to GCS
+                with tempfile.NamedTemporaryFile() as tmp_file:
+                    joblib.dump(vectorizer, tmp_file.name)
+                    with open(tmp_file.name, 'rb') as f:
+                        vectorizer_bytes = f.read()
                 
-                logger_instance.info(f"Applied TF-IDF to '{col}', created {len(feature_names)} features")
+                upload_success = upload_run_file(run_id, gcs_path, io.BytesIO(vectorizer_bytes))
+                
+                if upload_success:
+                    encoders_info[f"{col}_tfidf"] = {
+                        "type": "TfidfVectorizer",
+                        "gcs_path": gcs_path,
+                        "original_column": col,
+                        "new_features": feature_names,
+                        "n_features": len(feature_names),
+                        "max_features": 50
+                    }
+                    logger.info(f"Applied TF-IDF to '{col}', saved vectorizer to GCS: {gcs_path}")
+                else:
+                    logger.error(f"Failed to save TfidfVectorizer to GCS: {gcs_path}")
                 
             except Exception as e:
-                logger_instance.error(f"Failed to apply TF-IDF to '{col}': {str(e)}")
+                logger.error(f"Failed to apply TF-IDF to '{col}': {str(e)}")
                 # Keep original column if TF-IDF fails
                 
         elif encoding_role == "identifier_ignore":
             # Drop column
             columns_to_drop.append(col)
-            logger_instance.info(f"Dropping identifier column '{col}'")
+            logger.info(f"Dropping identifier column '{col}'")
             
         else:
-            logger_instance.warning(f"Unknown encoding role '{encoding_role}' for column '{col}', leaving as-is")
+            logger.warning(f"Unknown encoding role '{encoding_role}' for column '{col}', leaving as-is")
     
     # Drop columns that were replaced
     if columns_to_drop:
         df = df.drop(columns=columns_to_drop)
-        logger_instance.info(f"Dropped {len(columns_to_drop)} original columns: {columns_to_drop}")
+        logger.info(f"Dropped {len(columns_to_drop)} original columns: {columns_to_drop}")
     
     return df, encoders_info
 
@@ -347,4 +382,16 @@ def _encode_text_boolean(series: pd.Series) -> pd.Series:
         else:
             result[unmapped] = 0  # Default to 0
     
-    return result 
+    return result
+
+
+# Legacy compatibility function (redirects to GCS version)
+def encode_features(df_cleaned: pd.DataFrame, 
+                   feature_schemas: Dict[str, schemas.FeatureSchemaInfo], 
+                   target_info: schemas.TargetInfo,
+                   run_id: str) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+    """
+    Legacy compatibility function - redirects to GCS version.
+    """
+    logger.warning("Using legacy encode_features function - redirecting to GCS version")
+    return encode_features_gcs(df_cleaned, feature_schemas, target_info, run_id) 

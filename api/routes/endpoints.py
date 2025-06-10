@@ -1,6 +1,7 @@
 """
 Schema-related API routes for The Projection Wizard.
 Provides endpoints for feature suggestions and schema operations.
+Refactored for GCS-based storage.
 """
 
 from fastapi import APIRouter, HTTPException, Query
@@ -17,12 +18,14 @@ from pipeline.step_2_schema.feature_definition_logic import (
     suggest_initial_feature_schemas
 )
 from api.utils.io_helpers import (
-    load_original_data_csv, 
-    load_metadata_json, 
-    validate_run_exists, 
-    validate_required_files,
+    load_original_data_csv_gcs, 
+    load_metadata_json_gcs, 
+    validate_run_exists_gcs, 
+    validate_required_files_gcs,
+    list_runs_gcs,
     DataLoadError
 )
+from api.utils.gcs_utils import PROJECT_BUCKET_NAME
 
 router = APIRouter()
 
@@ -49,38 +52,38 @@ async def get_feature_suggestions(
         - metadata: Additional information about the analysis
     """
     
-    # Validate run exists
-    if not validate_run_exists(run_id):
+    # Validate run exists in GCS
+    if not validate_run_exists_gcs(run_id, PROJECT_BUCKET_NAME):
         raise HTTPException(
             status_code=404, 
-            detail=f"Run '{run_id}' not found"
+            detail=f"Run '{run_id}' not found in GCS"
         )
     
-    # Check required files exist
-    file_status = validate_required_files(run_id)
+    # Check required files exist in GCS
+    file_status = validate_required_files_gcs(run_id, PROJECT_BUCKET_NAME)
     missing_files = [file for file, exists in file_status.items() if not exists]
     
     if missing_files:
         raise HTTPException(
             status_code=404,
-            detail=f"Missing required files for run '{run_id}': {', '.join(missing_files)}"
+            detail=f"Missing required files for run '{run_id}' in GCS: {', '.join(missing_files)}"
         )
     
     try:
-        # Load data files
-        df = load_original_data_csv(run_id)
-        metadata = load_metadata_json(run_id)
+        # Load data files from GCS
+        df = load_original_data_csv_gcs(run_id, PROJECT_BUCKET_NAME)
+        metadata = load_metadata_json_gcs(run_id, PROJECT_BUCKET_NAME)
         
         if df is None:
             raise HTTPException(
                 status_code=404,
-                detail=f"Could not load original_data.csv for run '{run_id}'"
+                detail=f"Could not load original_data.csv for run '{run_id}' from GCS"
             )
             
         if metadata is None:
             raise HTTPException(
                 status_code=404,
-                detail=f"Could not load metadata.json for run '{run_id}'"
+                detail=f"Could not load metadata.json for run '{run_id}' from GCS"
             )
         
         # Extract target information from metadata
@@ -112,7 +115,9 @@ async def get_feature_suggestions(
                 "target_column": target_info.get('name'),
                 "task_type": target_info.get('task_type'),
                 "num_key_features_requested": num_features,
-                "num_key_features_identified": len(key_features)
+                "num_key_features_identified": len(key_features),
+                "storage_type": "gcs",
+                "bucket": PROJECT_BUCKET_NAME
             }
         }
         
@@ -123,42 +128,44 @@ async def get_feature_suggestions(
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to analyze features for run '{run_id}': {str(e)}"
+            detail=f"Failed to analyze features for run '{run_id}' from GCS: {str(e)}"
         )
 
 
 @router.get("/runs/{run_id}/info")
 async def get_run_info(run_id: str):
     """
-    Get basic information about a run.
+    Get basic information about a run from GCS.
     
     Args:
         run_id: The ID of the run
         
     Returns:
-        JSON response with run information and file availability
+        JSON response with run information and file availability in GCS
     """
     
-    # Check if run exists
-    if not validate_run_exists(run_id):
+    # Check if run exists in GCS
+    if not validate_run_exists_gcs(run_id, PROJECT_BUCKET_NAME):
         raise HTTPException(
             status_code=404,
-            detail=f"Run '{run_id}' not found"
+            detail=f"Run '{run_id}' not found in GCS"
         )
     
-    # Get file status
-    file_status = validate_required_files(run_id)
+    # Get file status from GCS
+    file_status = validate_required_files_gcs(run_id, PROJECT_BUCKET_NAME)
     
     response = {
         "run_id": run_id,
         "files": file_status,
-        "ready_for_analysis": all(file_status.values())
+        "ready_for_analysis": all(file_status.values()),
+        "storage_type": "gcs",
+        "bucket": PROJECT_BUCKET_NAME
     }
     
-    # If metadata is available, include some basic info
+    # If metadata is available in GCS, include some basic info
     if file_status.get("metadata_json"):
         try:
-            metadata = load_metadata_json(run_id)
+            metadata = load_metadata_json_gcs(run_id, PROJECT_BUCKET_NAME)
             if metadata:
                 response["target_info"] = metadata.get('target_info')
                 response["upload_timestamp"] = metadata.get('timestamp')
@@ -171,30 +178,30 @@ async def get_run_info(run_id: str):
 @router.get("/runs")
 async def list_runs():
     """
-    List all available runs.
+    List all available runs from GCS.
     
     Returns:
-        JSON response with list of available run IDs
+        JSON response with list of available run IDs from GCS storage
     """
     
     try:
-        project_root = Path(__file__).parent.parent.parent
-        runs_dir = project_root / "data" / "runs"
-        
-        if not runs_dir.exists():
-            return {"runs": []}
-        
-        # Get all subdirectories in runs directory
-        run_ids = [d.name for d in runs_dir.iterdir() if d.is_dir()]
-        run_ids.sort()  # Sort alphabetically
+        # Get all run IDs from GCS
+        run_ids = list_runs_gcs(PROJECT_BUCKET_NAME)
         
         return {
             "runs": run_ids,
-            "total_runs": len(run_ids)
+            "total_runs": len(run_ids),
+            "storage_type": "gcs",
+            "bucket": PROJECT_BUCKET_NAME
         }
         
+    except DataLoadError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to list runs from GCS: {str(e)}"
+        )
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to list runs: {str(e)}"
+            detail=f"Failed to list runs from GCS: {str(e)}"
         ) 

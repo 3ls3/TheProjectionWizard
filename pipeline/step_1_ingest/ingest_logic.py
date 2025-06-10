@@ -1,6 +1,7 @@
 """
 Core ingestion logic for The Projection Wizard.
-Handles CSV file upload, run initialization, and metadata creation.
+Handles confirmation of uploaded data in GCS and run state initialization.
+This step assumes data has already been uploaded to GCS by the /api/upload endpoint.
 """
 
 import pandas as pd
@@ -8,404 +9,334 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, BinaryIO, Union
 import io
+import json
+import logging
+import tempfile
 
 # Import common modules
-from common import constants, schemas, utils, storage, logger
+from common import constants, schemas
+from api.utils.gcs_utils import (
+    download_from_gcs, upload_to_gcs, check_gcs_file_exists,
+    PROJECT_BUCKET_NAME, download_run_file, upload_run_file, check_run_file_exists
+)
+
+# Configure logging for this module
+logger = logging.getLogger(__name__)
 
 
-def run_ingestion(uploaded_file_object: Union[BinaryIO, object], base_runs_path_str: str) -> str:
+def run_gcs_ingestion(run_id: str, gcs_bucket_name: str = PROJECT_BUCKET_NAME) -> bool:
     """
-    Process uploaded CSV file and initialize a new pipeline run.
+    Process data ingestion from GCS for a given run_id.
+    This function assumes data has already been uploaded to GCS by the /api/upload endpoint.
+    
+    This step:
+    1. Updates status to "ingestion processing"
+    2. Confirms original_data.csv exists in GCS
+    3. Performs basic validation by downloading and reading CSV
+    4. Updates metadata.json with ingestion completion timestamp
+    5. Updates status to "completed" and ready for next step
     
     Args:
-        uploaded_file_object: File object from Streamlit's st.file_uploader or similar
-        base_runs_path_str: Base directory path for runs (e.g., "data/runs")
+        run_id: Unique run identifier
+        gcs_bucket_name: GCS bucket name (defaults to PROJECT_BUCKET_NAME)
         
     Returns:
-        Generated run_id string
+        True if ingestion successful, False otherwise
         
     Raises:
         Exception: If critical errors occur during ingestion
     """
-    # Generate run_id
-    run_id = utils.generate_run_id()
-    
-    # Setup logging for this run
-    logger_instance = logger.get_stage_logger(run_id=run_id, stage=constants.INGEST_STAGE)
-    structured_log = logger.get_stage_structured_logger(run_id=run_id, stage=constants.INGEST_STAGE)
-    
-    logger_instance.info("Starting data ingestion process")
-    
-    # Structured log: Ingestion started
-    logger.log_structured_event(
-        structured_log,
-        "ingestion_started",
-        {
-            "run_id": run_id,
-            "stage": constants.INGEST_STAGE,
-            "base_runs_path": base_runs_path_str
-        },
-        f"Data ingestion started for run {run_id}"
-    )
-    
-    # Initialize variables for error handling
-    initial_rows = None
-    initial_cols = None 
-    initial_dtypes = None
-    csv_read_successful = False
-    errors_list = []
-    original_filename = "unknown_file.csv"
+    logger.info(f"Starting GCS ingestion for run_id: {run_id}")
     
     try:
-        # Construct and create run directory
-        run_dir_path = storage.get_run_dir(run_id)
-        logger_instance.info(f"Created run directory: {run_dir_path}")
+        # Step 1: Update status to "ingestion started"
+        if not _update_status_to_processing(run_id, gcs_bucket_name):
+            logger.error(f"Failed to update status to processing for run_id: {run_id}")
+            return False
         
-        # Structured log: Run directory created
-        logger.log_structured_event(
-            structured_log,
-            "run_directory_created",
-            {
-                "run_directory": str(run_dir_path),
-                "run_id": run_id
-            },
-            f"Run directory created: {run_dir_path}"
-        )
+        # Step 2: Confirm original_data.csv exists in GCS
+        metadata = _download_and_validate_metadata(run_id, gcs_bucket_name)
+        if not metadata:
+            logger.error(f"Failed to download or validate metadata for run_id: {run_id}")
+            _update_status_to_failed(run_id, gcs_bucket_name, "Failed to download or validate metadata")
+            return False
         
-        # Save original data
-        original_data_path = run_dir_path / constants.ORIGINAL_DATA_FILE
-        logger_instance.info(f"Saving original data to: {original_data_path}")
+        # Step 3: Confirm original_data.csv exists and perform basic validation
+        csv_validation_result = _validate_original_csv(run_id, gcs_bucket_name, metadata)
+        if not csv_validation_result['success']:
+            logger.error(f"CSV validation failed for run_id: {run_id} - {csv_validation_result['error']}")
+            _update_status_to_failed(run_id, gcs_bucket_name, csv_validation_result['error'])
+            return False
         
-        # Handle different file object types
+        # Step 4: Update metadata with ingestion completion and any updated stats
+        if not _update_metadata_with_ingestion_completion(run_id, gcs_bucket_name, metadata, csv_validation_result):
+            logger.error(f"Failed to update metadata with ingestion completion for run_id: {run_id}")
+            _update_status_to_failed(run_id, gcs_bucket_name, "Failed to update metadata with ingestion completion")
+            return False
+        
+        # Step 5: Update status to completed
+        if not _update_status_to_completed(run_id, gcs_bucket_name):
+            logger.error(f"Failed to update status to completed for run_id: {run_id}")
+            return False
+        
+        logger.info(f"GCS ingestion completed successfully for run_id: {run_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Critical error during GCS ingestion for run_id {run_id}: {str(e)}", exc_info=True)
+        _update_status_to_failed(run_id, gcs_bucket_name, f"Critical error: {str(e)}")
+        raise
+
+
+def _update_status_to_processing(run_id: str, gcs_bucket_name: str) -> bool:
+    """Update status.json to indicate ingestion processing has started."""
+    try:
+        # Download current status.json
+        status_bytes = download_run_file(run_id, constants.STATUS_FILE)
+        if not status_bytes:
+            logger.error(f"Could not download status.json for run_id: {run_id}")
+            return False
+        
+        # Parse current status
+        current_status = json.loads(status_bytes.decode('utf-8'))
+        
+        # Update status fields
+        current_status.update({
+            'current_stage': constants.INGEST_STAGE,
+            'current_stage_name': constants.STAGE_DISPLAY_NAMES[constants.INGEST_STAGE],
+            'status': 'processing',
+            'message': 'Starting data ingestion...',
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'last_updated': datetime.now(timezone.utc).isoformat()
+        })
+        
+        # Upload updated status back to GCS
+        status_json = json.dumps(current_status, indent=2).encode('utf-8')
+        status_io = io.BytesIO(status_json)
+        
+        success = upload_run_file(run_id, constants.STATUS_FILE, status_io)
+        if success:
+            logger.info(f"Updated status to processing for run_id: {run_id}")
+        return success
+        
+    except Exception as e:
+        logger.error(f"Failed to update status to processing for run_id {run_id}: {str(e)}")
+        return False
+
+
+def _download_and_validate_metadata(run_id: str, gcs_bucket_name: str) -> Optional[dict]:
+    """Download and validate metadata.json from GCS."""
+    try:
+        # Download metadata.json
+        metadata_bytes = download_run_file(run_id, constants.METADATA_FILE)
+        if not metadata_bytes:
+            logger.error(f"Could not download metadata.json for run_id: {run_id}")
+            return None
+        
+        # Parse metadata
+        metadata = json.loads(metadata_bytes.decode('utf-8'))
+        
+        # Validate required fields
+        if 'run_id' not in metadata or metadata['run_id'] != run_id:
+            logger.error(f"Metadata run_id mismatch for run_id: {run_id}")
+            return None
+        
+        if 'original_filename' not in metadata:
+            logger.error(f"Metadata missing original_filename for run_id: {run_id}")
+            return None
+        
+        logger.info(f"Successfully downloaded and validated metadata for run_id: {run_id}")
+        return metadata
+        
+    except Exception as e:
+        logger.error(f"Failed to download/validate metadata for run_id {run_id}: {str(e)}")
+        return None
+
+
+def _validate_original_csv(run_id: str, gcs_bucket_name: str, metadata: dict) -> dict:
+    """Validate that original_data.csv exists and can be read from GCS."""
+    try:
+        # Check if original_data.csv exists in GCS
+        csv_exists = check_run_file_exists(run_id, constants.ORIGINAL_DATA_FILE)
+        if not csv_exists:
+            return {
+                'success': False,
+                'error': f"Original data CSV not found in GCS at runs/{run_id}/{constants.ORIGINAL_DATA_FILE}"
+            }
+        
+        logger.info(f"Confirmed original_data.csv exists in GCS for run_id: {run_id}")
+        
+        # Download and validate CSV can be read
+        csv_bytes = download_run_file(run_id, constants.ORIGINAL_DATA_FILE)
+        if not csv_bytes:
+            return {
+                'success': False,
+                'error': "Failed to download original_data.csv from GCS"
+            }
+        
+        # Try to read CSV with pandas to validate it's a proper CSV
         try:
-            # Check if it's a Streamlit UploadedFile or similar
-            if hasattr(uploaded_file_object, 'getvalue'):
-                # Streamlit UploadedFile
-                file_content = uploaded_file_object.getvalue()
-                original_filename = getattr(uploaded_file_object, 'name', 'uploaded_file.csv')
-            elif hasattr(uploaded_file_object, 'read'):
-                # Standard file object
-                file_content = uploaded_file_object.read()
-                original_filename = getattr(uploaded_file_object, 'name', 'uploaded_file.csv')
-                # Reset file pointer if possible
-                if hasattr(uploaded_file_object, 'seek'):
-                    uploaded_file_object.seek(0)
-            else:
-                raise ValueError("Unsupported file object type")
-            
-            # Write file content
-            with open(original_data_path, 'wb') as f:
-                f.write(file_content)
-            
-            logger_instance.info("Successfully saved original data file")
-            
-            # Structured log: File saved
-            logger.log_structured_event(
-                structured_log,
-                "file_saved",
-                {
-                    "original_filename": original_filename,
-                    "saved_path": constants.ORIGINAL_DATA_FILE,
-                    "file_size_bytes": len(file_content)
-                },
-                f"Original data file saved: {original_filename}"
-            )
-            
-        except Exception as e:
-            error_msg = f"Failed to save original data: {str(e)}"
-            logger_instance.error(error_msg)
-            errors_list.append(error_msg)
-            
-            # Structured log: File save failed
-            logger.log_structured_error(
-                structured_log,
-                "file_save_failed",
-                error_msg,
-                {"stage": constants.INGEST_STAGE, "original_filename": original_filename}
-            )
-            
-            # Continue with limited metadata creation
-            original_filename = "upload_failed.csv"
-        
-        # Read basic data statistics (with error handling)
-        logger_instance.info("Attempting to read and analyze CSV data")
-        
-        try:
-            # Try to read the CSV file
-            df = pd.read_csv(original_data_path)
+            df = pd.read_csv(io.BytesIO(csv_bytes))
             
             # Extract basic statistics
             initial_rows = df.shape[0]
             initial_cols = df.shape[1]
             initial_dtypes = {col: str(dtype) for col, dtype in df.dtypes.items()}
+            memory_usage_mb = df.memory_usage(deep=True).sum() / (1024**2)
+            missing_values_total = df.isnull().sum().sum()
             
-            csv_read_successful = True
-            logger_instance.info(f"Successfully read CSV: {initial_rows} rows, {initial_cols} columns")
+            logger.info(f"CSV validation successful for run_id {run_id}: {initial_rows} rows, {initial_cols} columns")
             
-            # Log basic data info
-            logger_instance.info(f"Column dtypes: {initial_dtypes}")
-            
-            # Structured log: CSV parsed successfully
-            logger.log_structured_event(
-                structured_log,
-                "csv_parsed_successfully",
-                {
-                    "rows": int(initial_rows),
-                    "columns": int(initial_cols),
-                    "column_names": list(df.columns),
-                    "dtypes": initial_dtypes,
-                    "memory_usage_mb": float(df.memory_usage(deep=True).sum() / 1024**2),
-                    "missing_values_total": int(df.isnull().sum().sum())
-                },
-                f"CSV parsed successfully: {initial_rows} rows × {initial_cols} columns"
-            )
-            
-            # Log data quality metrics as structured metrics (converting numpy types to Python types)
-            logger.log_structured_metric(
-                structured_log,
-                "dataset_rows",
-                int(initial_rows),
-                "data_quality",
-                {"dataset_columns": int(initial_cols)}
-            )
-            
-            logger.log_structured_metric(
-                structured_log,
-                "dataset_columns",
-                int(initial_cols),
-                "data_quality",
-                {"dataset_rows": int(initial_rows)}
-            )
-            
-            total_missing = int(df.isnull().sum().sum())
-            total_cells = int(initial_rows * initial_cols)
-            missing_percentage = float((total_missing / total_cells) * 100)
-            logger.log_structured_metric(
-                structured_log,
-                "missing_values_percentage",
-                missing_percentage,
-                "data_quality",
-                {"total_missing": total_missing, "total_cells": total_cells}
-            )
-            
-        except Exception as e:
-            error_msg = f"Failed to read or parse uploaded CSV: {str(e)}"
-            logger_instance.error(error_msg)
-            errors_list.append(error_msg)
-            csv_read_successful = False
-            
-            # Structured log: CSV parsing failed
-            logger.log_structured_error(
-                structured_log,
-                "csv_parsing_failed",
-                error_msg,
-                {"stage": constants.INGEST_STAGE, "file": original_filename}
-            )
-            
-            # Set fallback values
-            initial_rows = None
-            initial_cols = None
-            initial_dtypes = None
-            
-        # Create initial metadata.json
-        logger_instance.info("Creating initial metadata")
-        
-        try:
-            metadata_model = schemas.BaseMetadata(
-                run_id=run_id,
-                timestamp=datetime.now(timezone.utc),
-                original_filename=original_filename,
-                initial_rows=initial_rows,
-                initial_cols=initial_cols,
-                initial_dtypes=initial_dtypes
-            )
-            
-            # Convert to dictionary for JSON serialization
-            metadata_dict = metadata_model.model_dump(mode='json')
-            
-            # Write metadata atomically
-            storage.write_json_atomic(
-                run_id=run_id,
-                filename=constants.METADATA_FILE,
-                data=metadata_dict
-            )
-            
-            logger_instance.info("Successfully created metadata.json")
-            
-            # Structured log: Metadata created
-            logger.log_structured_event(
-                structured_log,
-                "metadata_created",
-                {
-                    "file": constants.METADATA_FILE,
-                    "run_id": run_id,
-                    "has_data_stats": csv_read_successful,
-                    "metadata_keys": list(metadata_dict.keys())
-                },
-                f"Initial metadata created: {constants.METADATA_FILE}"
-            )
-            
-        except Exception as e:
-            error_msg = f"Failed to create metadata.json: {str(e)}"
-            logger_instance.error(error_msg)
-            errors_list.append(error_msg)
-            
-            # Structured log: Metadata creation failed
-            logger.log_structured_error(
-                structured_log,
-                "metadata_creation_failed",
-                error_msg,
-                {"stage": constants.INGEST_STAGE}
-            )
-        
-        # Create initial status.json
-        logger_instance.info("Creating initial status")
-        
-        try:
-            # Determine status based on CSV read success
-            if csv_read_successful and len(errors_list) == 0:
-                status_val = 'completed'
-                message_val = 'Ingestion successful.'
-            elif csv_read_successful and len(errors_list) > 0:
-                status_val = 'completed'
-                message_val = 'Ingestion completed with warnings.'
-            else:
-                status_val = 'failed'
-                message_val = 'Failed to read or parse uploaded CSV.'
-            
-            status_model = schemas.StageStatus(
-                stage=constants.INGEST_STAGE,
-                status=status_val,
-                message=message_val,
-                errors=errors_list if errors_list else None
-            )
-            
-            # Convert to dictionary for JSON serialization
-            status_dict = status_model.model_dump(mode='json')
-            
-            # Write status atomically
-            storage.write_json_atomic(
-                run_id=run_id,
-                filename=constants.STATUS_FILE,
-                data=status_dict
-            )
-            
-            logger_instance.info(f"Successfully created status.json with status: {status_val}")
-            
-            # Structured log: Status created
-            logger.log_structured_event(
-                structured_log,
-                "status_created",
-                {
-                    "file": constants.STATUS_FILE,
-                    "status": status_val,
-                    "message": message_val,
-                    "errors_count": len(errors_list),
-                    "csv_read_successful": csv_read_successful
-                },
-                f"Initial status created: {status_val}"
-            )
-            
-        except Exception as e:
-            error_msg = f"Failed to create status.json: {str(e)}"
-            logger_instance.error(error_msg)
-            
-            # Structured log: Status creation failed
-            logger.log_structured_error(
-                structured_log,
-                "status_creation_failed",
-                error_msg,
-                {"stage": constants.INGEST_STAGE}
-            )
-            # This is critical - we should still try to continue
-        
-        # Append to run index (if ingestion was successful enough)
-        logger_instance.info("Adding entry to run index")
-        
-        try:
-            # Determine final status for index
-            if csv_read_successful and len(errors_list) == 0:
-                index_status = "Ingestion Completed"
-            elif csv_read_successful:
-                index_status = "Ingestion Completed with Warnings"
-            else:
-                index_status = "Ingestion Failed: CSV Parse Error"
-            
-            # Prepare run entry data
-            run_entry_data = {
-                'run_id': run_id,
-                'timestamp': datetime.now(timezone.utc).isoformat(),
-                'original_filename': original_filename,
-                'status': index_status
+            return {
+                'success': True,
+                'stats': {
+                    'initial_rows': int(initial_rows),
+                    'initial_cols': int(initial_cols),
+                    'initial_dtypes': initial_dtypes,
+                    'memory_usage_mb': float(memory_usage_mb),
+                    'missing_values_total': int(missing_values_total),
+                    'column_names': list(df.columns)
+                }
             }
             
-            # Append to run index
-            storage.append_to_run_index(run_entry_data=run_entry_data)
-            
-            logger_instance.info("Successfully added entry to run index")
-            
-            # Structured log: Run index updated
-            logger.log_structured_event(
-                structured_log,
-                "run_index_updated",
-                {
-                    "run_id": run_id,
-                    "index_status": index_status,
-                    "original_filename": original_filename
-                },
-                f"Run index updated: {index_status}"
-            )
-            
         except Exception as e:
-            error_msg = f"Failed to update run index: {str(e)}"
-            logger_instance.error(error_msg)
+            return {
+                'success': False,
+                'error': f"Failed to parse CSV with pandas: {str(e)}"
+            }
             
-            # Structured log: Run index update failed
-            logger.log_structured_error(
-                structured_log,
-                "run_index_update_failed",
-                error_msg,
-                {"stage": constants.INGEST_STAGE, "run_id": run_id}
-            )
-            # Not critical for the run to continue
+    except Exception as e:
+        logger.error(f"Error validating CSV for run_id {run_id}: {str(e)}")
+        return {
+            'success': False,
+            'error': f"Unexpected error during CSV validation: {str(e)}"
+        }
+
+
+def _update_metadata_with_ingestion_completion(run_id: str, gcs_bucket_name: str, 
+                                               metadata: dict, validation_result: dict) -> bool:
+    """Update metadata.json with ingestion completion timestamp and validated stats."""
+    try:
+        # Add ingestion completion timestamp
+        metadata['ingestion_completed_at'] = datetime.now(timezone.utc).isoformat()
         
-        # Log completion
-        final_status = "successful" if csv_read_successful else "failed"
-        logger_instance.info(f"Ingestion process completed with status: {final_status}")
+        # Update stats if validation was successful and provided new data
+        if validation_result.get('success') and 'stats' in validation_result:
+            stats = validation_result['stats']
+            # Update any stats that might have been estimated during upload
+            metadata['initial_rows'] = stats['initial_rows']
+            metadata['initial_cols'] = stats['initial_cols']
+            metadata['initial_dtypes'] = stats['initial_dtypes']
+            
+            # Add new stats if not already present
+            if 'memory_usage_mb' not in metadata:
+                metadata['memory_usage_mb'] = stats['memory_usage_mb']
+            if 'missing_values_total' not in metadata:
+                metadata['missing_values_total'] = stats['missing_values_total']
+            if 'column_names' not in metadata:
+                metadata['column_names'] = stats['column_names']
         
-        # Structured log: Ingestion completed
-        logger.log_structured_event(
-            structured_log,
-            "ingestion_completed",
-            {
-                "run_id": run_id,
-                "success": csv_read_successful,
-                "final_status": final_status,
-                "errors_count": len(errors_list),
-                "data_rows": initial_rows,
-                "data_columns": initial_cols,
-                "original_filename": original_filename,
-                "artifacts_created": [
-                    constants.ORIGINAL_DATA_FILE,
-                    constants.METADATA_FILE,
-                    constants.STATUS_FILE
-                ]
-            },
-            f"Ingestion completed: {final_status} for {original_filename}"
-        )
+        # Upload updated metadata back to GCS
+        metadata_json = json.dumps(metadata, indent=2, default=str).encode('utf-8')
+        metadata_io = io.BytesIO(metadata_json)
         
-        return run_id
+        success = upload_run_file(run_id, constants.METADATA_FILE, metadata_io)
+        if success:
+            logger.info(f"Updated metadata with ingestion completion for run_id: {run_id}")
+        return success
         
     except Exception as e:
-        # Critical error - log and re-raise
-        logger_instance.error(f"Critical error during ingestion: {str(e)}", exc_info=True)
+        logger.error(f"Failed to update metadata with ingestion completion for run_id {run_id}: {str(e)}")
+        return False
+
+
+def _update_status_to_completed(run_id: str, gcs_bucket_name: str) -> bool:
+    """Update status.json to indicate ingestion completed successfully."""
+    try:
+        # Download current status.json
+        status_bytes = download_run_file(run_id, constants.STATUS_FILE)
+        if not status_bytes:
+            logger.error(f"Could not download status.json for run_id: {run_id}")
+            return False
         
-        # Structured log: Critical error
-        logger.log_structured_error(
-            structured_log,
-            "critical_ingestion_error",
-            f"Critical error during ingestion: {str(e)}",
-            {"stage": constants.INGEST_STAGE, "run_id": run_id}
-        )
+        # Parse current status
+        current_status = json.loads(status_bytes.decode('utf-8'))
         
-        raise 
+        # Update status fields
+        current_status.update({
+            'status': 'completed',
+            'message': 'Data ingestion completed successfully. Ready for schema definition.',
+            'next_stage': constants.SCHEMA_STAGE,
+            'next_stage_name': constants.STAGE_DISPLAY_NAMES[constants.SCHEMA_STAGE],
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'last_updated': datetime.now(timezone.utc).isoformat()
+        })
+        
+        # Upload updated status back to GCS
+        status_json = json.dumps(current_status, indent=2).encode('utf-8')
+        status_io = io.BytesIO(status_json)
+        
+        success = upload_run_file(run_id, constants.STATUS_FILE, status_io)
+        if success:
+            logger.info(f"Updated status to completed for run_id: {run_id}")
+        return success
+        
+    except Exception as e:
+        logger.error(f"Failed to update status to completed for run_id {run_id}: {str(e)}")
+        return False
+
+
+def _update_status_to_failed(run_id: str, gcs_bucket_name: str, error_message: str) -> bool:
+    """Update status.json to indicate ingestion failed."""
+    try:
+        # Try to download current status.json, create minimal if not available
+        status_bytes = download_run_file(run_id, constants.STATUS_FILE)
+        if status_bytes:
+            current_status = json.loads(status_bytes.decode('utf-8'))
+        else:
+            logger.warning(f"Could not download status.json for run_id: {run_id}, creating minimal status")
+            current_status = {
+                'run_id': run_id,
+                'current_stage': constants.INGEST_STAGE
+            }
+        
+        # Update status fields
+        current_status.update({
+            'status': 'failed',
+            'message': f'Data ingestion failed: {error_message}',
+            'error_details': error_message,
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'last_updated': datetime.now(timezone.utc).isoformat()
+        })
+        
+        # Upload updated status back to GCS
+        status_json = json.dumps(current_status, indent=2).encode('utf-8')
+        status_io = io.BytesIO(status_json)
+        
+        success = upload_run_file(run_id, constants.STATUS_FILE, status_io)
+        if success:
+            logger.info(f"Updated status to failed for run_id: {run_id}")
+        return success
+        
+    except Exception as e:
+        logger.error(f"Failed to update status to failed for run_id {run_id}: {str(e)}")
+        return False
+
+
+# Legacy function maintained for backward compatibility
+def run_ingestion(uploaded_file_object: Union[BinaryIO, object], base_runs_path_str: str) -> str:
+    """
+    Legacy ingestion function maintained for backward compatibility.
+    This function is deprecated in favor of run_gcs_ingestion().
+    
+    For new implementations, use run_gcs_ingestion() which assumes
+    data is already uploaded to GCS by the /api/upload endpoint.
+    """
+    logger.warning("run_ingestion() is deprecated. Use run_gcs_ingestion() for GCS-based workflows.")
+    
+    # This legacy implementation would need to be adapted if still needed
+    # For now, raising an exception to encourage migration to GCS workflow
+    raise NotImplementedError(
+        "Legacy local file ingestion is no longer supported. "
+        "Use the /api/upload endpoint followed by run_gcs_ingestion()."
+    ) 

@@ -21,6 +21,14 @@ from common import constants, storage, schemas, utils
 # Import main for session state clearing function
 import main
 
+# Import prediction page
+try:
+    from pages import predict_page_08
+except ImportError:
+    # Handle import dynamically if needed
+    import importlib
+    predict_page_08 = importlib.import_module('pages.08_Predict')
+
 
 def create_download_button(label: str, data_bytes: bytes, file_name: str, mime_type: str, key_suffix: str, run_id: str):
     """Helper function to create consistent download buttons."""
@@ -34,12 +42,28 @@ def create_download_button(label: str, data_bytes: bytes, file_name: str, mime_t
     )
 
 
+def show_prediction_page():
+    """Show the prediction page embedded within the results page."""
+    # Add a back button to return to results
+    if st.button("← Back to Results", key="back_to_results"):
+        st.session_state['show_predictions'] = False
+        st.rerun()
+
+    # Call the prediction page function
+    predict_page_08.show_predict_page()
+
+
 def show_results_page():
     """Display the Results & Downloads page."""
-    
+
+    # Check if we should show the prediction page instead
+    if st.session_state.get('show_predictions', False):
+        show_prediction_page()
+        return
+
     # Page Title
     st.title("🏁 Step 8: Pipeline Results & Downloads")
-    
+
     # Check if run_id exists in session state
     if 'run_id' not in st.session_state:
         st.error("❌ No active run found. Please upload a file first.")
@@ -47,44 +71,44 @@ def show_results_page():
             st.session_state['current_page'] = 'upload'
             st.rerun()
         return
-    
+
     run_id = st.session_state['run_id']
-    
+
     # Display Current Run ID
     st.info(f"**Current Run ID:** {run_id}")
-    
+
     # Introductory text
     st.write("This page provides a comprehensive summary of your completed pipeline run, including key metrics, generated artifacts, and download links.")
-    
+
     # Load Run Information and Artifacts
     try:
         run_dir_path = storage.get_run_dir(run_id)
-        
+
         # Load key files with graceful error handling
         metadata_dict = None
         status_dict = None
         validation_summary_dict = None
-        
+
         try:
             metadata_dict = storage.read_json(run_id, constants.METADATA_FILENAME)
         except Exception as e:
             st.warning(f"Could not load metadata: {e}")
-        
+
         try:
             status_dict = storage.read_json(run_id, constants.STATUS_FILENAME)
         except Exception as e:
             st.warning(f"Could not load status: {e}")
-        
+
         try:
             validation_summary_dict = storage.read_json(run_id, constants.VALIDATION_FILENAME)
         except Exception as e:
             st.warning(f"Could not load validation report: {e}")
-        
+
         # Convert to Pydantic Models for type safety and easy access
         metadata = None
         status = None
         validation_summary = None
-        
+
         if metadata_dict:
             try:
                 # Use the most comprehensive metadata model available
@@ -100,7 +124,7 @@ def show_results_page():
                     def __init__(self, **kwargs):
                         self.__dict__.update(kwargs)
                 metadata = SimpleNamespace(**metadata_dict)
-        
+
         if status_dict:
             try:
                 status = schemas.StageStatus(**status_dict)
@@ -108,7 +132,7 @@ def show_results_page():
                 st.warning(f"Could not parse status structure: {e}")
                 # Use as plain dict
                 status = type('obj', (object,), status_dict)
-        
+
         if validation_summary_dict:
             try:
                 validation_summary = schemas.ValidationReportSummary(**validation_summary_dict)
@@ -119,13 +143,13 @@ def show_results_page():
 
         # Display Run Summary Section
         st.header("📊 Run Summary")
-        
+
         if metadata:
             col1, col2 = st.columns(2)
-            
+
             with col1:
                 st.write(f"**Run ID:** `{metadata.run_id if hasattr(metadata, 'run_id') else run_id}`")
-                
+
                 # Handle timestamp display
                 timestamp_str = "N/A"
                 if hasattr(metadata, 'timestamp') and metadata.timestamp:
@@ -138,33 +162,33 @@ def show_results_page():
                     except:
                         timestamp_str = str(metadata.timestamp)
                 st.write(f"**Timestamp:** {timestamp_str}")
-                
+
                 st.write(f"**Original File:** {getattr(metadata, 'original_filename', 'N/A')}")
-                
+
             with col2:
                 initial_rows = getattr(metadata, 'initial_rows', None)
                 initial_cols = getattr(metadata, 'initial_cols', None)
                 if initial_rows and initial_cols:
                     st.write(f"**Initial Shape:** {initial_rows:,} rows, {initial_cols:,} columns")
-                
+
                 # Target information
                 if hasattr(metadata, 'target_info') and metadata.target_info:
                     target_info = metadata.target_info
                     st.write(f"**Target Column:** {getattr(target_info, 'name', 'N/A')}")
                     st.write(f"**Task Type:** {getattr(target_info, 'task_type', 'N/A').title()}")
-        
+
         else:
             st.warning("Run metadata not available.")
-        
+
         # Pipeline status
         if status:
             status_color = "🟢" if getattr(status, 'status', None) == 'completed' else "🟡"
             stage_name = constants.STAGE_DISPLAY_NAMES.get(getattr(status, 'stage', ''), getattr(status, 'stage', 'Unknown'))
             st.write(f"**Final Pipeline Status:** {status_color} {getattr(status, 'status', 'Unknown').title()} (at stage: {stage_name})")
-            
+
             if hasattr(status, 'message') and status.message:
                 st.info(f"💬 {status.message}")
-            
+
             if hasattr(status, 'errors') and status.errors:
                 with st.expander("⚠️ View Errors"):
                     for error in status.errors:
@@ -172,12 +196,12 @@ def show_results_page():
 
         # Display Validation Summary Section
         st.header("✅ Validation Summary")
-        
+
         if validation_summary:
             overall_success = getattr(validation_summary, 'overall_success', False)
             success_icon = "✅" if overall_success else "❌"
             st.metric("Overall Validation", f"{success_icon} {'Passed' if overall_success else 'Failed'}")
-            
+
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric("Total Expectations", getattr(validation_summary, 'total_expectations', 0))
@@ -190,19 +214,19 @@ def show_results_page():
 
         # Display Data Preparation Summary Section
         st.header("🧹 Data Preparation Summary")
-        
+
         if metadata and hasattr(metadata, '__dict__') and 'prep_info' in metadata.__dict__:
             prep_info = metadata.__dict__['prep_info']
         elif metadata_dict and 'prep_info' in metadata_dict:
             prep_info = metadata_dict['prep_info']
         else:
             prep_info = None
-        
+
         if prep_info:
             final_shape = prep_info.get('final_shape_after_prep', [0, 0])
             if len(final_shape) == 2:
                 st.write(f"**Final Shape After Prep:** {final_shape[0]:,} rows, {final_shape[1]:,} columns")
-            
+
             cleaning_steps = prep_info.get('cleaning_steps_performed', [])
             if cleaning_steps:
                 with st.expander("🔍 Cleaning Steps Performed"):
@@ -215,31 +239,31 @@ def show_results_page():
 
         # Display AutoML Model Summary Section
         st.header("🤖 AutoML Model Summary")
-        
+
         if metadata and hasattr(metadata, 'automl_info') and metadata.automl_info:
             automl_info = metadata.automl_info
-            
+
             col1, col2 = st.columns(2)
             with col1:
                 st.write(f"**Tool Used:** {getattr(automl_info, 'tool_used', 'N/A')}")
                 st.write(f"**Best Model Algorithm:** {getattr(automl_info, 'best_model_name', 'N/A')}")
-            
+
             with col2:
                 target_column = getattr(automl_info, 'target_column', 'N/A')
                 task_type = getattr(automl_info, 'task_type', 'N/A')
                 st.write(f"**Target Column:** {target_column}")
                 st.write(f"**Task Type:** {task_type.title() if task_type != 'N/A' else 'N/A'}")
-            
+
             # Performance Metrics
             if hasattr(automl_info, 'performance_metrics') and automl_info.performance_metrics:
                 st.subheader("📈 Performance Metrics")
-                
+
                 metrics_dict = automl_info.performance_metrics
                 if isinstance(metrics_dict, dict):
                     # Create a nice table display
                     metrics_df = pd.DataFrame.from_dict(metrics_dict, orient='index', columns=['Value'])
                     metrics_df.index.name = 'Metric'
-                    
+
                     # Format the values nicely
                     formatted_metrics = {}
                     for metric_name, value in metrics_dict.items():
@@ -250,7 +274,7 @@ def show_results_page():
                                 formatted_metrics[metric_name] = f"{value:.4f}"
                         else:
                             formatted_metrics[metric_name] = str(value)
-                    
+
                     # Display in columns for better layout
                     metric_cols = st.columns(min(len(formatted_metrics), 4))
                     for i, (metric_name, metric_value) in enumerate(formatted_metrics.items()):
@@ -265,10 +289,10 @@ def show_results_page():
 
         # Display Explainability Section (SHAP Plot)
         st.header("🧠 Model Explainability")
-        
+
         if metadata and hasattr(metadata, 'explain_info') and metadata.explain_info:
             explain_info = metadata.explain_info
-            
+
             # Show explainability metrics
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -277,7 +301,7 @@ def show_results_page():
                 st.metric("Features Explained", f"{getattr(explain_info, 'features_explained', 0):,}")
             with col3:
                 st.metric("Samples Used", f"{getattr(explain_info, 'samples_used_for_explanation', 0):,}")
-            
+
             # Display SHAP plot if available
             shap_plot_path = getattr(explain_info, 'shap_summary_plot_path', None)
             if shap_plot_path:
@@ -285,11 +309,11 @@ def show_results_page():
                 if shap_plot_full_path.exists():
                     st.subheader("📊 SHAP Feature Importance Plot")
                     st.image(
-                        str(shap_plot_full_path), 
+                        str(shap_plot_full_path),
                         caption="SHAP Global Feature Importance Summary",
                         use_container_width=True
                     )
-                    
+
                     # Show plot file info
                     file_size_kb = shap_plot_full_path.stat().st_size / 1024
                     st.caption(f"📈 Plot file size: {file_size_kb:.1f} KB")
@@ -306,10 +330,10 @@ def show_results_page():
 
         # Create download sections
         col1, col2 = st.columns(2)
-        
+
         with col1:
             st.subheader("📋 Data Files")
-            
+
             # Original Data CSV
             original_data_path = run_dir_path / constants.ORIGINAL_DATA_FILENAME
             if original_data_path.exists():
@@ -330,7 +354,7 @@ def show_results_page():
                     st.error(f"Error reading original data: {e}")
             else:
                 st.caption("❌ Original data file not found")
-            
+
             # Cleaned Data CSV
             cleaned_data_path = run_dir_path / constants.CLEANED_DATA_FILE
             if cleaned_data_path.exists():
@@ -344,7 +368,7 @@ def show_results_page():
                             "clean_csv",
                             run_id
                         )
-                    # Show file info  
+                    # Show file info
                     file_size_mb = cleaned_data_path.stat().st_size / (1024 * 1024)
                     st.caption(f"Size: {file_size_mb:.2f} MB")
                 except Exception as e:
@@ -354,7 +378,7 @@ def show_results_page():
 
         with col2:
             st.subheader("📊 Report Files")
-            
+
             # Metadata JSON
             metadata_path = run_dir_path / constants.METADATA_FILENAME
             if metadata_path.exists():
@@ -375,7 +399,7 @@ def show_results_page():
                     st.error(f"Error reading metadata: {e}")
             else:
                 st.caption("❌ Metadata file not found")
-            
+
             # Validation Report JSON
             validation_path = run_dir_path / constants.VALIDATION_FILENAME
             if validation_path.exists():
@@ -399,12 +423,12 @@ def show_results_page():
 
         # Data Profile Report (HTML)
         st.subheader("📈 Additional Reports")
-        
+
         # Check for profiling report in prep_info
         profile_report_path = None
         if prep_info and 'profiling_report_path' in prep_info:
             profile_report_path = run_dir_path / prep_info['profiling_report_path']
-        
+
         if profile_report_path and profile_report_path.exists():
             try:
                 with open(profile_report_path, "rb") as fp:
@@ -426,13 +450,13 @@ def show_results_page():
 
         # Model Artifacts (Zipped)
         st.subheader("🤖 Model Artifacts")
-        
+
         model_dir = run_dir_path / constants.MODEL_DIR
         if model_dir.exists() and any(model_dir.iterdir()):
             try:
                 # Create a zip file in memory containing all files from model_dir
                 zip_buffer = io.BytesIO()
-                
+
                 with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
                     for root, dirs, files in os.walk(model_dir):
                         for file in files:
@@ -440,9 +464,9 @@ def show_results_page():
                             # Arcname should be relative to model_dir
                             arcname = file_path.relative_to(model_dir)
                             zip_file.write(file_path, arcname=arcname)
-                
+
                 zip_buffer.seek(0)
-                
+
                 create_download_button(
                     "📥 Model Artifacts (ZIP)",
                     zip_buffer.getvalue(),
@@ -451,18 +475,18 @@ def show_results_page():
                     "model_zip",
                     run_id
                 )
-                
+
                 # Show info about what's in the zip
                 model_files = list(model_dir.rglob("*"))
                 model_files = [f for f in model_files if f.is_file()]
                 st.caption(f"Contains {len(model_files)} files")
-                
+
                 with st.expander("📁 View model files"):
                     for file_path in sorted(model_files):
                         rel_path = file_path.relative_to(model_dir)
                         file_size_kb = file_path.stat().st_size / 1024
                         st.write(f"- {rel_path} ({file_size_kb:.1f} KB)")
-                        
+
             except Exception as e:
                 st.error(f"Error creating model artifacts zip: {e}")
         else:
@@ -472,7 +496,7 @@ def show_results_page():
         if metadata and hasattr(metadata, 'explain_info') and metadata.explain_info:
             explain_info = metadata.explain_info
             shap_plot_path = getattr(explain_info, 'shap_summary_plot_path', None)
-            
+
             if shap_plot_path:
                 shap_plot_full_path = run_dir_path / shap_plot_path
                 if shap_plot_full_path.exists():
@@ -495,7 +519,7 @@ def show_results_page():
 
         # Log File
         st.subheader("📄 Log Files")
-        
+
         log_path = run_dir_path / constants.PIPELINE_LOG_FILENAME
         if log_path.exists():
             try:
@@ -516,20 +540,70 @@ def show_results_page():
         else:
             st.caption("❌ Pipeline log file not found")
 
+        # Make Predictions Section
+        st.divider()
+        st.header("🔮 Make Predictions")
+
+                # Check if model is available for predictions
+        model_available = False
+        automl_info = None
+
+        # Try to get automl_info from different sources
+        if metadata and hasattr(metadata, 'automl_info') and metadata.automl_info:
+            automl_info = metadata.automl_info
+            model_available = True
+        elif metadata and hasattr(metadata, '__dict__') and 'automl_info' in metadata.__dict__:
+            automl_info = metadata.__dict__['automl_info']
+            model_available = automl_info is not None
+        elif metadata_dict and 'automl_info' in metadata_dict:
+            automl_info = metadata_dict['automl_info']
+            model_available = automl_info is not None
+
+        if model_available and automl_info:
+            col1, col2 = st.columns([2, 1])
+
+            with col1:
+                st.write("🎯 **Use your trained model to make predictions on new data!**")
+                st.write("Enter feature values and get instant predictions with confidence insights.")
+
+                # Show model info - handle both dict and object cases
+                try:
+                    if hasattr(automl_info, 'best_model_name'):
+                        # Pydantic model object
+                        model_name = getattr(automl_info, 'best_model_name', 'Unknown')
+                        task_type = getattr(automl_info, 'task_type', 'Unknown')
+                    else:
+                        # Dictionary
+                        model_name = automl_info.get('best_model_name', 'Unknown')
+                        task_type = automl_info.get('task_type', 'Unknown')
+                except Exception:
+                    model_name = 'Unknown'
+                    task_type = 'Unknown'
+
+                st.caption(f"Model: {model_name} | Task: {task_type.title()}")
+
+            with col2:
+                if st.button("🔮 Make Predictions", type="primary", use_container_width=True):
+                    # Show prediction interface within results page
+                    st.session_state['show_predictions'] = True
+                    st.rerun()
+        else:
+            st.warning("⚠️ Prediction functionality requires a completed AutoML stage with a trained model.")
+
         # Start New Run Section
         st.divider()
         st.header("🔄 Start New Analysis")
-        
+
         col1, col2 = st.columns([2, 1])
-        
+
         with col1:
             st.write("Ready to analyze a new dataset? Start a fresh pipeline run:")
-            
+
         with col2:
             if st.button("🏠 Start New Run / Upload New Data", type="primary", use_container_width=True):
                 # Clear all run-specific session state using the centralized function
                 main.clear_run_session_state()
-                
+
                 # Navigate to upload page
                 st.session_state['current_page'] = 'upload'
                 st.rerun()
@@ -539,7 +613,7 @@ def show_results_page():
     except Exception as e:
         is_dev_mode = st.session_state.get("developer_mode_active", False)
         utils.display_page_error(e, run_id=st.session_state.get('run_id'), stage_name="Results Display", dev_mode=is_dev_mode)
-        
+
         # Still provide option to start new run
         st.divider()
         if st.button("🏠 Start New Run", type="primary"):
@@ -550,4 +624,4 @@ def show_results_page():
 
 
 if __name__ == "__main__":
-    show_results_page() 
+    show_results_page()

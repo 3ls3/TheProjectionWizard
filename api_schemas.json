@@ -273,51 +273,6 @@
         "target_info": {}
       }
     },
-    "/api/prediction-schema-enhanced": {
-      "method": "GET",
-      "summary": "Get enhanced prediction schema with UI metadata",
-      "parameters": {
-        "run_id": "string (required)"
-      },
-      "response": {
-        "api_version": "v1",
-        "numeric_columns": {
-          "column_name": {
-            "min_value": "float",
-            "max_value": "float",
-            "default_value": "float",
-            "step_size": "float",
-            "suggested_value": "float | null",
-            "display_format": "string (.3f)"
-          }
-        },
-        "categorical_columns": {
-          "column_name": {
-            "options": ["string array"],
-            "default_option": "string",
-            "display_names": {
-              "option": "friendly_name"
-            },
-            "descriptions": {
-              "option": "description"
-            }
-          }
-        },
-        "feature_metadata": {
-          "feature_name": {
-            "importance_rank": "integer | null",
-            "importance_score": "float | null",
-            "correlation_with_target": "float | null",
-            "description": "string | null",
-            "unit": "string | null",
-            "category": "string | null"
-          }
-        },
-        "target_info": {},
-        "model_info": {},
-        "validation_rules": {}
-      }
-    },
     "/api/predict": {
       "method": "POST",
       "summary": "Make prediction (basic)",
@@ -337,184 +292,33 @@
         "model_name": "string | null"
       }
     },
-    "/api/predict/single": {
+    "/api/predict/enhanced": {
       "method": "POST",
-      "summary": "Enhanced single prediction with SHAP",
-      "parameters": {
-        "run_id": "string (required)"
-      },
+      "summary": "Enhanced prediction with feature importance from results",
+      "description": "Combines reliable prediction logic with global feature importance data. Replaces the problematic /predict/single endpoint.",
       "request": {
-        "input_data": {
+        "run_id": "string",
+        "input_values": {
           "column_name": "value"
         }
       },
       "response": {
         "api_version": "v1",
         "prediction_value": "any",
-        "probabilities": {
-          "class_probabilities": {
-            "class_name": "float"
-          },
-          "predicted_class": "string",
-          "confidence": "float"
+        "confidence": "float | null (0-1)",
+        "input_features": {
+          "column_name": "processed_value"
         },
-        "confidence_interval": {
-          "lower_bound": "float",
-          "upper_bound": "float",
-          "confidence_level": "float (0.95)"
-        },
-        "feature_contributions": [
-          {
-            "feature_name": "string",
-            "contribution_value": "float",
-            "feature_value": "float | int | string",
-            "contribution_direction": "positive | negative | neutral",
-            "shap_value": "float | null"
-          }
-        ],
-        "top_contributing_features": ["string array"],
-        "input_features": {},
-        "processed_features": {},
-        "task_type": "string",
-        "target_column": "string",
-        "model_name": "string | null",
-        "prediction_timestamp": "string",
-        "prediction_id": "string"
-      }
-    },
-    "/api/predict/explain/{prediction_id}": {
-      "method": "POST",
-      "summary": "Get SHAP explanation for prediction",
-      "parameters": {
-        "prediction_id": "string (required)",
-        "run_id": "string (required)"
-      },
-      "request": {
-        "input_data": {
-          "column_name": "value"
-        }
-      },
-      "response": {
-        "prediction_id": "string",
-        "shap_values": {
-          "feature_name": "float"
-        },
-        "shap_base_value": "float",
-        "feature_contributions": [
-          {
-            "feature_name": "string",
-            "contribution_value": "float",
-            "feature_value": "float | int | string",
-            "contribution_direction": "positive | negative | neutral",
-            "shap_value": "float | null"
-          }
-        ],
-        "top_contributing_features": ["string array"],
-        "explanation_summary": "string",
-        "shap_available": "boolean",
-        "fallback_used": "boolean",
-        "explanation_timestamp": "string"
-      }
-    },
-    "/api/predict/batch": {
-      "method": "POST",
-      "summary": "Batch predictions with summary",
-      "request": {
-        "run_id": "string",
-        "inputs": [
-          {
-            "column_name": "value"
-          }
-        ],
-        "include_explanations": "boolean (default: false)",
-        "include_confidence": "boolean (default: true)"
-      },
-      "response": {
-        "api_version": "v1",
-        "predictions": [
-          {
-            "input_index": "integer",
-            "prediction_value": "any",
-            "probabilities": {
-              "class_probabilities": {
-                "class_name": "float"
-              },
-              "predicted_class": "string",
-              "confidence": "float"
-            },
-            "confidence_interval": {
-              "lower_bound": "float",
-              "upper_bound": "float",
-              "confidence_level": "float"
-            },
-            "prediction_id": "string"
-          }
-        ],
-        "summary": {
-          "total_predictions": "integer",
-          "prediction_distribution": {
-            "class_name": "integer (count)"
-          },
-          "prediction_range": {
-            "min": "float",
-            "max": "float",
-            "mean": "float",
-            "std": "float"
-          },
-          "processing_time_seconds": "float"
+        "feature_importance": ["string array (ordered by importance)"],
+        "feature_importance_scores": {
+          "feature_name": "float (0-1)"
         },
         "task_type": "string",
         "target_column": "string",
         "model_name": "string | null",
-        "batch_timestamp": "string"
-      }
-    },
-    "/api/predict/compare": {
-      "method": "POST",
-      "summary": "Compare prediction scenarios",
-      "request": {
-        "run_id": "string",
-        "scenarios": [
-          {
-            "scenario_name": "string",
-            "input_values": {
-              "column_name": "value"
-            }
-          }
-        ]
-      },
-      "response": {
-        "api_version": "v1",
-        "scenarios": [
-          {
-            "scenario_name": "string",
-            "input_values": {
-              "column_name": "value"
-            },
-            "prediction_value": "any",
-            "probabilities": {
-              "class_probabilities": {
-                "class_name": "float"
-              },
-              "predicted_class": "string",
-              "confidence": "float"
-            },
-            "key_differences": ["string array"]
-          }
-        ],
-        "comparison_analysis": {
-          "most_influential_features": ["string array"],
-          "prediction_sensitivity": {
-            "prediction_std": "float",
-            "prediction_range": "float",
-            "coefficient_of_variation": "float"
-          },
-          "scenario_rankings": ["string array | null"]
-        },
-        "task_type": "string",
-        "target_column": "string",
-        "model_name": "string | null",
-        "comparison_timestamp": "string"
+        "prediction_timestamp": "string (ISO format)",
+        "shap_plot_available": "boolean",
+        "explainability_available": "boolean"
       }
     },
     "/api/download/{run_id}/{filename}": {
@@ -542,6 +346,38 @@
       "pipeline.log"
     ]
   },
+  "deprecated_endpoints": {
+    "/api/predict/single": {
+      "status": "REMOVED",
+      "reason": "Had issues with zero feature values",
+      "replacement": "/api/predict/enhanced",
+      "migration_notes": "Use /api/predict/enhanced instead. Same input format but more reliable output."
+    },
+    "/api/predict/explain/{prediction_id}": {
+      "status": "REMOVED", 
+      "reason": "Complex SHAP calculations caused performance issues",
+      "replacement": "/api/predict/enhanced + /api/results",
+      "migration_notes": "Use /api/predict/enhanced for predictions with feature importance, and /api/results for SHAP plots."
+    },
+    "/api/predict/batch": {
+      "status": "REMOVED",
+      "reason": "Complex batch processing - can be re-implemented if needed",
+      "replacement": "Multiple calls to /api/predict/enhanced",
+      "migration_notes": "Make individual calls to /api/predict/enhanced for each prediction."
+    },
+    "/api/predict/compare": {
+      "status": "REMOVED",
+      "reason": "Complex comparison logic - can be re-implemented if needed", 
+      "replacement": "Multiple calls to /api/predict/enhanced",
+      "migration_notes": "Make individual calls to /api/predict/enhanced and compare results client-side."
+    },
+    "/api/prediction-schema-enhanced": {
+      "status": "REMOVED",
+      "reason": "Complex schema generation - use basic schema instead",
+      "replacement": "/api/prediction-schema",
+      "migration_notes": "Use /api/prediction-schema for input validation and /api/results for feature importance."
+    }
+  },
   "usage_flow": {
     "1": "POST /api/upload - Upload CSV file",
     "2": "GET /api/target-suggestion - Get AI suggestions for target",
@@ -550,7 +386,7 @@
     "5": "POST /api/confirm-features - Confirm features, starts pipeline",
     "6": "GET /api/status - Poll for pipeline completion",
     "7": "GET /api/results - Get final results when completed",
-    "8": "GET /api/prediction-schema-enhanced - Get prediction form schema",
-    "9": "POST /api/predict/single - Make predictions with explanations"
+    "8": "GET /api/prediction-schema - Get prediction form schema",
+    "9": "POST /api/predict/enhanced - Make predictions with feature importance"
   }
 } 

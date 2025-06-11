@@ -529,6 +529,40 @@ class FinalResultsResponse(BaseModel):
     prediction_readiness: PredictionReadiness
 
 
+# Add new schemas for the simplified enhanced prediction API
+
+class EnhancedPredictionResponse(BaseModel):
+    """Enhanced prediction response that combines prediction with feature importance."""
+    api_version: Literal["v1"] = "v1"
+    
+    # Core prediction
+    prediction_value: Any
+    confidence: Optional[float] = None
+    
+    # Input processing
+    input_features: Dict[str, Any] = Field(default_factory=dict)
+    
+    # Feature importance from results (global model feature importance)
+    feature_importance: List[str] = Field(
+        default_factory=list, 
+        description="Global feature importance ranking from model training"
+    )
+    feature_importance_scores: Dict[str, float] = Field(
+        default_factory=dict,
+        description="Feature importance scores (0-1) if available"
+    )
+    
+    # Model metadata
+    task_type: str
+    target_column: str
+    model_name: Optional[str] = None
+    prediction_timestamp: str
+    
+    # SHAP availability info
+    shap_plot_available: bool = False
+    explainability_available: bool = False
+
+
 __all__ = [
     "UploadResponse",
     "ColumnStatistics",
@@ -572,4 +606,5 @@ __all__ = [
     "PredictionComparisonResponse",
     "DetailedExplanation",
     "ShapExplanationResponse",
+    "EnhancedPredictionResponse",
 ]

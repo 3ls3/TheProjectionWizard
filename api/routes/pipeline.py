@@ -53,21 +53,17 @@ from .schema import (
     PredictionExplanationResponse,
     PredictionComparisonRequest,
     PredictionComparisonResponse,
-    ShapExplanationResponse
+    ShapExplanationResponse,
+    EnhancedPredictionResponse
 )
 from pipeline.step_2_schema import target_definition_logic as tgt_logic
 from pipeline.step_2_schema import feature_definition_logic as feat_logic
 from pipeline.orchestrator import run_from_schema_confirm
 from pipeline.step_7_predict.predict_logic import (
     generate_predictions,
-    generate_enhanced_prediction,
-    generate_batch_predictions,
-    calculate_feature_contributions,
-    generate_enhanced_prediction_with_shap
+    generate_batch_predictions
 )
-from pipeline.step_7_predict.column_mapper import (
-    generate_enhanced_prediction_schema
-)
+# Removed complex prediction logic imports for simplified approach
 
 router = APIRouter(prefix="/api")
 
@@ -1536,399 +1532,10 @@ def make_prediction(req: PredictionInputRequest):
         errors.raise_internal_server_error(f"Prediction failed: {str(e)}")
 
 
-# Enhanced Prediction API Endpoints for Option 2
-
-@router.get("/prediction-schema-enhanced", response_model=EnhancedPredictionSchemaResponse)
-async def get_enhanced_prediction_schema(run_id: str = Query(..., description="Run ID")):
-    """
-    Get enhanced prediction schema with rich UI metadata, slider configurations, and feature importance.
-    Now includes real SHAP-based feature importance when available.
-    """
-    
-    # Validate run exists
-    if not validate_run_exists_gcs(run_id, PROJECT_BUCKET_NAME):
-        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
-    
-    # Load required files
-    try:
-        df_original = load_original_data_csv_gcs(run_id, PROJECT_BUCKET_NAME)
-        metadata = load_metadata_json_gcs(run_id, PROJECT_BUCKET_NAME)
-        
-        if df_original is None or metadata is None:
-            raise HTTPException(status_code=404, detail="Required files not found")
-        
-        target_column = metadata.get('target_info', {}).get('name')
-        
-        # Use the GCS-based enhanced schema function that returns the correct format
-        from pipeline.step_7_predict.column_mapper import get_enhanced_prediction_schema_gcs
-        
-        schema = get_enhanced_prediction_schema_gcs(run_id, df_original, target_column, PROJECT_BUCKET_NAME)
-        
-        # Ensure api_version is set
-        schema['api_version'] = 'v1'
-        
-        return schema
-        
-    except Exception as e:
-        print(f"Error generating enhanced schema: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to generate schema: {str(e)}")
+# Removed complex prediction endpoints - replaced with simplified /predict/enhanced
 
 
-@router.post("/predict/single", response_model=SinglePredictionResponse)
-async def predict_single_enhanced(
-    run_id: str = Query(..., description="Run ID"),
-    input_data: Dict[str, Any] = Body(..., description="Input data for prediction")
-):
-    """
-    Generate enhanced single prediction with real SHAP values, probabilities, and feature contributions.
-    """
-    
-    # Validate run exists
-    if not validate_run_exists_gcs(run_id, PROJECT_BUCKET_NAME):
-        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
-    
-    try:
-        # Load required components
-        model = load_pipeline_gcs(run_id, PROJECT_BUCKET_NAME)
-        metadata = load_metadata_json_gcs(run_id, PROJECT_BUCKET_NAME)
-        
-        if model is None or metadata is None:
-            raise HTTPException(status_code=404, detail="Model or metadata not found")
-        
-        # Load original data for proper input encoding
-        from api.utils.io_helpers import load_original_data_csv_gcs
-        df_original = load_original_data_csv_gcs(run_id, PROJECT_BUCKET_NAME)
-        if df_original is None:
-            raise HTTPException(status_code=404, detail="Original data not found")
-            
-        target_column = metadata.get('target_info', {}).get('name')
-        task_type = metadata.get('target_info', {}).get('task_type', 'unknown')
-        
-        # CRITICAL FIX: Apply proper input encoding with StandardScaler
-        from pipeline.step_7_predict.column_mapper import encode_user_input_gcs
-        encoded_df, encoding_issues = encode_user_input_gcs(
-            input_data, run_id, df_original, target_column
-        )
-        
-        if encoded_df is None or encoding_issues:
-            raise HTTPException(status_code=400, detail=f"Input encoding failed: {encoding_issues}")
-        
-        # Generate enhanced prediction with real SHAP values using properly encoded input
-        result = generate_enhanced_prediction_with_shap(model, encoded_df, target_column, task_type)
-        
-        return result
-        
-    except Exception as e:
-        print(f"Error in enhanced single prediction: {e}")
-        raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
-
-
-@router.post("/predict/explain/{prediction_id}", response_model=ShapExplanationResponse)
-async def get_prediction_explanation(
-    prediction_id: str,
-    run_id: str = Query(..., description="Run ID"),
-    input_data: Dict[str, Any] = Body(..., description="Input data for explanation")
-):
-    """
-    Get detailed SHAP explanation for a specific prediction.
-    Real SHAP explanations using the existing SHAP logic.
-    """
-    
-    # Validate run exists
-    if not validate_run_exists_gcs(run_id, PROJECT_BUCKET_NAME):
-        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
-    
-    try:
-        # Load required components
-        model = load_pipeline_gcs(run_id, PROJECT_BUCKET_NAME)
-        metadata = load_metadata_json_gcs(run_id, PROJECT_BUCKET_NAME)
-        
-        if model is None or metadata is None:
-            raise HTTPException(status_code=404, detail="Model or metadata not found")
-        
-        # Load original data for proper input encoding
-        from api.utils.io_helpers import load_original_data_csv_gcs
-        df_original = load_original_data_csv_gcs(run_id, PROJECT_BUCKET_NAME)
-        if df_original is None:
-            raise HTTPException(status_code=404, detail="Original data not found")
-            
-        target_column = metadata.get('target_info', {}).get('name')
-        task_type = metadata.get('target_info', {}).get('task_type', 'unknown')
-        
-        # CRITICAL FIX: Apply proper input encoding with StandardScaler
-        from pipeline.step_7_predict.column_mapper import encode_user_input_gcs
-        encoded_df, encoding_issues = encode_user_input_gcs(
-            input_data, run_id, df_original, target_column
-        )
-        
-        if encoded_df is None or encoding_issues:
-            raise HTTPException(status_code=400, detail=f"Input encoding failed: {encoding_issues}")
-        
-        # Generate SHAP explanation
-        from pipeline.step_7_predict.predict_logic import calculate_shap_values_for_prediction
-        
-        shap_result = calculate_shap_values_for_prediction(model, encoded_df, target_column, task_type)
-        
-        # Format response
-        explanation_summary = f"SHAP explanation for prediction {prediction_id}. "
-        if shap_result.get('fallback_used'):
-            explanation_summary += "Model importance fallback used (SHAP calculation failed). "
-        else:
-            explanation_summary += "Real SHAP values calculated. "
-        
-        top_features = sorted(shap_result['shap_values'].items(), key=lambda x: abs(x[1]), reverse=True)[:5]
-        explanation_summary += f"Top contributing features: {', '.join([f[0] for f in top_features])}"
-        
-        return {
-            'prediction_id': prediction_id,
-            'shap_values': shap_result['shap_values'],
-            'shap_base_value': shap_result['base_value'],
-            'feature_contributions': shap_result['feature_contributions'],
-            'top_contributing_features': [contrib['feature_name'] for contrib in shap_result['feature_contributions'][:5]],
-            'explanation_summary': explanation_summary,
-            'shap_available': not shap_result.get('fallback_used', False),
-            'fallback_used': shap_result.get('fallback_used', False),
-            'explanation_timestamp': datetime.now().isoformat()
-        }
-        
-    except Exception as e:
-        print(f"Error generating explanation: {e}")
-        raise HTTPException(status_code=500, detail=f"Explanation generation failed: {str(e)}")
-
-
-@router.post("/predict/batch", response_model=BatchPredictionResponse)
-def make_batch_predictions(req: BatchPredictionRequest):
-    """
-    Make batch predictions with summary statistics and optional explanations.
-
-    Processes multiple input sets and returns predictions with comprehensive
-    summary statistics and optional detailed explanations.
-
-    Args:
-        req: Request containing run_id, list of inputs, and options
-
-    Returns:
-        BatchPredictionResponse with predictions and summary
-
-    Raises:
-        HTTPException: If run not found, prediction not ready, or prediction fails
-    """
-    from api.routes.schema import (
-        BatchPredictionResponse, BatchPredictionItem, BatchPredictionSummary,
-        PredictionProbabilities, PredictionConfidenceInterval
-    )
-
-    # Get logger for this operation
-    predict_logger = logger.get_structured_logger(req.run_id, "api_predict_batch")
-
-    # Log request start
-    logger.log_structured_event(
-        predict_logger,
-        "api_request_started",
-        {
-            "endpoint": "predict/batch",
-            "run_id": req.run_id,
-            "batch_size": len(req.inputs),
-            "include_explanations": req.include_explanations,
-            "include_confidence": req.include_confidence
-        },
-        f"Starting batch prediction for run {req.run_id} with {len(req.inputs)} inputs"
-    )
-
-    try:
-        # Validate run exists
-        if not _validate_run_exists(req.run_id):
-            errors.raise_run_not_found(req.run_id)
-
-        # Check batch size limits
-        if len(req.inputs) > 100:  # Reasonable limit for batch predictions
-            raise HTTPException(
-                status_code=400,
-                detail=errors.create_error_detail(
-                    "Batch size too large - maximum 100 predictions per request",
-                    "batch_size_exceeded",
-                    {"run_id": req.run_id, "requested_size": len(req.inputs), "max_size": 100}
-                )
-            )
-
-        # Check if prediction is ready
-        prediction_readiness = result_utils.check_prediction_readiness_gcs(req.run_id)
-        if not prediction_readiness.get("prediction_ready", False):
-            missing_files = [k for k, v in prediction_readiness.items() 
-                           if k != "prediction_ready" and not v]
-            raise HTTPException(
-                status_code=400,
-                detail=errors.create_error_detail(
-                    "Prediction not ready - missing required files",
-                    errors.ErrorCodes.PREDICTION_NOT_READY,
-                    {"run_id": req.run_id, "missing_files": missing_files}
-                )
-            )
-
-        # Load necessary data
-        metadata = storage.read_metadata(req.run_id)
-        if not metadata:
-            errors.raise_results_not_available(req.run_id, "Metadata not found")
-
-        df_original = storage.read_original_data(req.run_id)
-        if df_original is None:
-            errors.raise_results_not_available(req.run_id, "Original data not found")
-
-        # Get target and model info
-        target_info = metadata.get('target_info', {})
-        target_column = target_info.get('name')
-        task_type = target_info.get('task_type', 'unknown')
-        
-        automl_info = metadata.get('automl_info', {})
-        model_name = automl_info.get('best_model_name', 'Unknown')
-
-        if not target_column:
-            raise HTTPException(
-                status_code=400,
-                detail=errors.create_error_detail(
-                    "Target column information not found",
-                    errors.ErrorCodes.TARGET_INFO_MISSING,
-                    {"run_id": req.run_id}
-                )
-            )
-
-        # Load the trained model
-        from pipeline.step_7_predict.predict_logic import load_pipeline_gcs, generate_batch_predictions
-        from pipeline.step_7_predict.column_mapper import encode_user_input_gcs
-        
-        model = load_pipeline_gcs(req.run_id)
-        if model is None:
-            raise HTTPException(
-                status_code=500,
-                detail=errors.create_error_detail(
-                    "Failed to load trained model",
-                    errors.ErrorCodes.MODEL_LOADING_FAILED,
-                    {"run_id": req.run_id}
-                )
-            )
-
-        # Convert inputs to DataFrames
-        input_dfs = []
-        for i, input_values in enumerate(req.inputs):
-            try:
-                encoded_df, encoding_issues = encode_user_input_gcs(
-                    input_values, req.run_id, df_original, target_column
-                )
-                
-                if encoded_df is None or encoding_issues:
-                    raise ValueError(f"Input encoding failed: {encoding_issues}")
-                
-                input_dfs.append(encoded_df)
-            except Exception as e:
-                raise HTTPException(
-                    status_code=400,
-                    detail=errors.create_error_detail(
-                        f"Failed to process input {i}",
-                        errors.ErrorCodes.INPUT_ENCODING_FAILED,
-                        {"run_id": req.run_id, "input_index": i, "error": str(e)}
-                    )
-                )
-
-        # Generate batch predictions
-        batch_result = generate_batch_predictions(model, input_dfs, target_column, task_type)
-
-        # Convert to response format
-        predictions = []
-        for pred in batch_result['predictions']:
-            probabilities = None
-            confidence_interval = None
-            
-            if req.include_confidence and 'probabilities' in pred:
-                prob_dict = pred['probabilities']
-                class_probs = {k: v for k, v in prob_dict.items() if not k.startswith('_')}
-                probabilities = PredictionProbabilities(
-                    class_probabilities=class_probs,
-                    predicted_class=prob_dict.get('_predicted_class', ''),
-                    confidence=prob_dict.get('_confidence', 0.0)
-                )
-            
-            if req.include_confidence and 'confidence_interval' in pred:
-                ci = pred['confidence_interval']
-                if ci['lower_bound'] is not None:
-                    confidence_interval = PredictionConfidenceInterval(
-                        lower_bound=ci['lower_bound'],
-                        upper_bound=ci['upper_bound'],
-                        confidence_level=ci['confidence_level']
-                    )
-
-            predictions.append(BatchPredictionItem(
-                input_index=pred['input_index'],
-                prediction_value=pred['prediction_value'],
-                probabilities=probabilities,
-                confidence_interval=confidence_interval,
-                prediction_id=pred['prediction_id']
-            ))
-
-        # Create summary
-        summary = BatchPredictionSummary(
-            total_predictions=batch_result['summary']['total_predictions'],
-            prediction_distribution=batch_result['summary'].get('prediction_distribution', {}),
-            prediction_range=batch_result['summary'].get('prediction_range'),
-            processing_time_seconds=batch_result['summary']['processing_time_seconds']
-        )
-
-        # Log successful completion
-        logger.log_structured_event(
-            predict_logger,
-            "api_request_succeeded",
-            {
-                "endpoint": "predict/batch",
-                "run_id": req.run_id,
-                "batch_size": len(req.inputs),
-                "successful_predictions": batch_result['summary']['successful_predictions'],
-                "failed_predictions": batch_result['summary']['failed_predictions'],
-                "processing_time": batch_result['summary']['processing_time_seconds'],
-                "task_type": task_type,
-                "model_name": model_name
-            },
-            f"Batch prediction completed for run {req.run_id}: {batch_result['summary']['successful_predictions']}/{len(req.inputs)} successful"
-        )
-
-        return BatchPredictionResponse(
-            predictions=predictions,
-            summary=summary,
-            task_type=task_type,
-            target_column=target_column,
-            model_name=model_name,
-            batch_timestamp=batch_result['batch_timestamp']
-        )
-
-    except HTTPException:
-        # Log handled HTTP exceptions
-        logger.log_structured_error(
-            predict_logger,
-            "api_request_failed",
-            "Batch prediction failed",
-            {"endpoint": "predict/batch", "run_id": req.run_id}
-        )
-        # Re-raise HTTP exceptions as-is
-        raise
-    except Exception as e:
-        # Log unexpected errors
-        logger.log_structured_error(
-            predict_logger,
-            "api_request_failed",
-            f"Unexpected error during batch prediction: {str(e)}",
-            {
-                "endpoint": "predict/batch",
-                "run_id": req.run_id,
-                "error": str(e),
-                "error_type": type(e).__name__
-            }
-        )
-        errors.raise_internal_server_error(f"Batch prediction failed: {str(e)}")
-
-
-# Old duplicate explanation endpoint removed - using enhanced SHAP version above
-
-
-@router.post("/predict/compare", response_model=PredictionComparisonResponse)
-def compare_predictions(req: PredictionComparisonRequest):
+# Removed complex batch prediction and comparison endpoints for simplified approach
     """
     Compare multiple prediction scenarios side-by-side with sensitivity analysis.
 
@@ -2331,3 +1938,231 @@ async def download_file(run_id: str, filename: str):
             }
         )
         errors.raise_internal_server_error(f"File download from GCS failed: {str(e)}")
+
+
+# Enhanced Prediction API Endpoints - Simplified and Consolidated
+
+@router.post("/predict/enhanced", response_model=EnhancedPredictionResponse)
+def make_enhanced_prediction(req: PredictionInputRequest):
+    """
+    Make an enhanced prediction combining the reliable prediction logic with feature importance from results.
+    
+    This endpoint:
+    1. Uses the proven working prediction logic from /api/predict
+    2. Enriches the response with feature importance data from /api/results
+    3. Provides SHAP availability information without complex real-time SHAP calculations
+    
+    Args:
+        req: Request containing run_id and input values
+
+    Returns:
+        EnhancedPredictionResponse with prediction and feature importance
+
+    Raises:
+        HTTPException: If run not found, prediction not ready, or prediction fails
+    """
+    
+    # Get logger for this operation
+    predict_logger = logger.get_structured_logger(req.run_id, "api_predict_enhanced")
+
+    # Log request start
+    logger.log_structured_event(
+        predict_logger,
+        "api_request_started",
+        {
+            "endpoint": "predict/enhanced",
+            "run_id": req.run_id,
+            "input_features_count": len(req.input_values)
+        },
+        f"Starting enhanced prediction for run {req.run_id}"
+    )
+
+    try:
+        # Validate run exists
+        if not _validate_run_exists(req.run_id):
+            errors.raise_run_not_found(req.run_id)
+
+        # Check if prediction is ready
+        prediction_readiness = result_utils.check_prediction_readiness_gcs(req.run_id)
+        if not prediction_readiness.get("prediction_ready", False):
+            missing_files = [k for k, v in prediction_readiness.items() 
+                           if k != "prediction_ready" and not v]
+            raise HTTPException(
+                status_code=400,
+                detail=errors.create_error_detail(
+                    "Prediction not ready - missing required files",
+                    errors.ErrorCodes.PREDICTION_NOT_READY,
+                    {"run_id": req.run_id, "missing_files": missing_files}
+                )
+            )
+
+        # === STEP 1: Make prediction using proven working logic ===
+        
+        # Load necessary data
+        metadata = storage.read_metadata(req.run_id)
+        if not metadata:
+            errors.raise_results_not_available(req.run_id, "Metadata not found")
+
+        df_original = storage.read_original_data(req.run_id)
+        if df_original is None:
+            errors.raise_results_not_available(req.run_id, "Original data not found")
+
+        # Get target and model info
+        target_info = metadata.get('target_info', {})
+        target_column = target_info.get('name')
+        task_type = target_info.get('task_type', 'unknown')
+        
+        automl_info = metadata.get('automl_info', {})
+        model_name = automl_info.get('best_model_name', 'Unknown')
+
+        if not target_column:
+            raise HTTPException(
+                status_code=400,
+                detail=errors.create_error_detail(
+                    "Target column information not found",
+                    errors.ErrorCodes.TARGET_INFO_MISSING,
+                    {"run_id": req.run_id}
+                )
+            )
+
+        # Transform user input to model format (using proven working logic)
+        from pipeline.step_7_predict.column_mapper import encode_user_input_gcs
+        encoded_df, encoding_issues = encode_user_input_gcs(
+            req.input_values, req.run_id, df_original, target_column
+        )
+
+        if encoded_df is None or encoding_issues:
+            raise HTTPException(
+                status_code=400,
+                detail=errors.create_error_detail(
+                    "Failed to process input values",
+                    errors.ErrorCodes.INPUT_ENCODING_FAILED,
+                    {"run_id": req.run_id, "issues": encoding_issues}
+                )
+            )
+
+        # Load the trained model
+        from pipeline.step_7_predict.predict_logic import load_pipeline_gcs, generate_predictions
+        model = load_pipeline_gcs(req.run_id)
+        if model is None:
+            raise HTTPException(
+                status_code=500,
+                detail=errors.create_error_detail(
+                    "Failed to load trained model",
+                    errors.ErrorCodes.MODEL_LOADING_FAILED,
+                    {"run_id": req.run_id}
+                )
+            )
+
+        # Generate prediction
+        result_df = generate_predictions(model, encoded_df, target_column)
+        prediction_value = result_df['prediction'].iloc[0]
+
+        # Convert numpy types to Python types for JSON serialization
+        if hasattr(prediction_value, 'item'):
+            prediction_value = prediction_value.item()
+
+        # Extract processed features (excluding prediction column)
+        input_features = result_df.drop(columns=['prediction']).iloc[0].to_dict()
+
+        # === STEP 2: Get feature importance from results ===
+        
+        feature_importance = []
+        feature_importance_scores = {}
+        shap_plot_available = False
+        explainability_available = False
+        
+        try:
+            # Check if pipeline is completed and results are available
+            status_data = result_utils.get_pipeline_status(req.run_id)
+            if status_data.get('status') == 'completed':
+                
+                # Try to get results data using the working results logic
+                results_data = result_utils.build_results(req.run_id)
+                
+                # Extract feature importance from results
+                if 'top_features' in results_data and results_data['top_features']:
+                    feature_importance = results_data['top_features']
+                    
+                # Try to get feature importance scores from automl_info
+                if 'automl_summary' in results_data and results_data['automl_summary']:
+                    automl_summary = results_data['automl_summary']
+                    if 'performance_metrics' in automl_summary:
+                        # Check if there are feature importance scores in metadata
+                        if 'feature_importance' in automl_info:
+                            feature_importance_scores = automl_info['feature_importance']
+                
+                # Check explainability availability
+                if 'explainability_summary' in results_data and results_data['explainability_summary']:
+                    explainability_summary = results_data['explainability_summary']
+                    explainability_available = True
+                    shap_plot_available = explainability_summary.get('shap_plot_available', False)
+                    
+        except Exception as e:
+            # Log but don't fail the request if feature importance is not available
+            logger.log_structured_event(
+                predict_logger,
+                "feature_importance_unavailable",
+                {
+                    "endpoint": "predict/enhanced", 
+                    "run_id": req.run_id,
+                    "error": str(e)
+                },
+                f"Feature importance not available for run {req.run_id}: {str(e)}"
+            )
+
+        # Log successful completion
+        logger.log_structured_event(
+            predict_logger,
+            "api_request_succeeded",
+            {
+                "endpoint": "predict/enhanced",
+                "run_id": req.run_id,
+                "prediction_value": prediction_value,
+                "task_type": task_type,
+                "model_name": model_name,
+                "feature_importance_count": len(feature_importance),
+                "shap_plot_available": shap_plot_available,
+                "explainability_available": explainability_available
+            },
+            f"Enhanced prediction completed for run {req.run_id}: {prediction_value}"
+        )
+
+        return EnhancedPredictionResponse(
+            prediction_value=prediction_value,
+            confidence=None,  # Could be enhanced with model.predict_proba() for classification
+            input_features=input_features,
+            feature_importance=feature_importance,
+            feature_importance_scores=feature_importance_scores,
+            task_type=task_type,
+            target_column=target_column,
+            model_name=model_name,
+            prediction_timestamp=datetime.now(timezone.utc).isoformat(),
+            shap_plot_available=shap_plot_available,
+            explainability_available=explainability_available
+        )
+
+    except HTTPException:
+        # Log handled HTTP exceptions
+        logger.log_structured_error(
+            predict_logger,
+            "api_request_failed",
+            "Enhanced prediction failed",
+            {"endpoint": "predict/enhanced", "run_id": req.run_id}
+        )
+        # Re-raise HTTP exceptions as-is
+        raise
+    except Exception as e:
+        # Log unexpected errors
+        logger.log_structured_error(
+            predict_logger,
+            "api_request_failed",
+            f"Unexpected error during enhanced prediction: {str(e)}",
+            {
+                "endpoint": "predict/enhanced",
+                "run_id": req.run_id,
+                "error": str(e),
+                "error_type": type(e).__name__
+            }
+        )
+        errors.raise_internal_server_error(f"Enhanced prediction failed: {str(e)}")

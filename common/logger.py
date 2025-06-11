@@ -10,10 +10,17 @@ Includes both human-readable summaries and machine-parseable JSON logs.
 This logging module has been refactored for cloud-native operation in environments
 like Google Cloud Run. Key changes:
 
-Removed Local File Logging:
-- No more writing to local log files (*.log, *.jsonl)
-- All log output now goes to stdout/stderr for Cloud Logging capture
-- Local file paths and stage-specific log files are obsolete
+Removed Local File Logging (Cloud Mode):
+- No more writing to local log files (*.log, *.jsonl) in production
+- All log output goes to stdout/stderr for Cloud Logging capture in production
+- Local file paths and stage-specific log files are obsolete in cloud deployments
+
+LOCAL DEVELOPMENT MODE:
+- Set LOCAL_DEV_LOGGING=true environment variable to enable local file logging
+- Creates run-specific log directories: data/runs/{run_id}/logs/
+- Writes both human-readable and JSON logs to separate files per stage
+- Console output remains active for immediate feedback
+- File logs persist across server restarts for easier debugging
 
 JSON-First Approach:
 - Structured logging uses JSON formatting for better parsing in Cloud Logging
@@ -36,6 +43,7 @@ Backward Compatibility:
 import logging
 import sys
 import json
+import os
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Union
 from datetime import datetime
@@ -111,11 +119,73 @@ class JSONFormatter(logging.Formatter):
         return json.dumps(log_entry, ensure_ascii=False, separators=(',', ':'), default=json_serializer)
 
 
+class HumanReadableFormatter(logging.Formatter):
+    """
+    Human-readable formatter for local development file logging.
+    Provides clear, easy-to-read log format for developers debugging locally.
+    """
+    
+    def format(self, record: logging.LogRecord) -> str:
+        """
+        Format a log record as human-readable text for local file logging.
+        
+        Args:
+            record: The log record to format
+            
+        Returns:
+            Human-readable string representation of the log record
+        """
+        # Extract run_id and stage from logger name if available
+        name_parts = record.name.split('.')
+        run_id = name_parts[-1] if len(name_parts) >= 4 else "unknown"
+        stage = name_parts[-2] if len(name_parts) >= 3 else "general"
+        
+        # Create timestamp
+        timestamp = datetime.fromtimestamp(record.created).strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Format message with context
+        base_message = f"[{timestamp}] {record.levelname:8} [{stage:10}] [{run_id:8}] {record.getMessage()}"
+        
+        # Add exception info if present
+        if record.exc_info:
+            exception_text = self.formatException(record.exc_info)
+            base_message += f"\n{exception_text}"
+            
+        return base_message
+
+
+def _is_local_dev_mode() -> bool:
+    """
+    Check if local development logging mode is enabled.
+    
+    Returns:
+        True if LOCAL_DEV_LOGGING environment variable is set to 'true'
+    """
+    return os.getenv('LOCAL_DEV_LOGGING', 'false').lower() == 'true'
+
+
+def _create_local_log_directory(run_id: str) -> Path:
+    """
+    Create local log directory for a run if it doesn't exist.
+    
+    Args:
+        run_id: Unique run identifier
+        
+    Returns:
+        Path to the log directory
+    """
+    log_dir = Path(f"data/runs/{run_id}/logs")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return log_dir
+
+
 def get_logger(run_id: str, logger_name: str = 'pipeline', log_level: str = 'INFO', 
                stage: Optional[str] = None) -> logging.Logger:
     """
-    Get a run-scoped logger that outputs to stdout for cloud logging capture.
-    Uses JSON formatting for better integration with Google Cloud Logging.
+    Get a run-scoped logger with environment-based output configuration.
+    
+    In production/cloud mode: outputs JSON to stdout for cloud logging capture
+    In local dev mode: outputs to both console and run-specific log files
     
     Args:
         run_id: Unique run identifier
@@ -124,7 +194,7 @@ def get_logger(run_id: str, logger_name: str = 'pipeline', log_level: str = 'INF
         stage: Pipeline stage name for stage-specific logging (optional)
         
     Returns:
-        Configured logger instance that outputs JSON to stdout
+        Configured logger instance with appropriate handlers
     """
     # Create a unique logger name that includes run_id and optionally stage
     if stage:
@@ -142,15 +212,51 @@ def get_logger(run_id: str, logger_name: str = 'pipeline', log_level: str = 'INF
     numeric_level = getattr(logging, log_level.upper(), logging.INFO)
     logger.setLevel(numeric_level)
     
-    # Console handler for cloud logging (JSON format preferred)
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(numeric_level)
+    # Check if we're in local development mode
+    local_dev_mode = _is_local_dev_mode()
     
-    # Use JSON formatter for better cloud logging integration
-    json_formatter = JSONFormatter()
-    console_handler.setFormatter(json_formatter)
-    
-    logger.addHandler(console_handler)
+    if local_dev_mode:
+        # LOCAL DEVELOPMENT MODE: Add both file and console handlers
+        
+        # Create log directory
+        log_dir = _create_local_log_directory(run_id)
+        
+        # File handler for human-readable logs
+        log_filename = f"{stage or logger_name}.log"
+        file_handler = logging.FileHandler(log_dir / log_filename)
+        file_handler.setLevel(numeric_level)
+        
+        # Use human-readable formatter for file logs
+        human_formatter = HumanReadableFormatter()
+        file_handler.setFormatter(human_formatter)
+        logger.addHandler(file_handler)
+        
+        # Console handler for immediate feedback (human-readable)
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setLevel(numeric_level)
+        
+        # Use simplified console formatter for immediate feedback
+        console_formatter = logging.Formatter(
+            f'🔮 %(levelname)s [{stage or logger_name:10}] [{run_id:8}] %(message)s'
+        )
+        console_handler.setFormatter(console_formatter)
+        logger.addHandler(console_handler)
+        
+        # Log mode activation message
+        logger.info(f"Local development logging enabled - logs saved to {log_dir / log_filename}")
+        
+    else:
+        # PRODUCTION/CLOUD MODE: Use existing cloud-native stdout logging
+        
+        # Console handler for cloud logging (JSON format preferred)
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setLevel(numeric_level)
+        
+        # Use JSON formatter for better cloud logging integration
+        json_formatter = JSONFormatter()
+        console_handler.setFormatter(json_formatter)
+        
+        logger.addHandler(console_handler)
     
     # Prevent propagation to root logger to avoid duplicate messages
     logger.propagate = False
@@ -161,8 +267,10 @@ def get_logger(run_id: str, logger_name: str = 'pipeline', log_level: str = 'INF
 def get_structured_logger(run_id: str, logger_name: str = 'structured', log_level: str = 'INFO',
                          stage: Optional[str] = None) -> logging.Logger:
     """
-    Get a run-scoped structured logger that outputs JSON to stdout for cloud logging.
-    Optimized for machine parsing and cloud logging aggregation.
+    Get a run-scoped structured logger with environment-based output configuration.
+    
+    In production/cloud mode: outputs JSON to stdout for cloud logging
+    In local dev mode: outputs JSON to both console and separate .jsonl files
     
     Args:
         run_id: Unique run identifier
@@ -171,7 +279,7 @@ def get_structured_logger(run_id: str, logger_name: str = 'structured', log_leve
         stage: Pipeline stage name for stage-specific logging (optional)
         
     Returns:
-        Configured logger instance that outputs JSON lines to stdout
+        Configured logger instance optimized for structured data
     """
     # Create a unique logger name for structured logging
     if stage:
@@ -189,15 +297,54 @@ def get_structured_logger(run_id: str, logger_name: str = 'structured', log_leve
     numeric_level = getattr(logging, log_level.upper(), logging.INFO)
     logger.setLevel(numeric_level)
     
-    # Console handler for structured JSON output to stdout
-    console_handler_structured = logging.StreamHandler(sys.stdout)
-    console_handler_structured.setLevel(numeric_level)
+    # Check if we're in local development mode
+    local_dev_mode = _is_local_dev_mode()
     
-    # Use JSON formatter for structured output
-    json_formatter = JSONFormatter()
-    console_handler_structured.setFormatter(json_formatter)
-    
-    logger.addHandler(console_handler_structured)
+    if local_dev_mode:
+        # LOCAL DEVELOPMENT MODE: Add both JSON file and console handlers
+        
+        # Create log directory
+        log_dir = _create_local_log_directory(run_id)
+        
+        # JSON file handler for structured logs
+        json_filename = f"{stage or logger_name}_structured.jsonl"
+        json_file_handler = logging.FileHandler(log_dir / json_filename)
+        json_file_handler.setLevel(numeric_level)
+        
+        # Use JSON formatter for structured file logs
+        json_formatter = JSONFormatter()
+        json_file_handler.setFormatter(json_formatter)
+        logger.addHandler(json_file_handler)
+        
+        # Console handler for immediate JSON feedback
+        console_handler_structured = logging.StreamHandler(sys.stdout)
+        console_handler_structured.setLevel(numeric_level)
+        
+        # Use JSON formatter for console output
+        console_handler_structured.setFormatter(json_formatter)
+        logger.addHandler(console_handler_structured)
+        
+        # Log mode activation message using a simple formatter to avoid recursion
+        temp_formatter = logging.Formatter('🔮 STRUCTURED %(levelname)s: %(message)s')
+        temp_handler = logging.StreamHandler(sys.stdout)
+        temp_handler.setFormatter(temp_formatter)
+        temp_logger = logging.getLogger(f"temp_structured_{run_id}")
+        temp_logger.addHandler(temp_handler)
+        temp_logger.setLevel(logging.INFO)
+        temp_logger.info(f"Local structured logging enabled - JSON logs saved to {log_dir / json_filename}")
+        
+    else:
+        # PRODUCTION/CLOUD MODE: Use existing cloud-native JSON stdout logging
+        
+        # Console handler for structured JSON output to stdout
+        console_handler_structured = logging.StreamHandler(sys.stdout)
+        console_handler_structured.setLevel(numeric_level)
+        
+        # Use JSON formatter for structured output
+        json_formatter = JSONFormatter()
+        console_handler_structured.setFormatter(json_formatter)
+        
+        logger.addHandler(console_handler_structured)
     
     # Prevent propagation to root logger
     logger.propagate = False

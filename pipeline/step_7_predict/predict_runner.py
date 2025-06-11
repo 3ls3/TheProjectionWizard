@@ -98,7 +98,7 @@ def run_prediction_stage_gcs(
         # =============================
         log.info("Generating predictions...")
 
-        result_df = predict_logic.generate_predictions(model, input_df)
+        result_df = predict_logic.generate_predictions(model, input_df, target_info.name)
         log.info(f"Generated {len(result_df)} predictions")
 
         # Get prediction summary
@@ -241,13 +241,14 @@ def make_single_prediction_gcs(
     if not metadata:
         raise Exception("Could not load metadata from GCS")
 
+    target_info = schemas.TargetInfo(**metadata['target_info'])
     model = predict_logic.load_pipeline_gcs(run_id, gcs_bucket_name)
 
     # Convert feature values to DataFrame
     input_df = pd.DataFrame([feature_values])
 
     # Generate prediction
-    result_df = predict_logic.generate_predictions(model, input_df)
+    result_df = predict_logic.generate_predictions(model, input_df, target_info.name)
     prediction_value = result_df['prediction'].iloc[0]
 
     if return_details:

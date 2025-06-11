@@ -153,30 +153,39 @@ def run_pycaret_experiment_gcs(
                 X_train_transformed = get_config('X_train')
 
                 if X_train_transformed is not None:
-                    encoded_columns = list(X_train_transformed.columns)
-                    log.info(f"Encoded columns after PyCaret setup: {len(encoded_columns)} columns")
+                    # CRITICAL FIX: Get encoded columns from X_train_transformed and ensure target is excluded
+                    raw_encoded_columns = list(X_train_transformed.columns)
+                    
+                    # Double-check: explicitly filter out target column in case it's included
+                    encoded_columns = [col for col in raw_encoded_columns if col != target_column_name]
+                    
+                    log.info(f"Raw encoded columns from PyCaret: {len(raw_encoded_columns)} columns")
+                    log.info(f"Filtered encoded columns (target excluded): {len(encoded_columns)} columns")
+                    
+                    if len(raw_encoded_columns) != len(encoded_columns):
+                        log.warning(f"Target column '{target_column_name}' was found in PyCaret transformed features and removed!")
+                    
+                    # Also filter original_columns to exclude target for consistency
+                    original_feature_columns = [col for col in original_columns if col != target_column_name]
 
                     # Build column mapping dictionary
                     column_mapping = {
-                        'original_columns': original_columns,
-                        'encoded_columns': encoded_columns,
+                        'original_columns': original_feature_columns,  # Exclude target from original too
+                        'encoded_columns': encoded_columns,  # Already filtered
                         'target_column': target_column_name,
                         'mapping_created_at': str(datetime.now()),
                         'storage_type': 'gcs',
                         'column_count_change': {
-                            'original': len(original_columns),
+                            'original': len(original_feature_columns),
                             'encoded': len(encoded_columns),
-                            'difference': len(encoded_columns) - len(original_columns)
+                            'difference': len(encoded_columns) - len(original_feature_columns)
                         }
                     }
 
                     # Try to create detailed mapping if possible
                     # This is a best-effort attempt to map original to encoded columns
                     detailed_mapping = {}
-                    for orig_col in original_columns:
-                        if orig_col == target_column_name:
-                            continue  # Skip target column
-
+                    for orig_col in original_feature_columns:  # Use filtered list
                         # Find encoded columns that might correspond to this original column
                         matching_encoded = []
                         for enc_col in encoded_columns:
@@ -203,6 +212,7 @@ def run_pycaret_experiment_gcs(
                         if upload_success:
                             log.info("Column mapping saved successfully to GCS: column_mapping.json")
                             log.info(f"Mapped {len(detailed_mapping)} original columns to encoded features")
+                            log.info(f"Target column '{target_column_name}' explicitly excluded from all mappings")
                         else:
                             log.warning("Failed to save column mapping to GCS")
                     except Exception as save_error:
@@ -211,9 +221,12 @@ def run_pycaret_experiment_gcs(
                 else:
                     log.warning("Could not retrieve transformed training data from PyCaret")
                     # Create basic mapping without detailed transformation info
+                    # Make sure to exclude target column even in fallback
+                    original_feature_columns = [col for col in original_columns if col != target_column_name]
+                    
                     column_mapping = {
-                        'original_columns': original_columns,
-                        'encoded_columns': original_columns,  # Fallback assumption
+                        'original_columns': original_feature_columns,  # Exclude target
+                        'encoded_columns': original_feature_columns,  # Fallback assumption (also exclude target)
                         'target_column': target_column_name,
                         'mapping_created_at': str(datetime.now()),
                         'storage_type': 'gcs',
@@ -227,6 +240,7 @@ def run_pycaret_experiment_gcs(
                         
                         if upload_success:
                             log.warning("Saved basic column mapping to GCS without transformation details")
+                            log.info(f"Target column '{target_column_name}' excluded from fallback mapping")
                         else:
                             log.warning("Failed to save basic column mapping to GCS")
                     except Exception as save_error:

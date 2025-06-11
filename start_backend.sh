@@ -11,6 +11,37 @@ echo "✅ Fixed background pipeline logging issues"
 echo "✅ Using Application Default Credentials for GCS"
 echo "✅ CORS configured for frontend domain"
 echo ""
+
+# ================================================================================
+# LOCAL DEVELOPMENT LOGGING CONFIGURATION
+# ================================================================================
+# Uncomment the line below to enable local file logging for pipeline debugging:
+# export LOCAL_DEV_LOGGING=true
+#
+# When LOCAL_DEV_LOGGING=true:
+# - Pipeline logs are written to data/runs/{run_id}/logs/ directory  
+# - Human-readable logs: {stage}.log files
+# - Structured JSON logs: {stage}_structured.jsonl files
+# - Console output remains active for immediate feedback
+# - Log files persist across server restarts for easier debugging
+#
+# When LOCAL_DEV_LOGGING=false (default):
+# - All logs go to stdout/stderr for cloud logging (production behavior)
+# - No local files are created
+# ================================================================================
+
+if [ "${LOCAL_DEV_LOGGING:-false}" = "true" ]; then
+    echo "🗃️  Local development logging ENABLED"
+    echo "   📁 Log files will be saved to: data/runs/{run_id}/logs/"
+    echo "   📝 Human-readable logs: {stage}.log"
+    echo "   📊 Structured JSON logs: {stage}_structured.jsonl"
+    echo ""
+else
+    echo "☁️  Cloud logging mode (production)"
+    echo "   💡 To enable local file logging, set: export LOCAL_DEV_LOGGING=true"
+    echo ""
+fi
+
 echo "Press Ctrl+C to stop the server"
 echo ""
 

@@ -328,7 +328,7 @@ def show_predict_page():
                     input_df = pd.DataFrame([user_input])
 
                     # Generate predictions
-                    result_df = predict_logic.generate_predictions(model, input_df)
+                    result_df = predict_logic.generate_predictions(model, input_df, target_column)
 
                     # Display results with visualizations
                     csv_data, plot_path = display_prediction_results(

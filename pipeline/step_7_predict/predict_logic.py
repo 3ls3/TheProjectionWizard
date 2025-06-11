@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Optional, Union
 import numpy as np
 import tempfile
+import logging
 
 from common import logger, constants
 from api.utils.gcs_utils import download_run_file, PROJECT_BUCKET_NAME
@@ -110,7 +111,7 @@ def load_pipeline(run_dir: Union[str, Path]) -> Optional[Any]:
         raise Exception(f"Failed to load pipeline from {pipeline_path}: {str(e)}")
 
 
-def generate_predictions(model: Any, input_df: pd.DataFrame) -> pd.DataFrame:
+def generate_predictions(model: Any, input_df: pd.DataFrame, target_column: str = None) -> pd.DataFrame:
     """
     Generate predictions using the trained model with proper feature alignment.
 
@@ -119,12 +120,14 @@ def generate_predictions(model: Any, input_df: pd.DataFrame) -> pd.DataFrame:
     1. Dropping extra columns not needed by the model
     2. Adding missing columns with default values (0)
     3. Reordering columns to match model expectations
-    4. Making predictions
-    5. Returning aligned features + predictions
+    4. Explicitly filtering out target column to prevent contamination
+    5. Making predictions
+    6. Returning aligned features + predictions
 
     Args:
         model: Trained model/pipeline object with predict() method
         input_df: Input DataFrame to make predictions on
+        target_column: Name of target column to explicitly exclude (optional)
 
     Returns:
         DataFrame containing aligned features plus a "prediction" column
@@ -133,11 +136,18 @@ def generate_predictions(model: Any, input_df: pd.DataFrame) -> pd.DataFrame:
         ValueError: If model doesn't have required attributes or input is invalid
         Exception: If prediction fails
     """
+    # Create a logger for this function
+    log = logging.getLogger(__name__)
+    
     if input_df is None or input_df.empty:
         raise ValueError("Input DataFrame is None or empty")
 
     if not hasattr(model, 'predict'):
         raise ValueError("Model does not have a 'predict' method")
+
+    # DEBUG: Log input details
+    log.info(f"DEBUG: Input DataFrame shape: {input_df.shape}")
+    log.info(f"DEBUG: Input DataFrame columns: {list(input_df.columns)}")
 
     # Get the feature names the model expects
     expected_features = None
@@ -145,18 +155,25 @@ def generate_predictions(model: Any, input_df: pd.DataFrame) -> pd.DataFrame:
     # Try different ways to get expected feature names
     if hasattr(model, 'feature_names_in_'):
         expected_features = list(model.feature_names_in_)
+        log.info(f"DEBUG: Found model.feature_names_in_: {expected_features}")
     elif hasattr(model, 'named_steps'):
         # For sklearn pipelines, check the final estimator
+        log.info("DEBUG: Checking named_steps for feature names...")
         for step_name, step_model in reversed(list(model.named_steps.items())):
+            log.info(f"DEBUG: Checking step '{step_name}' of type {type(step_model)}")
             if hasattr(step_model, 'feature_names_in_'):
                 expected_features = list(step_model.feature_names_in_)
+                log.info(f"DEBUG: Found feature_names_in_ in step '{step_name}': {expected_features}")
                 break
     elif hasattr(model, '_final_estimator'):
         # Another way to access final estimator
+        log.info("DEBUG: Checking _final_estimator for feature names...")
         if hasattr(model._final_estimator, 'feature_names_in_'):
             expected_features = list(model._final_estimator.feature_names_in_)
+            log.info(f"DEBUG: Found feature_names_in_ in _final_estimator: {expected_features}")
 
     if expected_features is None:
+        log.error("DEBUG: Could not determine expected feature names from model")
         raise ValueError("Could not determine expected feature names from model")
 
         # CRITICAL: Force perfect column alignment to model.feature_names_in_
@@ -166,19 +183,42 @@ def generate_predictions(model: Any, input_df: pd.DataFrame) -> pd.DataFrame:
     # Get the authoritative feature list from the trained model
     if hasattr(model, 'feature_names_in_'):
         model_trained_features = list(model.feature_names_in_)
+        log.info(f"DEBUG: Using model.feature_names_in_: {model_trained_features}")
     elif hasattr(model, 'named_steps'):
         # For sklearn pipelines, get from final estimator
         for step_name, step_model in reversed(list(model.named_steps.items())):
             if hasattr(step_model, 'feature_names_in_'):
                 model_trained_features = list(step_model.feature_names_in_)
+                log.info(f"DEBUG: Using feature_names_in_ from step '{step_name}': {model_trained_features}")
                 break
     elif hasattr(model, '_final_estimator') and hasattr(model._final_estimator, 'feature_names_in_'):
         model_trained_features = list(model._final_estimator.feature_names_in_)
+        log.info(f"DEBUG: Using feature_names_in_ from _final_estimator: {model_trained_features}")
 
     if model_trained_features is None:
+        log.error("DEBUG: Cannot retrieve model.feature_names_in_ - model alignment impossible")
         raise ValueError("Cannot retrieve model.feature_names_in_ - model alignment impossible")
 
-    # Step 2: Build DataFrame with ONLY the features model was trained on
+    # DEBUG: Check for suspicious features
+    log.info(f"DEBUG: Model expects {len(model_trained_features)} features")
+    suspicious_features = [f for f in model_trained_features if 'purchased' in f.lower() or 'target' in f.lower()]
+    if suspicious_features:
+        log.warning(f"DEBUG: SUSPICIOUS FEATURES that might be target-related: {suspicious_features}")
+
+    # CRITICAL FIX: Remove target column from model_trained_features if present
+    # This prevents target column contamination in prediction input
+    original_feature_count = len(model_trained_features)
+    if target_column:
+        model_trained_features = [f for f in model_trained_features if f != target_column]
+        filtered_feature_count = len(model_trained_features)
+        if original_feature_count != filtered_feature_count:
+            log.warning(f"DEBUG: FILTERED OUT target column '{target_column}' from model features. Count: {original_feature_count} -> {filtered_feature_count}")
+        else:
+            log.info(f"DEBUG: Target column '{target_column}' was not present in model features (good!)")
+    else:
+        log.warning("DEBUG: No target_column provided - cannot filter target from model features")
+
+    # Step 2: Build DataFrame with ONLY the features model was trained on (excluding target)
     # This guarantees no target column or extra features can slip through
     perfectly_aligned_data = {}
 
@@ -186,24 +226,32 @@ def generate_predictions(model: Any, input_df: pd.DataFrame) -> pd.DataFrame:
         if required_feature in input_df.columns:
             # Use the input value for this feature
             perfectly_aligned_data[required_feature] = input_df[required_feature].iloc[0]
+            log.debug(f"DEBUG: Using input value for '{required_feature}': {perfectly_aligned_data[required_feature]}")
         else:
             # Missing feature - use neutral default
             perfectly_aligned_data[required_feature] = 0
+            log.warning(f"DEBUG: Missing feature '{required_feature}', using default value 0")
 
     # Create DataFrame with features in EXACT order of model.feature_names_in_
     aligned_df = pd.DataFrame([perfectly_aligned_data], columns=model_trained_features)
+    
+    log.info(f"DEBUG: Created aligned DataFrame with shape {aligned_df.shape}")
+    log.info(f"DEBUG: Aligned DataFrame columns: {list(aligned_df.columns)}")
 
     # Step 3: GUARANTEE perfect alignment
     # Verify columns match model.feature_names_in_ exactly
     if list(aligned_df.columns) != model_trained_features:
+        log.error(f"DEBUG: ALIGNMENT FAILURE: DataFrame columns {list(aligned_df.columns)} != model.feature_names_in_ {model_trained_features}")
         raise ValueError(f"ALIGNMENT FAILURE: DataFrame columns {list(aligned_df.columns)} != model.feature_names_in_ {model_trained_features}")
 
     # Verify no extra or missing columns
     if aligned_df.shape[1] != len(model_trained_features):
+        log.error(f"DEBUG: COLUMN COUNT MISMATCH: DataFrame has {aligned_df.shape[1]} columns, model expects {len(model_trained_features)}")
         raise ValueError(f"COLUMN COUNT MISMATCH: DataFrame has {aligned_df.shape[1]} columns, model expects {len(model_trained_features)}")
 
     # Verify DataFrame uses exact same column index as model expects
     if not aligned_df.columns.equals(pd.Index(model_trained_features)):
+        log.error(f"DEBUG: COLUMN INDEX MISMATCH: DataFrame index != model.feature_names_in_ index")
         raise ValueError(f"COLUMN INDEX MISMATCH: DataFrame index != model.feature_names_in_ index")
 
     # Step 5: Handle data type cleaning
@@ -217,11 +265,17 @@ def generate_predictions(model: Any, input_df: pd.DataFrame) -> pd.DataFrame:
                 # Fill any NaN values with 0
                 aligned_df[col] = aligned_df[col].fillna(0)
     except Exception as e:
+        log.error(f"DEBUG: Failed to clean aligned DataFrame: {str(e)}")
         raise ValueError(f"Failed to clean aligned DataFrame: {str(e)}")
 
     # Step 6: Make predictions with properly aligned DataFrame
     try:
+        log.info("DEBUG: About to call model.predict() with aligned DataFrame")
+        log.info(f"DEBUG: Final DataFrame for prediction: shape={aligned_df.shape}, columns={list(aligned_df.columns)}")
+        
         predictions = model.predict(aligned_df)
+        
+        log.info(f"DEBUG: Model prediction successful, got {len(predictions)} predictions")
 
         # Convert predictions to a pandas Series with proper index
         if isinstance(predictions, np.ndarray):
@@ -230,11 +284,17 @@ def generate_predictions(model: Any, input_df: pd.DataFrame) -> pd.DataFrame:
             predictions = pd.Series(predictions, index=aligned_df.index, name='prediction')
 
     except Exception as e:
+        log.error(f"DEBUG: Model prediction failed with error: {str(e)}")
+        log.error(f"DEBUG: Model type: {type(model)}")
+        log.error(f"DEBUG: Model attributes: {[attr for attr in dir(model) if not attr.startswith('_')]}")
         raise Exception(f"Model prediction failed: {str(e)}")
 
     # Step 6: Combine aligned features with predictions
     result_df = aligned_df.copy()
     result_df['prediction'] = predictions
+
+    log.info(f"DEBUG: Final result DataFrame shape: {result_df.shape}")
+    log.info(f"DEBUG: Final result columns: {list(result_df.columns)}")
 
     return result_df
 

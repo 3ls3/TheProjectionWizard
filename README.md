@@ -128,7 +128,14 @@ The application will be available at `http://localhost:8501`
 The project includes an optional REST API for programmatic access:
 
 ```bash
-# From project root
+# Production mode (cloud logging to stdout)
+./start_backend.sh
+
+# Development mode (local file logging enabled)
+./start_backend_dev.sh
+
+# Or manually with custom settings
+export LOCAL_DEV_LOGGING=true  # Enable local file logging
 uvicorn api.main:app --reload
 ```
 
@@ -141,6 +148,47 @@ The API will be available at:
 - `GET /api/v1/runs` - List all pipeline runs
 - `GET /api/v1/runs/{run_id}/info` - Get run information
 - `GET /api/v1/feature_suggestions` - Get ML feature analysis
+
+#### Local Development Logging
+
+For pipeline debugging, enable local file logging with `LOCAL_DEV_LOGGING=true`:
+
+```bash
+# Enable local logging and start server
+export LOCAL_DEV_LOGGING=true
+./start_backend.sh
+
+# Or use the dedicated development script
+./start_backend_dev.sh
+```
+
+**Local logging features:**
+- **Log files saved to**: `data/runs/{run_id}/logs/`
+- **Human-readable logs**: `{stage}.log` (e.g., `automl.log`, `validation.log`)
+- **Structured JSON logs**: `{stage}_structured.jsonl` 
+- **Console output**: Real-time feedback with 🔮 prefixes
+- **Persistent**: Log files survive server restarts
+
+**Debugging utilities:**
+```bash
+# List all runs with logs
+python scripts/python/debug_logs.py --list
+
+# View logs for a specific run
+python scripts/python/debug_logs.py --run abc123
+
+# View specific stage logs
+python scripts/python/debug_logs.py --run abc123 --stage automl
+
+# Tail logs in real-time
+python scripts/python/debug_logs.py --tail abc123
+
+# View structured JSON logs
+python scripts/python/debug_logs.py --run abc123 --json
+
+# Clean up old logs
+python scripts/python/debug_logs.py --clean
+```
 
 ### Docker Deployment
 

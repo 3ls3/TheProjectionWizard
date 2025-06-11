@@ -1449,7 +1449,7 @@ def make_prediction(req: PredictionInputRequest):
             )
 
         # Generate prediction
-        result_df = generate_predictions(model, encoded_df)
+        result_df = generate_predictions(model, encoded_df, target_column)
         prediction_value = result_df['prediction'].iloc[0]
 
         # Convert numpy types to Python types for JSON serialization

@@ -32,6 +32,9 @@ from .schema import (
     FeatureConfirmationRequest,
     FeatureConfirmationResponse,
     PipelineStatusResponse,
+    PredictionInputRequest,
+    PredictionSchemaResponse,
+    PredictionResponse,
     FinalResultsResponse
 )
 from pipeline.step_2_schema import target_definition_logic as tgt_logic
@@ -1207,6 +1210,296 @@ def get_results(run_id: str = Query(...)):
             }
         )
         errors.raise_internal_server_error(f"Results retrieval failed: {str(e)}")
+
+
+@router.get("/prediction-schema", response_model=PredictionSchemaResponse)
+def get_prediction_schema(run_id: str = Query(...)):
+    """
+    Get the input schema for building the prediction form.
+
+    Returns information about numeric and categorical columns needed to
+    create dynamic form inputs with proper validation ranges and options.
+
+    Args:
+        run_id: The ID of the run to get prediction schema for
+
+    Returns:
+        PredictionSchemaResponse with column schemas and target info
+
+    Raises:
+        HTTPException: If run not found, pipeline not completed, or
+        prediction not ready
+    """
+
+    # Get logger for this operation
+    schema_logger = logger.get_structured_logger(run_id, "api_prediction_schema")
+
+    # Log request start
+    logger.log_structured_event(
+        schema_logger,
+        "api_request_started",
+        {"endpoint": "prediction-schema", "run_id": run_id},
+        f"Starting prediction schema retrieval for run {run_id}"
+    )
+
+    try:
+        # Validate run exists
+        if not _validate_run_exists(run_id):
+            errors.raise_run_not_found(run_id)
+
+        # Check if prediction is ready
+        prediction_readiness = result_utils.check_prediction_readiness_gcs(run_id)
+        if not prediction_readiness.get("prediction_ready", False):
+            missing_files = [k for k, v in prediction_readiness.items() 
+                           if k != "prediction_ready" and not v]
+            raise HTTPException(
+                status_code=400,
+                detail=errors.create_error_detail(
+                    "Prediction not ready - missing required files",
+                    errors.ErrorCodes.PREDICTION_NOT_READY,
+                    {"run_id": run_id, "missing_files": missing_files}
+                )
+            )
+
+        # Load necessary data
+        metadata = storage.read_metadata(run_id)
+        if not metadata:
+            errors.raise_results_not_available(run_id, "Metadata not found")
+
+        df_original = storage.read_original_data(run_id)
+        if df_original is None:
+            errors.raise_results_not_available(run_id, "Original data not found")
+
+        # Get target info
+        target_info = metadata.get('target_info', {})
+        target_column = target_info.get('name')
+        if not target_column:
+            raise HTTPException(
+                status_code=400,
+                detail=errors.create_error_detail(
+                    "Target column information not found",
+                    errors.ErrorCodes.TARGET_INFO_MISSING,
+                    {"run_id": run_id}
+                )
+            )
+
+        # Import column mapper to get input schema
+        from pipeline.step_7_predict.column_mapper import get_input_schema
+        schema_info = get_input_schema(run_id, df_original, target_column)
+
+        # Log successful completion
+        logger.log_structured_event(
+            schema_logger,
+            "api_request_succeeded",
+            {
+                "endpoint": "prediction-schema",
+                "run_id": run_id,
+                "numeric_columns_count": len(schema_info.get('numeric_columns', {})),
+                "categorical_columns_count": len(schema_info.get('categorical_columns', {})),
+                "target_column": target_column
+            },
+            f"Prediction schema retrieved for run {run_id}"
+        )
+
+        return PredictionSchemaResponse(
+            numeric_columns=schema_info.get('numeric_columns', {}),
+            categorical_columns=schema_info.get('categorical_columns', {}),
+            target_info=target_info
+        )
+
+    except HTTPException:
+        # Log handled HTTP exceptions
+        logger.log_structured_error(
+            schema_logger,
+            "api_request_failed",
+            "Prediction schema retrieval failed",
+            {"endpoint": "prediction-schema", "run_id": run_id}
+        )
+        # Re-raise HTTP exceptions as-is
+        raise
+    except Exception as e:
+        # Log unexpected errors
+        logger.log_structured_error(
+            schema_logger,
+            "api_request_failed",
+            f"Unexpected error getting prediction schema: {str(e)}",
+            {
+                "endpoint": "prediction-schema",
+                "run_id": run_id,
+                "error": str(e),
+                "error_type": type(e).__name__
+            }
+        )
+        errors.raise_internal_server_error(f"Prediction schema retrieval failed: {str(e)}")
+
+
+@router.post("/predict", response_model=PredictionResponse)
+def make_prediction(req: PredictionInputRequest):
+    """
+    Make a prediction using the trained model.
+
+    Processes user input, transforms it to match model expectations,
+    generates predictions, and returns results with confidence information.
+
+    Args:
+        req: Request containing run_id and input values
+
+    Returns:
+        PredictionResponse with prediction value and metadata
+
+    Raises:
+        HTTPException: If run not found, prediction not ready, or
+        prediction fails
+    """
+
+    # Get logger for this operation
+    predict_logger = logger.get_structured_logger(req.run_id, "api_predict")
+
+    # Log request start
+    logger.log_structured_event(
+        predict_logger,
+        "api_request_started",
+        {
+            "endpoint": "predict",
+            "run_id": req.run_id,
+            "input_features_count": len(req.input_values)
+        },
+        f"Starting prediction for run {req.run_id}"
+    )
+
+    try:
+        # Validate run exists
+        if not _validate_run_exists(req.run_id):
+            errors.raise_run_not_found(req.run_id)
+
+        # Check if prediction is ready
+        prediction_readiness = result_utils.check_prediction_readiness_gcs(req.run_id)
+        if not prediction_readiness.get("prediction_ready", False):
+            missing_files = [k for k, v in prediction_readiness.items() 
+                           if k != "prediction_ready" and not v]
+            raise HTTPException(
+                status_code=400,
+                detail=errors.create_error_detail(
+                    "Prediction not ready - missing required files",
+                    errors.ErrorCodes.PREDICTION_NOT_READY,
+                    {"run_id": req.run_id, "missing_files": missing_files}
+                )
+            )
+
+        # Load necessary data
+        metadata = storage.read_metadata(req.run_id)
+        if not metadata:
+            errors.raise_results_not_available(req.run_id, "Metadata not found")
+
+        df_original = storage.read_original_data(req.run_id)
+        if df_original is None:
+            errors.raise_results_not_available(req.run_id, "Original data not found")
+
+        # Get target and model info
+        target_info = metadata.get('target_info', {})
+        target_column = target_info.get('name')
+        task_type = target_info.get('task_type', 'unknown')
+        
+        automl_info = metadata.get('automl_info', {})
+        model_name = automl_info.get('best_model_name', 'Unknown')
+
+        if not target_column:
+            raise HTTPException(
+                status_code=400,
+                detail=errors.create_error_detail(
+                    "Target column information not found",
+                    errors.ErrorCodes.TARGET_INFO_MISSING,
+                    {"run_id": req.run_id}
+                )
+            )
+
+        # Transform user input to model format
+        from pipeline.step_7_predict.column_mapper import encode_user_input_gcs
+        encoded_df, encoding_issues = encode_user_input_gcs(
+            req.input_values, req.run_id, df_original, target_column
+        )
+
+        if encoded_df is None or encoding_issues:
+            raise HTTPException(
+                status_code=400,
+                detail=errors.create_error_detail(
+                    "Failed to process input values",
+                    errors.ErrorCodes.INPUT_ENCODING_FAILED,
+                    {"run_id": req.run_id, "issues": encoding_issues}
+                )
+            )
+
+        # Load the trained model
+        from pipeline.step_7_predict.predict_logic import load_pipeline_gcs, generate_predictions
+        model = load_pipeline_gcs(req.run_id)
+        if model is None:
+            raise HTTPException(
+                status_code=500,
+                detail=errors.create_error_detail(
+                    "Failed to load trained model",
+                    errors.ErrorCodes.MODEL_LOADING_FAILED,
+                    {"run_id": req.run_id}
+                )
+            )
+
+        # Generate prediction
+        result_df = generate_predictions(model, encoded_df)
+        prediction_value = result_df['prediction'].iloc[0]
+
+        # Convert numpy types to Python types for JSON serialization
+        if hasattr(prediction_value, 'item'):
+            prediction_value = prediction_value.item()
+
+        # Extract processed features (excluding prediction column)
+        input_features = result_df.drop(columns=['prediction']).iloc[0].to_dict()
+
+        # Log successful completion
+        logger.log_structured_event(
+            predict_logger,
+            "api_request_succeeded",
+            {
+                "endpoint": "predict",
+                "run_id": req.run_id,
+                "prediction_value": prediction_value,
+                "task_type": task_type,
+                "model_name": model_name
+            },
+            f"Prediction completed for run {req.run_id}: {prediction_value}"
+        )
+
+        return PredictionResponse(
+            prediction_value=prediction_value,
+            confidence=None,  # Could be enhanced with model.predict_proba() for classification
+            input_features=input_features,
+            task_type=task_type,
+            target_column=target_column,
+            model_name=model_name
+        )
+
+    except HTTPException:
+        # Log handled HTTP exceptions
+        logger.log_structured_error(
+            predict_logger,
+            "api_request_failed",
+            "Prediction failed",
+            {"endpoint": "predict", "run_id": req.run_id}
+        )
+        # Re-raise HTTP exceptions as-is
+        raise
+    except Exception as e:
+        # Log unexpected errors
+        logger.log_structured_error(
+            predict_logger,
+            "api_request_failed",
+            f"Unexpected error during prediction: {str(e)}",
+            {
+                "endpoint": "predict",
+                "run_id": req.run_id,
+                "error": str(e),
+                "error_type": type(e).__name__
+            }
+        )
+        errors.raise_internal_server_error(f"Prediction failed: {str(e)}")
 
 
 @router.get("/download/{run_id}/{filename}")

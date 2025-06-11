@@ -291,6 +291,9 @@ def build_results_gcs(run_id: str,
         file_size = check_file_size_gcs(run_id, explainability_summary["shap_plot_filename"])
         available_downloads["file_sizes"]["shap_plot"] = file_size / 1024
 
+    # Check prediction readiness
+    prediction_readiness = check_prediction_readiness_gcs(run_id, gcs_bucket_name)
+
     # === ASSEMBLE FINAL RESPONSE ===
     results = {
         # Core results (backwards compatibility)
@@ -306,7 +309,10 @@ def build_results_gcs(run_id: str,
         "data_prep_summary": data_prep_summary,
         "automl_summary": automl_summary,
         "explainability_summary": explainability_summary,
-        "available_downloads": available_downloads
+        "available_downloads": available_downloads,
+        
+        # Prediction readiness information
+        "prediction_readiness": prediction_readiness
     }
 
     return results
@@ -383,6 +389,55 @@ def get_pipeline_status_gcs(run_id: str,
         "message": message,
         "progress_pct": progress_pct
     }
+
+
+def check_prediction_readiness_gcs(run_id: str, 
+                                  gcs_bucket_name: str = PROJECT_BUCKET_NAME) -> Dict[str, bool]:
+    """
+    Check if prediction functionality is ready for this run.
+    
+    Args:
+        run_id: The ID of the run to check
+        gcs_bucket_name: GCS bucket name for storage
+        
+    Returns:
+        Dictionary with prediction readiness flags
+    """
+    readiness = {
+        "prediction_ready": False,
+        "model_file_available": False,
+        "column_mapping_available": False,
+        "original_data_available": False,
+        "metadata_available": False
+    }
+    
+    try:
+        # Check for trained model file
+        model_path = f"{constants.MODEL_DIR}/pycaret_pipeline.pkl"
+        readiness["model_file_available"] = check_run_file_exists(run_id, model_path)
+        
+        # Check for column mapping (needed for input transformation)
+        readiness["column_mapping_available"] = check_run_file_exists(run_id, "column_mapping.json")
+        
+        # Check for original data (needed for input schema generation)
+        readiness["original_data_available"] = check_run_file_exists(run_id, constants.ORIGINAL_DATA_FILENAME)
+        
+        # Check for metadata (needed for target info)
+        readiness["metadata_available"] = check_run_file_exists(run_id, constants.METADATA_FILENAME)
+        
+        # Prediction is ready if all required files are available
+        readiness["prediction_ready"] = all([
+            readiness["model_file_available"],
+            readiness["column_mapping_available"], 
+            readiness["original_data_available"],
+            readiness["metadata_available"]
+        ])
+        
+    except Exception:
+        # If any error occurs, prediction is not ready
+        pass
+    
+    return readiness
 
 
 def get_pipeline_status(run_id: str) -> Dict:

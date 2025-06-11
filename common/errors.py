@@ -39,6 +39,12 @@ class ErrorCodes:
     STATUS_NOT_AVAILABLE = "status_not_available"
     RESULTS_NOT_AVAILABLE = "results_not_available"
     MISSING_METADATA = "missing_metadata"
+    
+    # Prediction errors
+    PREDICTION_NOT_READY = "prediction_not_ready"
+    TARGET_INFO_MISSING = "target_info_missing"
+    INPUT_ENCODING_FAILED = "input_encoding_failed"
+    MODEL_LOADING_FAILED = "model_loading_failed"
 
 
 def create_error_detail(

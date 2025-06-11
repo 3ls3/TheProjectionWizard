@@ -158,7 +158,7 @@ class PipelineStatusResponse(BaseModel):
     stage: str = Field(
         ..., description="Current pipeline stage (e.g. 'prep', 'automl', 'completed')"
     )
-    status: Literal["pending", "running", "completed", "failed"]
+    status: Literal["pending", "running", "processing", "completed", "failed"]
     message: Optional[str] = None
     progress_pct: Optional[int] = Field(
         None, description="Coarse progress percentage (0-100)"
@@ -177,7 +177,7 @@ class RunSummary(BaseModel):
 class PipelineStatusInfo(BaseModel):
     """Detailed pipeline status information."""
     stage: str
-    status: Literal["pending", "running", "completed", "failed"]
+    status: Literal["pending", "running", "processing", "completed", "failed"]
     message: Optional[str] = None
     errors: Optional[List[str]] = None
 
@@ -232,6 +232,52 @@ class AvailableDownloads(BaseModel):
     file_sizes: Dict[str, float] = Field(default_factory=dict)
 
 
+class PredictionReadiness(BaseModel):
+    """Information about prediction readiness."""
+    prediction_ready: bool = False
+    model_file_available: bool = False
+    column_mapping_available: bool = False
+    original_data_available: bool = False
+    metadata_available: bool = False
+
+
+class PredictionInputRequest(BaseModel):
+    """Request model for making predictions."""
+    run_id: str
+    input_values: Dict[str, Any] = Field(
+        ..., description="Raw user input values in original column format"
+    )
+
+
+class PredictionSchemaResponse(BaseModel):
+    """Response with input schema for building prediction form."""
+    api_version: Literal["v1"] = "v1"
+    numeric_columns: Dict[str, Dict[str, float]] = Field(
+        default_factory=dict, 
+        description="Numeric columns with min, max, mean, std values"
+    )
+    categorical_columns: Dict[str, Dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Categorical columns with options and default values"
+    )
+    target_info: Dict[str, Any] = Field(
+        default_factory=dict, description="Target column information"
+    )
+
+
+class PredictionResponse(BaseModel):
+    """Response with prediction results."""
+    api_version: Literal["v1"] = "v1"
+    prediction_value: Any = Field(..., description="The predicted value")
+    confidence: Optional[float] = Field(None, description="Prediction confidence (0-1)")
+    input_features: Dict[str, Any] = Field(
+        default_factory=dict, description="Processed features sent to model"
+    )
+    task_type: str
+    target_column: str
+    model_name: Optional[str] = None
+
+
 class FinalResultsResponse(BaseModel):
     """Comprehensive response model for final pipeline results endpoint."""
     api_version: Literal["v1"] = "v1"
@@ -250,6 +296,9 @@ class FinalResultsResponse(BaseModel):
     automl_summary: Optional[AutoMLSummary] = None
     explainability_summary: Optional[ExplainabilitySummary] = None
     available_downloads: AvailableDownloads
+    
+    # Prediction readiness information
+    prediction_readiness: PredictionReadiness
 
 
 __all__ = [
@@ -271,5 +320,9 @@ __all__ = [
     "AutoMLSummary",
     "ExplainabilitySummary",
     "AvailableDownloads",
+    "PredictionReadiness",
+    "PredictionInputRequest",
+    "PredictionSchemaResponse",
+    "PredictionResponse",
     "FinalResultsResponse",
 ]

@@ -1,0 +1,335 @@
+{
+  "test_suite": "Phase 2 Step 2 Schema Definition Tests",
+  "timestamp": "2025-06-11T19:57:55.385768",
+  "total_tests": 2,
+  "passed_tests": 0,
+  "failed_tests": 2,
+  "test_results": {
+    "regression": {
+      "test_name": "step_2_isolated_regression",
+      "status": "error",
+      "duration": 0.6147840023040771,
+      "start_time": 1749664674.417574,
+      "end_time": 1749664675.032358,
+      "measurements": {
+        "data_upload_time": {
+          "value": 0.457244873046875,
+          "unit": "seconds",
+          "timestamp": 1749664674.879133
+        },
+        "step2_execution_time": {
+          "value": 0.15267419815063477,
+          "unit": "seconds",
+          "timestamp": 1749664675.032001
+        }
+      },
+      "info": {
+        "test_run_id": "phase2_step2_regression_1749664674",
+        "dataset_type": "regression",
+        "test_timestamp": "2025-06-11T19:57:54.417719",
+        "test_data_rows": 100,
+        "test_data_columns": [
+          "square_feet",
+          "bedrooms",
+          "bathrooms",
+          "garage_spaces",
+          "property_type",
+          "neighborhood_quality_score",
+          "price"
+        ],
+        "schema_suggestions_count": 7,
+        "schema_suggestions": {
+          "square_feet": {
+            "initial_dtype": "int64",
+            "suggested_encoding_role": "numeric-discrete"
+          },
+          "bedrooms": {
+            "initial_dtype": "int64",
+            "suggested_encoding_role": "numeric-discrete"
+          },
+          "bathrooms": {
+            "initial_dtype": "float64",
+            "suggested_encoding_role": "numeric-continuous"
+          },
+          "garage_spaces": {
+            "initial_dtype": "int64",
+            "suggested_encoding_role": "numeric-discrete"
+          },
+          "property_type": {
+            "initial_dtype": "object",
+            "suggested_encoding_role": "categorical-nominal"
+          },
+          "neighborhood_quality_score": {
+            "initial_dtype": "int64",
+            "suggested_encoding_role": "numeric-discrete"
+          },
+          "price": {
+            "initial_dtype": "int64",
+            "suggested_encoding_role": "numeric-discrete"
+          }
+        },
+        "critical_numeric_features_tested": [
+          "square_feet",
+          "bedrooms",
+          "bathrooms",
+          "garage_spaces",
+          "neighborhood_quality_score"
+        ],
+        "categorical_features_tested": [
+          "property_type"
+        ],
+        "target_features_tested": [
+          "price"
+        ]
+      },
+      "assertions": [
+        {
+          "type": "true",
+          "condition": false,
+          "message": "Feature 'square_feet' should be numeric-continuous, got 'numeric-discrete'",
+          "passed": false,
+          "timestamp": 1749664675.03215
+        },
+        {
+          "type": "true",
+          "condition": true,
+          "message": "Feature 'bedrooms' should be numeric-discrete OR numeric-continuous, got 'numeric-discrete'",
+          "passed": true,
+          "timestamp": 1749664675.032191
+        },
+        {
+          "type": "true",
+          "condition": true,
+          "message": "Feature 'bathrooms' should be numeric-continuous, got 'numeric-continuous'",
+          "passed": true,
+          "timestamp": 1749664675.0322208
+        },
+        {
+          "type": "true",
+          "condition": true,
+          "message": "Feature 'garage_spaces' should be numeric-discrete OR numeric-continuous, got 'numeric-discrete'",
+          "passed": true,
+          "timestamp": 1749664675.032249
+        },
+        {
+          "type": "true",
+          "condition": true,
+          "message": "Feature 'neighborhood_quality_score' should be numeric-discrete, got 'numeric-discrete'",
+          "passed": true,
+          "timestamp": 1749664675.032275
+        },
+        {
+          "type": "equals",
+          "expected": "categorical-nominal",
+          "actual": "categorical-nominal",
+          "message": "Feature 'property_type' should be categorical-nominal",
+          "passed": true,
+          "timestamp": 1749664675.032301
+        },
+        {
+          "type": "true",
+          "condition": true,
+          "message": "Target feature 'price' should be one of ['numeric-continuous', 'numeric-discrete'], got 'numeric-discrete'",
+          "passed": true,
+          "timestamp": 1749664675.03233
+        }
+      ],
+      "errors": [
+        "Truth assertion failed: Feature 'square_feet' should be numeric-continuous, got 'numeric-discrete'",
+        "Step 2 regression test failed - incorrect feature classification detected"
+      ],
+      "messages": [
+        "ERROR: Step 2 regression test failed - incorrect feature classification detected"
+      ],
+      "summary": {
+        "total_assertions": 7,
+        "passed_assertions": 6,
+        "failed_assertions": 1,
+        "total_errors": 2,
+        "has_measurements": true
+      }
+    },
+    "classification": {
+      "test_name": "step_2_isolated_classification",
+      "status": "error",
+      "duration": 0.3533051013946533,
+      "start_time": 1749664675.032406,
+      "end_time": 1749664675.3857112,
+      "measurements": {
+        "data_upload_time": {
+          "value": 0.19627785682678223,
+          "unit": "seconds",
+          "timestamp": 1749664675.2296472
+        },
+        "step2_execution_time": {
+          "value": 0.15386605262756348,
+          "unit": "seconds",
+          "timestamp": 1749664675.385321
+        }
+      },
+      "info": {
+        "test_run_id": "phase2_step2_classification_1749664675",
+        "dataset_type": "classification",
+        "test_timestamp": "2025-06-11T19:57:55.032501",
+        "test_data_rows": 100,
+        "test_data_columns": [
+          "applicant_age",
+          "annual_income",
+          "credit_score",
+          "employment_years",
+          "loan_amount",
+          "debt_to_income_ratio",
+          "education_level",
+          "property_type",
+          "approved"
+        ],
+        "schema_suggestions_count": 9,
+        "schema_suggestions": {
+          "applicant_age": {
+            "initial_dtype": "int64",
+            "suggested_encoding_role": "numeric-discrete"
+          },
+          "annual_income": {
+            "initial_dtype": "int64",
+            "suggested_encoding_role": "numeric-discrete"
+          },
+          "credit_score": {
+            "initial_dtype": "int64",
+            "suggested_encoding_role": "numeric-discrete"
+          },
+          "employment_years": {
+            "initial_dtype": "float64",
+            "suggested_encoding_role": "numeric-continuous"
+          },
+          "loan_amount": {
+            "initial_dtype": "int64",
+            "suggested_encoding_role": "numeric-discrete"
+          },
+          "debt_to_income_ratio": {
+            "initial_dtype": "float64",
+            "suggested_encoding_role": "numeric-continuous"
+          },
+          "education_level": {
+            "initial_dtype": "object",
+            "suggested_encoding_role": "categorical-nominal"
+          },
+          "property_type": {
+            "initial_dtype": "object",
+            "suggested_encoding_role": "categorical-nominal"
+          },
+          "approved": {
+            "initial_dtype": "int64",
+            "suggested_encoding_role": "numeric-discrete"
+          }
+        },
+        "critical_numeric_features_tested": [
+          "applicant_age",
+          "annual_income",
+          "credit_score",
+          "employment_years",
+          "loan_amount",
+          "debt_to_income_ratio"
+        ],
+        "categorical_features_tested": [
+          "education_level",
+          "property_type"
+        ],
+        "target_features_tested": [
+          "approved"
+        ]
+      },
+      "assertions": [
+        {
+          "type": "true",
+          "condition": true,
+          "message": "Feature 'applicant_age' should be numeric-discrete OR numeric-continuous, got 'numeric-discrete'",
+          "passed": true,
+          "timestamp": 1749664675.385483
+        },
+        {
+          "type": "true",
+          "condition": false,
+          "message": "Feature 'annual_income' should be numeric-continuous, got 'numeric-discrete'",
+          "passed": false,
+          "timestamp": 1749664675.3855171
+        },
+        {
+          "type": "true",
+          "condition": true,
+          "message": "Feature 'credit_score' should be numeric-discrete OR numeric-continuous, got 'numeric-discrete'",
+          "passed": true,
+          "timestamp": 1749664675.385549
+        },
+        {
+          "type": "true",
+          "condition": true,
+          "message": "Feature 'employment_years' should be numeric-continuous, got 'numeric-continuous'",
+          "passed": true,
+          "timestamp": 1749664675.3855722
+        },
+        {
+          "type": "true",
+          "condition": false,
+          "message": "Feature 'loan_amount' should be numeric-continuous, got 'numeric-discrete'",
+          "passed": false,
+          "timestamp": 1749664675.385597
+        },
+        {
+          "type": "true",
+          "condition": true,
+          "message": "Feature 'debt_to_income_ratio' should be numeric-continuous, got 'numeric-continuous'",
+          "passed": true,
+          "timestamp": 1749664675.385619
+        },
+        {
+          "type": "equals",
+          "expected": "categorical-nominal",
+          "actual": "categorical-nominal",
+          "message": "Feature 'education_level' should be categorical-nominal",
+          "passed": true,
+          "timestamp": 1749664675.3856409
+        },
+        {
+          "type": "equals",
+          "expected": "categorical-nominal",
+          "actual": "categorical-nominal",
+          "message": "Feature 'property_type' should be categorical-nominal",
+          "passed": true,
+          "timestamp": 1749664675.3856618
+        },
+        {
+          "type": "true",
+          "condition": true,
+          "message": "Target feature 'approved' should be one of ['numeric-discrete', 'boolean', 'categorical-nominal'], got 'numeric-discrete'",
+          "passed": true,
+          "timestamp": 1749664675.385685
+        }
+      ],
+      "errors": [
+        "Truth assertion failed: Feature 'annual_income' should be numeric-continuous, got 'numeric-discrete'",
+        "Truth assertion failed: Feature 'loan_amount' should be numeric-continuous, got 'numeric-discrete'",
+        "Step 2 classification test failed - incorrect feature classification detected"
+      ],
+      "messages": [
+        "ERROR: Step 2 classification test failed - incorrect feature classification detected"
+      ],
+      "summary": {
+        "total_assertions": 9,
+        "passed_assertions": 7,
+        "failed_assertions": 2,
+        "total_errors": 3,
+        "has_measurements": true
+      }
+    }
+  },
+  "summary": {
+    "success_rate": 0.0,
+    "total_assertions": 16,
+    "passed_assertions": 13,
+    "total_duration": 0.9680891036987305,
+    "critical_failures": [
+      "regression",
+      "classification"
+    ]
+  }
+}

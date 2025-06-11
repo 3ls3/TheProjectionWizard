@@ -1,0 +1,141 @@
+{
+  "test_name": "gcs_connectivity",
+  "status": "success",
+  "duration": 1.113785982131958,
+  "start_time": 1749663971.651011,
+  "end_time": 1749663972.764797,
+  "measurements": {
+    "bucket_access_time": {
+      "value": 0.2571241855621338,
+      "unit": "seconds",
+      "timestamp": 1749663971.908247
+    },
+    "upload_time": {
+      "value": 0.2044081687927246,
+      "unit": "seconds",
+      "timestamp": 1749663972.112764
+    },
+    "exists_check_time": {
+      "value": 0.05553293228149414,
+      "unit": "seconds",
+      "timestamp": 1749663972.168443
+    },
+    "download_time": {
+      "value": 0.13182306289672852,
+      "unit": "seconds",
+      "timestamp": 1749663972.300359
+    },
+    "total_operation_time": {
+      "value": 0.39176416397094727,
+      "unit": "seconds",
+      "timestamp": 1749663972.300549
+    },
+    "runs_directory_list_time": {
+      "value": 0.22449707984924316,
+      "unit": "seconds",
+      "timestamp": 1749663972.5251021
+    },
+    "test_run_creation_time": {
+      "value": 0.18046808242797852,
+      "unit": "seconds",
+      "timestamp": 1749663972.705759
+    }
+  },
+  "info": {
+    "bucket_name": "projection-wizard-runs-mvp-w23",
+    "test_timestamp": "2025-06-11T19:46:11.651088",
+    "bucket_accessible": true,
+    "test_prefix_files_found": 0,
+    "test_file_size": 90,
+    "artifact_operations_successful": true,
+    "runs_directory_accessible": true,
+    "existing_runs_count": 743,
+    "test_run_id": "test_gcs_connectivity_1749663972",
+    "test_run_files_created": 1,
+    "run_directory_structure_working": true
+  },
+  "assertions": [
+    {
+      "type": "true",
+      "condition": true,
+      "message": "GCS client should be initialized",
+      "passed": true,
+      "timestamp": 1749663971.6511219
+    },
+    {
+      "type": "true",
+      "condition": true,
+      "message": "GCS file listing should return a list",
+      "passed": true,
+      "timestamp": 1749663971.9082491
+    },
+    {
+      "type": "true",
+      "condition": true,
+      "message": "File upload should succeed",
+      "passed": true,
+      "timestamp": 1749663972.112766
+    },
+    {
+      "type": "true",
+      "condition": true,
+      "message": "Uploaded file should exist",
+      "passed": true,
+      "timestamp": 1749663972.168444
+    },
+    {
+      "type": "true",
+      "condition": true,
+      "message": "File download should succeed",
+      "passed": true,
+      "timestamp": 1749663972.300361
+    },
+    {
+      "type": "equals",
+      "expected": "Phase 1 GCS Test File\nTimestamp: 2025-06-11T19:46:11.908350\nTest ID: gcs_connectivity_test",
+      "actual": "Phase 1 GCS Test File\nTimestamp: 2025-06-11T19:46:11.908350\nTest ID: gcs_connectivity_test",
+      "message": "Downloaded content should match uploaded content",
+      "passed": true,
+      "timestamp": 1749663972.300488
+    },
+    {
+      "type": "true",
+      "condition": true,
+      "message": "Runs directory listing should return a list",
+      "passed": true,
+      "timestamp": 1749663972.525105
+    },
+    {
+      "type": "true",
+      "condition": true,
+      "message": "Test run directory creation should succeed",
+      "passed": true,
+      "timestamp": 1749663972.705764
+    },
+    {
+      "type": "true",
+      "condition": true,
+      "message": "Test run directory should contain files",
+      "passed": true,
+      "timestamp": 1749663972.764578
+    },
+    {
+      "type": "true",
+      "condition": true,
+      "message": "Test metadata file should be in run directory",
+      "passed": true,
+      "timestamp": 1749663972.76458
+    }
+  ],
+  "errors": [],
+  "messages": [
+    "SUCCESS: All GCS connectivity tests passed"
+  ],
+  "summary": {
+    "total_assertions": 10,
+    "passed_assertions": 10,
+    "failed_assertions": 0,
+    "total_errors": 0,
+    "has_measurements": true
+  }
+}

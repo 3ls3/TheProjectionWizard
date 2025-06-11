@@ -1,0 +1,37 @@
+{
+  "test_name": "gcs_connectivity",
+  "status": "error",
+  "duration": 0.2938051223754883,
+  "start_time": 1749663810.8356018,
+  "end_time": 1749663811.129407,
+  "measurements": {},
+  "info": {
+    "bucket_name": "projection-wizard-runs-mvp-w23",
+    "test_timestamp": "2025-06-11T19:43:30.835697",
+    "bucket_accessible": false
+  },
+  "assertions": [
+    {
+      "type": "true",
+      "condition": true,
+      "message": "GCS client should be initialized",
+      "passed": true,
+      "timestamp": 1749663810.8358788
+    }
+  ],
+  "errors": [
+    "GCS permission error: Permission denied listing gs://projection-wizard-runs-mvp-w23 with prefix 'test_gcs_connectivity_temp/': 403 GET https://storage.googleapis.com/storage/v1/b/projection-wizard-runs-mvp-w23/o?projection=noAcl&prefix=test_gcs_connectivity_temp%2F&prettyPrint=false: le-wagon-data-bootcamp@q2-wagon-bootcamp.iam.gserviceaccount.com does not have storage.objects.list access to the Google Cloud Storage bucket. Permission 'storage.objects.list' denied on resource (or it may not exist).",
+    "GCS connectivity test failed. Failed sub-tests: ['bucket_access', 'artifact_operations', 'directory_structure']"
+  ],
+  "messages": [
+    "ERROR: GCS permission error: Permission denied listing gs://projection-wizard-runs-mvp-w23 with prefix 'test_gcs_connectivity_temp/': 403 GET https://storage.googleapis.com/storage/v1/b/projection-wizard-runs-mvp-w23/o?projection=noAcl&prefix=test_gcs_connectivity_temp%2F&prettyPrint=false: le-wagon-data-bootcamp@q2-wagon-bootcamp.iam.gserviceaccount.com does not have storage.objects.list access to the Google Cloud Storage bucket. Permission 'storage.objects.list' denied on resource (or it may not exist).",
+    "ERROR: GCS connectivity test failed. Failed sub-tests: ['bucket_access', 'artifact_operations', 'directory_structure']"
+  ],
+  "summary": {
+    "total_assertions": 1,
+    "passed_assertions": 1,
+    "failed_assertions": 0,
+    "total_errors": 2,
+    "has_measurements": false
+  }
+}

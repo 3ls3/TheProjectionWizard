@@ -1,5 +1,18 @@
 # Enhanced Prediction API Implementation Summary
 
+## 🔧 **CRITICAL BUG FIX: Backend Processing Fixed (2025-06-11)**
+
+**Issue**: "Schema confirmation failed" error was blocking user override functionality  
+**Root Cause**: Test environment was not creating complete run structure (missing `status.json`)  
+**Solution**: Updated tests to match production `/api/upload` behavior exactly  
+**Result**: User override workflow now 100% functional, backend processing robust  
+
+### Key Learning: Test Environment Parity  
+- Tests must create EXACT same file structure as production
+- Missing `status.json` causes cryptic downstream errors
+- Added mandatory guidelines to all context documents
+- **Files Required**: `original_data.csv`, `status.json`, `metadata.json`
+
 ## 🎯 **MAJOR UPDATE: Real SHAP Integration Complete**
 
 The Enhanced Prediction API has been **significantly upgraded** with authentic SHAP (SHapley Additive exPlanations) integration, replacing mock implementations with real feature importance and explanation capabilities.

@@ -214,6 +214,12 @@ def _run_pipeline_with_error_handling(run_id: str) -> None:
         )
 
 
+@router.options("/upload")
+async def upload_options():
+    """Handle CORS preflight requests for upload endpoint."""
+    return {"message": "OK"}
+
+
 @router.post("/upload", response_model=UploadResponse, status_code=201)
 async def upload_csv(file: UploadFile = File(...)):
     """

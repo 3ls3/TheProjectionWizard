@@ -8,7 +8,7 @@ pipeline metadata structures.
 """
 
 from pydantic import BaseModel, Field
-from typing import Dict, Optional, Literal, List, Tuple, Any
+from typing import Dict, Optional, Literal, List, Tuple, Any, Union
 
 
 class UploadResponse(BaseModel):
@@ -278,6 +278,234 @@ class PredictionResponse(BaseModel):
     model_name: Optional[str] = None
 
 
+# Enhanced Prediction API Schema Models for Option 2
+
+class SliderConfig(BaseModel):
+    """Configuration for slider-based numeric inputs."""
+    min_value: float
+    max_value: float
+    default_value: float
+    step_size: float
+    suggested_value: Optional[float] = None
+    display_format: str = ".3f"  # Format for displaying values
+
+
+class CategoricalConfig(BaseModel):
+    """Configuration for categorical inputs."""
+    options: List[str]
+    default_option: str
+    display_names: Optional[Dict[str, str]] = None  # Map option -> friendly name
+    descriptions: Optional[Dict[str, str]] = None  # Map option -> description
+
+
+class FeatureMetadata(BaseModel):
+    """Metadata about a feature for UI rendering."""
+    importance_rank: Optional[int] = None
+    importance_score: Optional[float] = None
+    correlation_with_target: Optional[float] = None
+    description: Optional[str] = None
+    unit: Optional[str] = None
+    category: Optional[str] = None  # e.g., "demographic", "behavioral", "financial"
+
+
+class EnhancedPredictionSchemaResponse(BaseModel):
+    """Enhanced schema response with rich UI metadata."""
+    api_version: Literal["v1"] = "v1"
+    
+    # Enhanced numeric columns with slider configs
+    numeric_columns: Dict[str, SliderConfig] = Field(default_factory=dict)
+    
+    # Enhanced categorical columns with UI configs
+    categorical_columns: Dict[str, CategoricalConfig] = Field(default_factory=dict)
+    
+    # Feature metadata for all input features
+    feature_metadata: Dict[str, FeatureMetadata] = Field(default_factory=dict)
+    
+    # Target information
+    target_info: Dict[str, Any] = Field(default_factory=dict)
+    
+    # Model information
+    model_info: Dict[str, Any] = Field(default_factory=dict)
+    
+    # Validation rules
+    validation_rules: Dict[str, Any] = Field(default_factory=dict)
+
+
+class PredictionProbabilities(BaseModel):
+    """Class probabilities for classification tasks."""
+    class_probabilities: Dict[str, float] = Field(default_factory=dict)
+    predicted_class: str
+    confidence: float
+
+
+class FeatureContribution(BaseModel):
+    """Model for individual feature contributions."""
+    feature_name: str
+    contribution_value: float
+    feature_value: Union[float, int, str]
+    contribution_direction: str  # 'positive', 'negative', 'neutral'
+    shap_value: Optional[float] = None  # Real SHAP value when available
+
+
+class DetailedExplanation(BaseModel):
+    """Model for detailed prediction explanations."""
+    prediction_id: str
+    explanation_type: str  # 'shap', 'lime', 'model_importance'
+    feature_explanations: List[FeatureContribution]
+    global_explanation: str
+    explanation_confidence: float
+    shap_base_value: Optional[float] = None
+    shap_values: Optional[Dict[str, float]] = None
+    explanation_timestamp: str
+    
+
+class ShapExplanationResponse(BaseModel):
+    """Response model for SHAP explanations."""
+    prediction_id: str
+    shap_values: Dict[str, float]
+    shap_base_value: float
+    feature_contributions: List[FeatureContribution]
+    top_contributing_features: List[str]
+    explanation_summary: str
+    shap_available: bool
+    fallback_used: bool
+    explanation_timestamp: str
+
+
+class PredictionConfidenceInterval(BaseModel):
+    """Confidence interval for regression predictions."""
+    lower_bound: float
+    upper_bound: float
+    confidence_level: float = 0.95
+
+
+class SinglePredictionResponse(BaseModel):
+    """Enhanced single prediction response."""
+    api_version: Literal["v1"] = "v1"
+    
+    # Core prediction
+    prediction_value: Any
+    
+    # Enhanced prediction information
+    probabilities: Optional[PredictionProbabilities] = None
+    confidence_interval: Optional[PredictionConfidenceInterval] = None
+    
+    # Feature analysis
+    feature_contributions: List[FeatureContribution] = Field(default_factory=list)
+    top_contributing_features: List[str] = Field(default_factory=list)
+    
+    # Input information
+    input_features: Dict[str, Any] = Field(default_factory=dict)
+    processed_features: Dict[str, Any] = Field(default_factory=dict)
+    
+    # Model metadata
+    task_type: str
+    target_column: str
+    model_name: Optional[str] = None
+    prediction_timestamp: str
+    
+    # Unique prediction ID for explanations
+    prediction_id: str
+
+
+class BatchPredictionRequest(BaseModel):
+    """Request for batch predictions."""
+    run_id: str
+    inputs: List[Dict[str, Any]] = Field(..., description="List of input dictionaries")
+    include_explanations: bool = False
+    include_confidence: bool = True
+
+
+class BatchPredictionItem(BaseModel):
+    """Single item in batch prediction response."""
+    input_index: int
+    prediction_value: Any
+    probabilities: Optional[PredictionProbabilities] = None
+    confidence_interval: Optional[PredictionConfidenceInterval] = None
+    prediction_id: str
+
+
+class BatchPredictionSummary(BaseModel):
+    """Summary statistics for batch predictions."""
+    total_predictions: int
+    prediction_distribution: Dict[str, int] = Field(default_factory=dict)  # For classification
+    prediction_range: Optional[Dict[str, float]] = None  # For regression (min, max, mean, std)
+    processing_time_seconds: float
+
+
+class BatchPredictionResponse(BaseModel):
+    """Response for batch predictions."""
+    api_version: Literal["v1"] = "v1"
+    
+    predictions: List[BatchPredictionItem]
+    summary: BatchPredictionSummary
+    
+    # Model metadata
+    task_type: str
+    target_column: str
+    model_name: Optional[str] = None
+    batch_timestamp: str
+
+
+class PredictionExplanationResponse(BaseModel):
+    """Detailed explanation for a specific prediction."""
+    api_version: Literal["v1"] = "v1"
+    
+    prediction_id: str
+    prediction_value: Any
+    
+    # SHAP values and feature contributions
+    shap_values: Dict[str, float] = Field(default_factory=dict)
+    feature_contributions: List[FeatureContribution] = Field(default_factory=list)
+    
+    # Counterfactual analysis
+    counterfactuals: List[Dict[str, Any]] = Field(default_factory=list)
+    
+    # Feature importance for this prediction
+    local_feature_importance: Dict[str, float] = Field(default_factory=dict)
+    
+    # Model behavior insights
+    prediction_confidence: float
+    similar_cases_count: Optional[int] = None
+    model_uncertainty: Optional[float] = None
+
+
+class ComparisonScenario(BaseModel):
+    """A prediction scenario for comparison."""
+    scenario_name: str
+    input_values: Dict[str, Any]
+    prediction_value: Any
+    probabilities: Optional[PredictionProbabilities] = None
+    key_differences: List[str] = Field(default_factory=list)
+
+
+class PredictionComparisonRequest(BaseModel):
+    """Request for comparing multiple prediction scenarios."""
+    run_id: str
+    scenarios: List[ComparisonScenario]
+
+
+class ComparisonAnalysis(BaseModel):
+    """Analysis of differences between scenarios."""
+    most_influential_features: List[str]
+    prediction_sensitivity: Dict[str, float] = Field(default_factory=dict)
+    scenario_rankings: Optional[List[str]] = None  # For classification/regression ordering
+
+
+class PredictionComparisonResponse(BaseModel):
+    """Response for prediction comparison."""
+    api_version: Literal["v1"] = "v1"
+    
+    scenarios: List[ComparisonScenario]
+    comparison_analysis: ComparisonAnalysis
+    
+    # Model metadata
+    task_type: str
+    target_column: str
+    model_name: Optional[str] = None
+    comparison_timestamp: str
+
+
 class FinalResultsResponse(BaseModel):
     """Comprehensive response model for final pipeline results endpoint."""
     api_version: Literal["v1"] = "v1"
@@ -325,4 +553,23 @@ __all__ = [
     "PredictionSchemaResponse",
     "PredictionResponse",
     "FinalResultsResponse",
+    "SliderConfig",
+    "CategoricalConfig",
+    "FeatureMetadata",
+    "EnhancedPredictionSchemaResponse",
+    "PredictionProbabilities",
+    "FeatureContribution",
+    "PredictionConfidenceInterval",
+    "SinglePredictionResponse",
+    "BatchPredictionRequest",
+    "BatchPredictionItem",
+    "BatchPredictionSummary",
+    "BatchPredictionResponse",
+    "PredictionExplanationResponse",
+    "ComparisonScenario",
+    "PredictionComparisonRequest",
+    "ComparisonAnalysis",
+    "PredictionComparisonResponse",
+    "DetailedExplanation",
+    "ShapExplanationResponse",
 ]

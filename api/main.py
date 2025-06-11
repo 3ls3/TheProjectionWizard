@@ -56,9 +56,9 @@ print(f"INFO: Configuring CORS with origins: {configured_origins}")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=configured_origins,
+    allow_origins=["*"],  # Temporarily allow all origins for debugging
     allow_credentials=False,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"],
+    allow_methods=["*"],  # Allow all methods
     allow_headers=["*"],
     expose_headers=["*"],
     max_age=600,

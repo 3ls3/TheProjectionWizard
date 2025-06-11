@@ -49,9 +49,9 @@ echo ""
 unset GOOGLE_APPLICATION_CREDENTIALS
 
 # Set CORS origins including current ngrok URL (update this when ngrok URL changes)
-export ALLOWED_ORIGINS="https://www.predictingwizard.com,https://lovable.dev,https://lovable.dev/projects/dca90495-2ee9-4de4-86ef-b619f83fc331,http://localhost:3001,https://6ca3-62-96-151-154.ngrok-free.app,https://id-preview--dca90495-2ee9-4de4-86ef-b619f83fc331.lovable.app"
+export ALLOWED_ORIGINS="https://www.predictingwizard.com,https://lovable.dev,https://lovable.dev/projects/dca90495-2ee9-4de4-86ef-b619f83fc331,http://localhost:3001,https://ceff-62-96-151-154.ngrok-free.app,https://id-preview--dca90495-2ee9-4de4-86ef-b619f83fc331.lovable.app"
 
-echo "🔗 Current ngrok URL: https://6ca3-62-96-151-154.ngrok-free.app"
+echo "🔗 Current ngrok URL: https://ceff-62-96-151-154.ngrok-free.app"
 echo "📝 Update VITE_API_URL in your frontend to use the ngrok URL above"
 echo ""
 

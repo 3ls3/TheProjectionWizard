@@ -7,10 +7,13 @@ Refactored for GCS-based storage.
 import pandas as pd
 import joblib
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Optional, Union, List
 import numpy as np
 import tempfile
 import logging
+import pickle
+from datetime import datetime
+import uuid
 
 from common import logger, constants
 from api.utils.gcs_utils import download_run_file, PROJECT_BUCKET_NAME
@@ -381,3 +384,612 @@ def get_prediction_summary(result_df: pd.DataFrame, task_type: str = "unknown") 
         })
 
     return summary
+
+
+# Enhanced prediction functions for Option 2 API
+
+def generate_predictions_with_probabilities(model: Any, input_df: pd.DataFrame, target_column: str = None) -> tuple:
+    """
+    Generate predictions with class probabilities for classification tasks.
+
+    Args:
+        model: Trained model/pipeline object
+        input_df: Input DataFrame to make predictions on
+        target_column: Name of target column to explicitly exclude
+
+    Returns:
+        Tuple of (result_df, probabilities_dict)
+        - result_df: DataFrame with aligned features and predictions
+        - probabilities_dict: Dict with class probabilities (None for regression)
+    """
+    # Generate standard predictions
+    result_df = generate_predictions(model, input_df, target_column)
+    
+    probabilities_dict = None
+    
+    # Try to get prediction probabilities for classification
+    try:
+        if hasattr(model, 'predict_proba'):
+            # Get the aligned input (without prediction column)
+            aligned_input = result_df.drop(columns=['prediction'])
+            probabilities = model.predict_proba(aligned_input)
+            
+            # Get class labels
+            if hasattr(model, 'classes_'):
+                class_labels = model.classes_
+                # Convert to dict format
+                probabilities_dict = {
+                    str(class_labels[i]): float(probabilities[0][i]) 
+                    for i in range(len(class_labels))
+                }
+                
+                # Find predicted class and confidence
+                predicted_class = str(result_df['prediction'].iloc[0])
+                confidence = float(max(probabilities[0]))
+                
+                probabilities_dict['_predicted_class'] = predicted_class
+                probabilities_dict['_confidence'] = confidence
+                
+    except Exception as e:
+        log = logging.getLogger(__name__)
+        log.warning(f"Could not get prediction probabilities: {e}")
+    
+    return result_df, probabilities_dict
+
+
+def calculate_feature_contributions(model: Any, input_df: pd.DataFrame, target_column: str = None) -> List[dict]:
+    """
+    Calculate feature contributions to the prediction using various methods.
+
+    Args:
+        model: Trained model/pipeline object
+        input_df: Input DataFrame
+        target_column: Name of target column to exclude
+
+    Returns:
+        List of feature contribution dictionaries
+    """
+    log = logging.getLogger(__name__)
+    contributions = []
+    
+    try:
+        # Generate prediction to get aligned features
+        result_df = generate_predictions(model, input_df, target_column)
+        aligned_input = result_df.drop(columns=['prediction'])
+        
+        # Method 1: Try to get feature importances from the model
+        feature_importance = None
+        if hasattr(model, 'feature_importances_'):
+            feature_importance = model.feature_importances_
+        elif hasattr(model, 'coef_'):
+            # For linear models
+            feature_importance = np.abs(model.coef_).flatten() if model.coef_.ndim > 1 else np.abs(model.coef_)
+        elif hasattr(model, 'named_steps'):
+            # For pipelines, try to get from final estimator
+            for step_name, step_model in reversed(list(model.named_steps.items())):
+                if hasattr(step_model, 'feature_importances_'):
+                    feature_importance = step_model.feature_importances_
+                    break
+                elif hasattr(step_model, 'coef_'):
+                    feature_importance = np.abs(step_model.coef_).flatten() if step_model.coef_.ndim > 1 else np.abs(step_model.coef_)
+                    break
+        
+        if feature_importance is not None and len(feature_importance) == len(aligned_input.columns):
+            # Create contributions based on feature importance * feature value
+            feature_values = aligned_input.iloc[0]
+            
+            for i, feature_name in enumerate(aligned_input.columns):
+                feature_value = feature_values[feature_name]
+                importance = float(feature_importance[i])
+                
+                # Calculate contribution (importance * normalized feature value)
+                contribution_value = importance * float(feature_value) if pd.notna(feature_value) else 0.0
+                
+                contributions.append({
+                    'feature_name': feature_name,
+                    'contribution_value': contribution_value,
+                    'feature_value': feature_value,
+                    'contribution_direction': 'positive' if contribution_value > 0 else ('negative' if contribution_value < 0 else 'neutral'),
+                    'importance_score': importance
+                })
+        else:
+            log.warning("Could not extract feature importances from model")
+            
+            # Fallback: Create basic contributions based on feature values
+            feature_values = aligned_input.iloc[0]
+            for feature_name in aligned_input.columns:
+                feature_value = feature_values[feature_name]
+                contributions.append({
+                    'feature_name': feature_name,
+                    'contribution_value': 0.0,
+                    'feature_value': feature_value,
+                    'contribution_direction': 'neutral',
+                    'importance_score': 0.0
+                })
+                
+    except Exception as e:
+        log.error(f"Failed to calculate feature contributions: {e}")
+    
+    # Sort by absolute contribution value
+    contributions.sort(key=lambda x: abs(x['contribution_value']), reverse=True)
+    return contributions
+
+
+def calculate_confidence_interval(model: Any, input_df: pd.DataFrame, target_column: str = None, confidence_level: float = 0.95) -> dict:
+    """
+    Calculate confidence interval for regression predictions.
+
+    Args:
+        model: Trained model/pipeline object
+        input_df: Input DataFrame
+        target_column: Name of target column to exclude
+        confidence_level: Confidence level (default 0.95)
+
+    Returns:
+        Dictionary with lower_bound, upper_bound, confidence_level
+    """
+    log = logging.getLogger(__name__)
+    
+    try:
+        # Generate standard prediction
+        result_df = generate_predictions(model, input_df, target_column)
+        prediction_value = result_df['prediction'].iloc[0]
+        
+        # Try to get prediction standard error
+        std_error = None
+        
+        # For linear models, try to estimate standard error
+        if hasattr(model, 'predict'):
+            # This is a simplified approach - in practice, you'd want to use
+            # the model's training data or cross-validation to estimate uncertainty
+            
+            # As a simple heuristic, we'll use a percentage of the prediction value
+            # In a real implementation, you'd use more sophisticated methods
+            uncertainty_factor = 0.1  # 10% uncertainty as default
+            std_error = abs(float(prediction_value)) * uncertainty_factor
+        
+        if std_error is not None:
+            # Calculate confidence interval using normal approximation
+            from scipy import stats
+            z_score = stats.norm.ppf((1 + confidence_level) / 2)
+            margin_of_error = z_score * std_error
+            
+            return {
+                'lower_bound': float(prediction_value - margin_of_error),
+                'upper_bound': float(prediction_value + margin_of_error),
+                'confidence_level': confidence_level,
+                'std_error': std_error
+            }
+        else:
+            log.warning("Could not calculate confidence interval - using prediction value ±10%")
+            margin = abs(float(prediction_value)) * 0.1
+            return {
+                'lower_bound': float(prediction_value - margin),
+                'upper_bound': float(prediction_value + margin),
+                'confidence_level': confidence_level,
+                'std_error': margin
+            }
+            
+    except Exception as e:
+        log.error(f"Failed to calculate confidence interval: {e}")
+        return {
+            'lower_bound': None,
+            'upper_bound': None,
+            'confidence_level': confidence_level,
+            'std_error': None
+        }
+
+
+def generate_enhanced_prediction(model: Any, input_df: pd.DataFrame, target_column: str = None, task_type: str = "unknown") -> dict:
+    """
+    Generate enhanced prediction with probabilities, contributions, and confidence intervals.
+
+    Args:
+        model: Trained model/pipeline object
+        input_df: Input DataFrame
+        target_column: Name of target column to exclude
+        task_type: Type of task ("classification" or "regression")
+
+    Returns:
+        Dictionary with enhanced prediction information
+    """
+    import uuid
+    from datetime import datetime
+    
+    # Generate predictions with probabilities
+    result_df, probabilities_dict = generate_predictions_with_probabilities(model, input_df, target_column)
+    prediction_value = result_df['prediction'].iloc[0]
+    
+    # Convert numpy types to Python types for JSON serialization
+    if hasattr(prediction_value, 'item'):
+        prediction_value = prediction_value.item()
+    
+    # Calculate feature contributions
+    contributions = calculate_feature_contributions(model, input_df, target_column)
+    
+    # Get top contributing features
+    top_features = [contrib['feature_name'] for contrib in contributions[:5]]
+    
+    # Prepare input and processed features
+    input_features = input_df.iloc[0].to_dict()
+    processed_features = result_df.drop(columns=['prediction']).iloc[0].to_dict()
+    
+    # Generate unique prediction ID
+    prediction_id = str(uuid.uuid4())[:8]
+    
+    enhanced_prediction = {
+        'prediction_value': prediction_value,
+        'prediction_id': prediction_id,
+        'feature_contributions': contributions,
+        'top_contributing_features': top_features,
+        'input_features': input_features,
+        'processed_features': processed_features,
+        'prediction_timestamp': datetime.now().isoformat(),
+        'task_type': task_type,
+        'target_column': target_column or "unknown"
+    }
+    
+    # Add probabilities for classification
+    if probabilities_dict and task_type.lower() == "classification":
+        enhanced_prediction['probabilities'] = probabilities_dict
+    
+    # Add confidence interval for regression
+    if task_type.lower() == "regression":
+        confidence_interval = calculate_confidence_interval(model, input_df, target_column)
+        enhanced_prediction['confidence_interval'] = confidence_interval
+    
+    return enhanced_prediction
+
+
+def generate_batch_predictions(model: Any, inputs_list: List[pd.DataFrame], target_column: str = None, task_type: str = "unknown") -> dict:
+    """
+    Generate batch predictions with summary statistics.
+
+    Args:
+        model: Trained model/pipeline object
+        inputs_list: List of input DataFrames
+        target_column: Name of target column to exclude
+        task_type: Type of task ("classification" or "regression")
+
+    Returns:
+        Dictionary with batch prediction results and summary
+    """
+    import time
+    from datetime import datetime
+    
+    start_time = time.time()
+    
+    predictions = []
+    all_prediction_values = []
+    
+    for i, input_df in enumerate(inputs_list):
+        try:
+            enhanced_pred = generate_enhanced_prediction(model, input_df, target_column, task_type)
+            
+            prediction_item = {
+                'input_index': i,
+                'prediction_value': enhanced_pred['prediction_value'],
+                'prediction_id': enhanced_pred['prediction_id']
+            }
+            
+            # Add probabilities if available
+            if 'probabilities' in enhanced_pred:
+                prediction_item['probabilities'] = enhanced_pred['probabilities']
+            
+            # Add confidence interval if available
+            if 'confidence_interval' in enhanced_pred:
+                prediction_item['confidence_interval'] = enhanced_pred['confidence_interval']
+            
+            predictions.append(prediction_item)
+            all_prediction_values.append(enhanced_pred['prediction_value'])
+            
+        except Exception as e:
+            log = logging.getLogger(__name__)
+            log.error(f"Failed to generate prediction for input {i}: {e}")
+            # Add failed prediction placeholder
+            predictions.append({
+                'input_index': i,
+                'prediction_value': None,
+                'prediction_id': f"failed_{i}",
+                'error': str(e)
+            })
+    
+    processing_time = time.time() - start_time
+    
+    # Generate summary
+    valid_predictions = [p for p in all_prediction_values if p is not None]
+    summary = {
+        'total_predictions': len(predictions),
+        'successful_predictions': len(valid_predictions),
+        'failed_predictions': len(predictions) - len(valid_predictions),
+        'processing_time_seconds': processing_time
+    }
+    
+    if task_type.lower() == "classification" and valid_predictions:
+        from collections import Counter
+        prediction_counts = Counter(valid_predictions)
+        summary['prediction_distribution'] = dict(prediction_counts)
+    elif task_type.lower() == "regression" and valid_predictions:
+        import numpy as np
+        summary['prediction_range'] = {
+            'min': float(np.min(valid_predictions)),
+            'max': float(np.max(valid_predictions)),
+            'mean': float(np.mean(valid_predictions)),
+            'std': float(np.std(valid_predictions)) if len(valid_predictions) > 1 else 0.0
+        }
+    
+    return {
+        'predictions': predictions,
+        'summary': summary,
+        'batch_timestamp': datetime.now().isoformat(),
+        'task_type': task_type,
+        'target_column': target_column or "unknown"
+    }
+
+
+def calculate_shap_values_for_prediction(model: Any, input_df: pd.DataFrame, target_column: str = None, task_type: str = "unknown") -> dict:
+    """
+    Calculate real SHAP values for a single prediction using the existing SHAP logic.
+
+    Args:
+        model: Trained model/pipeline object
+        input_df: Input DataFrame for prediction
+        target_column: Name of target column to exclude
+        task_type: Type of task ("classification" or "regression")
+
+    Returns:
+        Dictionary with SHAP values and feature contributions
+    """
+    log = logging.getLogger(__name__)
+    
+    try:
+        # Import SHAP logic
+        from pipeline.step_6_explain.shap_logic import _create_prediction_function
+        import shap
+        
+        # Generate prediction to get aligned features
+        result_df = generate_predictions(model, input_df, target_column)
+        aligned_input = result_df.drop(columns=['prediction'])
+        
+        # Create prediction function for SHAP
+        prediction_function = _create_prediction_function(model, task_type, log)
+        
+        # Create explainer with small background sample (just the input for single prediction)
+        background_sample = aligned_input.copy()
+        
+        # For single prediction, we can use TreeExplainer if available, otherwise Explainer
+        try:
+            # Try TreeExplainer first (faster for tree-based models)
+            explainer = shap.TreeExplainer(model)
+            log.info("Using TreeExplainer for SHAP values")
+        except:
+            try:
+                # Fall back to general Explainer
+                explainer = shap.Explainer(prediction_function, background_sample)
+                log.info("Using general Explainer for SHAP values")
+            except:
+                # Final fallback to KernelExplainer with minimal background
+                explainer = shap.KernelExplainer(prediction_function, background_sample.iloc[:1])
+                log.info("Using KernelExplainer for SHAP values")
+        
+        # Calculate SHAP values
+        shap_values = explainer(aligned_input)
+        
+        # Extract values based on task type and structure
+        feature_names = list(aligned_input.columns)
+        shap_dict = {}
+        
+        if hasattr(shap_values, 'values'):
+            values = shap_values.values
+            
+            # Handle different shapes
+            if len(values.shape) == 3:  # Multi-class classification
+                if task_type == "classification" and values.shape[2] == 2:
+                    # Binary classification - use positive class
+                    values = values[0, :, 1]
+                else:
+                    # Multi-class - use mean absolute values
+                    values = np.mean(np.abs(values), axis=2)[0]
+            elif len(values.shape) == 2:
+                # Standard case
+                values = values[0]
+            else:
+                # Single dimension
+                values = values
+            
+            # Create SHAP dictionary
+            for i, feature_name in enumerate(feature_names):
+                shap_dict[feature_name] = float(values[i])
+        
+        # Calculate feature contributions using SHAP values
+        contributions = []
+        feature_values = aligned_input.iloc[0]
+        
+        for feature_name, shap_value in shap_dict.items():
+            feature_value = feature_values[feature_name]
+            
+            contributions.append({
+                'feature_name': feature_name,
+                'contribution_value': float(shap_value),
+                'feature_value': feature_value,
+                'contribution_direction': 'positive' if shap_value > 0 else ('negative' if shap_value < 0 else 'neutral'),
+                'shap_value': float(shap_value)
+            })
+        
+        # Sort by absolute SHAP value
+        contributions.sort(key=lambda x: abs(x['shap_value']), reverse=True)
+        
+        return {
+            'shap_values': shap_dict,
+            'feature_contributions': contributions,
+            'base_value': float(shap_values.base_values[0]) if hasattr(shap_values, 'base_values') and shap_values.base_values is not None else 0.0
+        }
+        
+    except Exception as e:
+        log.warning(f"Failed to calculate SHAP values, falling back to model importance: {e}")
+        # Fall back to existing feature contribution method
+        contributions = calculate_feature_contributions(model, input_df, target_column)
+        
+        # Extract SHAP-like values from contributions
+        shap_dict = {contrib['feature_name']: contrib['contribution_value'] for contrib in contributions}
+        
+        return {
+            'shap_values': shap_dict,
+            'feature_contributions': contributions,
+            'base_value': 0.0,
+            'fallback_used': True
+        }
+
+
+def get_global_feature_importance_from_shap(model: Any, sample_data: pd.DataFrame, target_column: str = None, task_type: str = "unknown") -> dict:
+    """
+    Calculate global feature importance using SHAP on a sample of data.
+
+    Args:
+        model: Trained model/pipeline object
+        sample_data: Sample DataFrame for importance calculation
+        target_column: Name of target column to exclude
+        task_type: Type of task ("classification" or "regression")
+
+    Returns:
+        Dictionary with feature importance scores
+    """
+    log = logging.getLogger(__name__)
+    
+    try:
+        # Import SHAP logic
+        from pipeline.step_6_explain.shap_logic import _create_prediction_function
+        import shap
+        
+        # Prepare sample data (limit size for performance)
+        max_sample_size = 100
+        if len(sample_data) > max_sample_size:
+            sample_data = sample_data.sample(n=max_sample_size, random_state=42)
+        
+        # Remove target column if present
+        if target_column and target_column in sample_data.columns:
+            sample_data = sample_data.drop(columns=[target_column])
+        
+        # Create prediction function for SHAP
+        prediction_function = _create_prediction_function(model, task_type, log)
+        
+        # Create explainer
+        try:
+            explainer = shap.TreeExplainer(model)
+            log.info("Using TreeExplainer for global feature importance")
+        except:
+            try:
+                background_sample = sample_data.sample(n=min(50, len(sample_data)), random_state=42)
+                explainer = shap.Explainer(prediction_function, background_sample)
+                log.info("Using general Explainer for global feature importance")
+            except:
+                background_sample = sample_data.sample(n=min(10, len(sample_data)), random_state=42)
+                explainer = shap.KernelExplainer(prediction_function, background_sample)
+                log.info("Using KernelExplainer for global feature importance")
+        
+        # Calculate SHAP values for sample
+        shap_values = explainer(sample_data)
+        
+        # Calculate mean absolute SHAP values as feature importance
+        feature_names = list(sample_data.columns)
+        importance_dict = {}
+        
+        if hasattr(shap_values, 'values'):
+            values = shap_values.values
+            
+            # Handle different shapes
+            if len(values.shape) == 3:  # Multi-class classification
+                if task_type == "classification" and values.shape[2] == 2:
+                    # Binary classification - use positive class
+                    values = values[:, :, 1]
+                else:
+                    # Multi-class - use mean absolute values across classes
+                    values = np.mean(np.abs(values), axis=2)
+            
+            # Calculate mean absolute SHAP values
+            mean_abs_shap = np.mean(np.abs(values), axis=0)
+            
+            for i, feature_name in enumerate(feature_names):
+                importance_dict[feature_name] = float(mean_abs_shap[i])
+        
+        log.info(f"Calculated SHAP-based feature importance for {len(importance_dict)} features")
+        return importance_dict
+        
+    except Exception as e:
+        log.warning(f"Failed to calculate SHAP-based feature importance: {e}")
+        
+        # Fall back to model-based feature importance
+        try:
+            feature_importance = None
+            feature_names = list(sample_data.columns)
+            
+            if hasattr(model, 'feature_importances_'):
+                feature_importance = model.feature_importances_
+            elif hasattr(model, 'coef_'):
+                feature_importance = np.abs(model.coef_).flatten() if model.coef_.ndim > 1 else np.abs(model.coef_)
+            elif hasattr(model, 'named_steps'):
+                # For pipelines, try to get from final estimator
+                for step_name, step_model in reversed(list(model.named_steps.items())):
+                    if hasattr(step_model, 'feature_importances_'):
+                        feature_importance = step_model.feature_importances_
+                        break
+                    elif hasattr(step_model, 'coef_'):
+                        feature_importance = np.abs(step_model.coef_).flatten() if step_model.coef_.ndim > 1 else np.abs(step_model.coef_)
+                        break
+            
+            if feature_importance is not None and len(feature_importance) == len(feature_names):
+                importance_dict = {feature_names[i]: float(feature_importance[i]) for i in range(len(feature_names))}
+                log.info("Using model-based feature importance as fallback")
+                return importance_dict
+        except Exception as fallback_error:
+            log.warning(f"Fallback feature importance also failed: {fallback_error}")
+        
+        # Return empty dict if all methods fail
+        return {}
+
+
+def generate_enhanced_prediction_with_shap(model: Any, input_df: pd.DataFrame, target_column: str = None, task_type: str = "unknown") -> dict:
+    """
+    Generate enhanced prediction with real SHAP values and explanations.
+
+    Args:
+        model: Trained model/pipeline object
+        input_df: Input DataFrame
+        target_column: Name of target column to exclude
+        task_type: Type of task ("classification" or "regression")
+
+    Returns:
+        Dictionary with enhanced prediction information including real SHAP values
+    """
+    import uuid
+    from datetime import datetime
+    
+    # Start with the existing enhanced prediction
+    enhanced_pred = generate_enhanced_prediction(model, input_df, target_column, task_type)
+    
+    # Add real SHAP values and explanations
+    try:
+        shap_data = calculate_shap_values_for_prediction(model, input_df, target_column, task_type)
+        
+        # Update with real SHAP data
+        enhanced_pred['shap_values'] = shap_data['shap_values']
+        enhanced_pred['shap_base_value'] = shap_data['base_value']
+        enhanced_pred['feature_contributions'] = shap_data['feature_contributions']  # Override with SHAP-based contributions
+        
+        # Update top contributing features based on SHAP
+        enhanced_pred['top_contributing_features'] = [
+            contrib['feature_name'] for contrib in shap_data['feature_contributions'][:5]
+        ]
+        
+        # Add SHAP metadata
+        enhanced_pred['shap_available'] = True
+        enhanced_pred['shap_fallback_used'] = shap_data.get('fallback_used', False)
+        
+    except Exception as e:
+        log = logging.getLogger(__name__)
+        log.warning(f"Failed to add SHAP values to prediction: {e}")
+        # Keep the existing feature contributions from model importance
+        enhanced_pred['shap_available'] = False
+        enhanced_pred['shap_fallback_used'] = True
+    
+    return enhanced_pred

@@ -129,6 +129,26 @@ def run_pycaret_experiment_gcs(
             # Store original columns before pycaret setup
             original_columns = list(df_ml_ready.columns)
             log.info(f"Original columns before PyCaret setup: {len(original_columns)} columns")
+            
+            # CRITICAL FIX: Verify target column is present but NOT duplicated as a feature
+            if target_column_name not in df_ml_ready.columns:
+                log.error(f"Target column '{target_column_name}' not found in data for PyCaret setup")
+                return None, None, None
+            
+            # Check for any potential target leakage - look for columns that might be the target disguised
+            suspected_target_columns = []
+            for col in df_ml_ready.columns:
+                if col != target_column_name:
+                    # Check if this column has suspiciously similar values to target
+                    correlation = df_ml_ready[col].corr(df_ml_ready[target_column_name])
+                    if abs(correlation) > 0.99:  # Very high correlation suggests potential duplication
+                        suspected_target_columns.append((col, correlation))
+            
+            if suspected_target_columns:
+                log.warning(f"POTENTIAL TARGET LEAKAGE DETECTED: Columns with >99% correlation to target:")
+                for col, corr in suspected_target_columns:
+                    log.warning(f"  - {col}: correlation = {corr:.6f}")
+                log.warning("This could indicate target leakage!")
 
             pc_setup = setup(
                 data=df_ml_ready,

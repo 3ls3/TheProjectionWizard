@@ -583,6 +583,22 @@ def _infer_feature_category(column_name: str) -> str:
     return 'general'
 
 
+def categorize_features_by_type(feature_names: List[str]) -> Dict[str, str]:
+    """
+    Categorize features by their inferred type based on column names.
+    
+    Args:
+        feature_names: List of feature/column names
+        
+    Returns:
+        Dictionary mapping feature names to their categories
+    """
+    categories = {}
+    for feature_name in feature_names:
+        categories[feature_name] = _infer_feature_category(feature_name)
+    return categories
+
+
 def _create_display_name(option_value: str) -> str:
     """
     Create user-friendly display name for categorical options.
@@ -755,3 +771,137 @@ def generate_enhanced_prediction_schema(df: pd.DataFrame, target_column: str = N
             'enable_real_time_shap': bool(metadata and 'model' in metadata)
         }
     }
+
+
+def generate_feature_slider_config(col_data: pd.Series, column_name: str) -> dict:
+    """
+    Generate slider configuration for a feature column.
+    
+    Args:
+        col_data: Pandas Series with column data
+        column_name: Name of the column
+        
+    Returns:
+        Dictionary with feature configuration for UI
+    """
+    import numpy as np
+    
+    # Base configuration
+    config = {
+        'column_name': column_name,
+        'data_type': str(col_data.dtype),
+        'total_values': len(col_data),
+        'missing_values': int(col_data.isnull().sum()),
+        'unique_values': int(col_data.nunique())
+    }
+    
+    # Check if column is numeric
+    if col_data.dtype in ['int64', 'float64', 'int32', 'float32']:
+        # Numeric column - create slider config
+        clean_data = col_data.dropna()
+        
+        if len(clean_data) == 0:
+            # All values are NaN
+            config.update({
+                'input_type': 'numeric',
+                'min_value': 0.0,
+                'max_value': 1.0,
+                'default_value': 0.0,
+                'step_size': 0.1,
+                'suggested_value': 0.0,
+                'display_format': '.1f'
+            })
+        else:
+            min_val = float(clean_data.min())
+            max_val = float(clean_data.max())
+            mean_val = float(clean_data.mean())
+            std_val = float(clean_data.std()) if len(clean_data) > 1 else 0.0
+            median_val = float(clean_data.median())
+            
+            # Calculate appropriate step size
+            data_range = max_val - min_val
+            if data_range > 0:
+                # Aim for ~100 steps across the range
+                step_size = data_range / 100
+                
+                # Round to reasonable precision
+                if step_size < 1:
+                    decimal_places = max(0, -int(np.floor(np.log10(abs(step_size)))) + 1)
+                    step_size = round(step_size, decimal_places)
+                    display_format = f'.{decimal_places}f'
+                else:
+                    step_size = max(1, round(step_size))
+                    display_format = '.0f'
+            else:
+                step_size = 1.0
+                display_format = '.0f'
+            
+            # Use median as suggested value (more robust than mean)
+            suggested_value = median_val
+            
+            config.update({
+                'input_type': 'numeric',
+                'min_value': min_val,
+                'max_value': max_val,
+                'default_value': mean_val,
+                'step_size': step_size,
+                'suggested_value': suggested_value,
+                'display_format': display_format,
+                'statistics': {
+                    'mean': mean_val,
+                    'median': median_val,
+                    'std': std_val,
+                    'q25': float(clean_data.quantile(0.25)),
+                    'q75': float(clean_data.quantile(0.75))
+                }
+            })
+    
+    elif col_data.dtype == 'object' or col_data.dtype.name == 'category':
+        # Categorical column - create dropdown config
+        clean_data = col_data.dropna()
+        
+        if len(clean_data) == 0:
+            # All values are NaN
+            options = ['Unknown']
+            default_option = 'Unknown'
+        else:
+            # Get unique values and their counts
+            value_counts = clean_data.value_counts()
+            options = [str(val) for val in value_counts.index.tolist()]
+            
+            # Default to most common value
+            default_option = options[0] if options else 'Unknown'
+        
+        # Create display names
+        display_names = {opt: _create_display_name(opt) for opt in options}
+        
+        config.update({
+            'input_type': 'categorical',
+            'options': options,
+            'default_option': default_option,
+            'display_names': display_names,
+            'cardinality': len(options),
+            'option_frequencies': {str(val): int(count) for val, count in clean_data.value_counts().items()} if len(clean_data) > 0 else {}
+        })
+    
+    else:
+        # Other data types (datetime, boolean, etc.) - treat as categorical
+        clean_data = col_data.dropna()
+        
+        if len(clean_data) == 0:
+            options = ['Unknown']
+            default_option = 'Unknown'
+        else:
+            unique_vals = clean_data.unique()
+            options = [str(val) for val in unique_vals]
+            default_option = options[0] if options else 'Unknown'
+        
+        config.update({
+            'input_type': 'categorical',
+            'options': options,
+            'default_option': default_option,
+            'display_names': {opt: _create_display_name(opt) for opt in options},
+            'cardinality': len(options)
+        })
+    
+    return config

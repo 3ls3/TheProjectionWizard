@@ -1557,21 +1557,15 @@ async def get_enhanced_prediction_schema(run_id: str = Query(..., description="R
         if df_original is None or metadata is None:
             raise HTTPException(status_code=404, detail="Required files not found")
         
-        # Try to load the trained model for SHAP analysis
-        model_metadata = metadata.copy()
-        try:
-            model = load_pipeline_gcs(run_id, PROJECT_BUCKET_NAME)
-            if model is not None:
-                model_metadata['model'] = model
-                model_metadata['task_type'] = metadata.get('target_info', {}).get('task_type', 'unknown')
-                print(f"Loaded model for SHAP analysis, task type: {model_metadata['task_type']}")
-        except Exception as e:
-            print(f"Could not load model for SHAP analysis: {e}")
-        
         target_column = metadata.get('target_info', {}).get('name')
         
-        # Generate enhanced schema with SHAP-based importance
-        schema = generate_enhanced_prediction_schema(df_original, target_column, model_metadata)
+        # Use the GCS-based enhanced schema function that returns the correct format
+        from pipeline.step_7_predict.column_mapper import get_enhanced_prediction_schema_gcs
+        
+        schema = get_enhanced_prediction_schema_gcs(run_id, df_original, target_column, PROJECT_BUCKET_NAME)
+        
+        # Ensure api_version is set
+        schema['api_version'] = 'v1'
         
         return schema
         
@@ -1616,11 +1610,11 @@ async def predict_single_enhanced(
         raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
 
 
-@router.get("/predict/explain/{prediction_id}", response_model=ShapExplanationResponse)
+@router.post("/predict/explain/{prediction_id}", response_model=ShapExplanationResponse)
 async def get_prediction_explanation(
     prediction_id: str,
     run_id: str = Query(..., description="Run ID"),
-    input_data: Optional[Dict[str, Any]] = Body(None, description="Input data for explanation")
+    input_data: Dict[str, Any] = Body(..., description="Input data for explanation")
 ):
     """
     Get detailed SHAP explanation for a specific prediction.
@@ -1638,10 +1632,6 @@ async def get_prediction_explanation(
         
         if model is None or metadata is None:
             raise HTTPException(status_code=404, detail="Model or metadata not found")
-        
-        # For this endpoint, we need input_data to generate explanation
-        if input_data is None:
-            raise HTTPException(status_code=400, detail="Input data required for explanation generation")
         
         # Convert input to DataFrame
         input_df = pd.DataFrame([input_data])

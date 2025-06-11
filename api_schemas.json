@@ -1,0 +1,559 @@
+{
+  "info": {
+    "title": "The Projection Wizard API",
+    "description": "REST API for ML pipeline functionality",
+    "version": "1.0.0",
+    "base_url": "https://d32b-62-96-151-154.ngrok-free.app"
+  },
+  "endpoints": {
+    "/": {
+      "method": "GET",
+      "summary": "Root endpoint providing API information",
+      "response": {
+        "message": "The Projection Wizard API",
+        "version": "1.0.0",
+        "docs": "/docs",
+        "redoc": "/redoc"
+      }
+    },
+    "/health": {
+      "method": "GET",
+      "summary": "Health check endpoint",
+      "response": {
+        "status": "healthy"
+      }
+    },
+    "/api/upload": {
+      "method": "POST",
+      "summary": "Upload CSV file and initialize ML pipeline run",
+      "content_type": "multipart/form-data",
+      "request": {
+        "file": "binary"
+      },
+      "response": {
+        "api_version": "v1",
+        "run_id": "string",
+        "shape": [
+          "integer (rows)",
+          "integer (columns)"
+        ],
+        "preview": [
+          ["column headers as strings"],
+          ["first row data as strings"],
+          ["...up to 5 rows"]
+        ]
+      }
+    },
+    "/api/target-suggestion": {
+      "method": "GET",
+      "summary": "Get target column and task type suggestions",
+      "parameters": {
+        "run_id": "string (required)"
+      },
+      "response": {
+        "api_version": "v1",
+        "columns": {
+          "column_name": {
+            "unique_values": "integer",
+            "missing_values": "integer", 
+            "missing_percentage": "float",
+            "data_type": "string",
+            "sample_values": ["string array"]
+          }
+        },
+        "suggested_column": "string",
+        "suggested_task_type": "classification | regression",
+        "suggested_ml_type": "string",
+        "confidence": "float | null",
+        "available_task_types": ["classification", "regression"],
+        "available_ml_types": {
+          "task_type": [
+            {
+              "value": "string",
+              "description": "string"
+            }
+          ]
+        },
+        "data_preview": [["sample data rows"]]
+      }
+    },
+    "/api/confirm-target": {
+      "method": "POST",
+      "summary": "Confirm target column and task type",
+      "request": {
+        "run_id": "string",
+        "confirmed_column": "string",
+        "task_type": "classification | regression", 
+        "ml_type": "string"
+      },
+      "response": {
+        "api_version": "v1",
+        "status": "success",
+        "message": "Target configuration saved successfully",
+        "target_info": {}
+      }
+    },
+    "/api/feature-suggestion": {
+      "method": "GET",
+      "summary": "Get feature schema suggestions",
+      "parameters": {
+        "run_id": "string (required)",
+        "top_n": "integer (optional, default: 5)"
+      },
+      "response": {
+        "api_version": "v1",
+        "feature_schemas": {
+          "feature_name": {
+            "initial_dtype": "string",
+            "suggested_encoding_role": "string",
+            "statistics": {
+              "unique_values": "integer",
+              "missing_values": "integer",
+              "missing_percentage": "float",
+              "data_type": "string",
+              "sample_values": ["string array"]
+            },
+            "is_key_feature": "boolean"
+          }
+        },
+        "key_features": ["ordered by importance"],
+        "available_dtypes": {
+          "dtype": "description"
+        },
+        "available_encoding_roles": {
+          "role": "description"
+        },
+        "target_info": {},
+        "data_preview": [["sample data rows"]]
+      }
+    },
+    "/api/confirm-features": {
+      "method": "POST",
+      "summary": "Confirm feature schemas and start pipeline",
+      "request": {
+        "run_id": "string",
+        "confirmed_schemas": {
+          "feature_name": {
+            "final_dtype": "string",
+            "final_encoding_role": "string"
+          }
+        },
+        "total_features_reviewed": "integer | null",
+        "key_features_modified": ["string array | null"]
+      },
+      "response": {
+        "api_version": "v1",
+        "status": "pipeline_started",
+        "message": "Feature schemas confirmed and pipeline started",
+        "summary": {}
+      }
+    },
+    "/api/status": {
+      "method": "GET",
+      "summary": "Get pipeline status",
+      "parameters": {
+        "run_id": "string (required)"
+      },
+      "response": {
+        "api_version": "v1",
+        "stage": "string (e.g., 'prep', 'automl', 'completed')",
+        "status": "pending | running | processing | completed | failed",
+        "message": "string | null",
+        "progress_pct": "integer | null (0-100)"
+      }
+    },
+    "/api/results": {
+      "method": "GET",
+      "summary": "Get final pipeline results",
+      "parameters": {
+        "run_id": "string (required)"
+      },
+      "response": {
+        "api_version": "v1",
+        "model_metrics": {
+          "metric_name": "float"
+        },
+        "top_features": ["string array"],
+        "explainability": {
+          "key": "string"
+        },
+        "download_url": "string | null",
+        "run_summary": {
+          "run_id": "string",
+          "timestamp": "string | null",
+          "original_filename": "string | null",
+          "initial_shape": [
+            "integer (rows)",
+            "integer (columns)"
+          ],
+          "target_info": {}
+        },
+        "pipeline_status": {
+          "stage": "string",
+          "status": "pending | running | processing | completed | failed",
+          "message": "string | null",
+          "errors": ["string array | null"]
+        },
+        "validation_summary": {
+          "overall_success": "boolean",
+          "total_expectations": "integer",
+          "successful_expectations": "integer",
+          "failed_expectations": "integer"
+        },
+        "data_prep_summary": {
+          "final_shape": [
+            "integer (rows)",
+            "integer (columns)"
+          ],
+          "cleaning_steps": ["string array"],
+          "profiling_report_available": "boolean",
+          "profiling_report_filename": "string | null"
+        },
+        "automl_summary": {
+          "tool_used": "string | null",
+          "best_model_name": "string | null",
+          "target_column": "string | null",
+          "task_type": "string | null",
+          "performance_metrics": {
+            "metric_name": "float"
+          },
+          "model_file_available": "boolean"
+        },
+        "explainability_summary": {
+          "tool_used": "string | null",
+          "features_explained": "integer | null",
+          "samples_used": "integer | null",
+          "shap_plot_available": "boolean",
+          "shap_plot_filename": "string | null"
+        },
+        "available_downloads": {
+          "original_data": "boolean",
+          "cleaned_data": "boolean",
+          "metadata_json": "boolean",
+          "validation_report": "boolean",
+          "profile_report": "boolean",
+          "model_artifacts": "boolean",
+          "shap_plot": "boolean",
+          "pipeline_log": "boolean",
+          "file_sizes": {
+            "filename": "float (KB)"
+          }
+        },
+        "prediction_readiness": {
+          "prediction_ready": "boolean",
+          "model_file_available": "boolean",
+          "column_mapping_available": "boolean",
+          "original_data_available": "boolean",
+          "metadata_available": "boolean"
+        }
+      }
+    },
+    "/api/prediction-schema": {
+      "method": "GET",
+      "summary": "Get prediction input schema (basic)",
+      "parameters": {
+        "run_id": "string (required)"
+      },
+      "response": {
+        "api_version": "v1",
+        "numeric_columns": {
+          "column_name": {
+            "min": "float",
+            "max": "float",
+            "mean": "float",
+            "std": "float"
+          }
+        },
+        "categorical_columns": {
+          "column_name": {
+            "options": ["string array"],
+            "default": "string"
+          }
+        },
+        "target_info": {}
+      }
+    },
+    "/api/prediction-schema-enhanced": {
+      "method": "GET",
+      "summary": "Get enhanced prediction schema with UI metadata",
+      "parameters": {
+        "run_id": "string (required)"
+      },
+      "response": {
+        "api_version": "v1",
+        "numeric_columns": {
+          "column_name": {
+            "min_value": "float",
+            "max_value": "float",
+            "default_value": "float",
+            "step_size": "float",
+            "suggested_value": "float | null",
+            "display_format": "string (.3f)"
+          }
+        },
+        "categorical_columns": {
+          "column_name": {
+            "options": ["string array"],
+            "default_option": "string",
+            "display_names": {
+              "option": "friendly_name"
+            },
+            "descriptions": {
+              "option": "description"
+            }
+          }
+        },
+        "feature_metadata": {
+          "feature_name": {
+            "importance_rank": "integer | null",
+            "importance_score": "float | null",
+            "correlation_with_target": "float | null",
+            "description": "string | null",
+            "unit": "string | null",
+            "category": "string | null"
+          }
+        },
+        "target_info": {},
+        "model_info": {},
+        "validation_rules": {}
+      }
+    },
+    "/api/predict": {
+      "method": "POST",
+      "summary": "Make prediction (basic)",
+      "request": {
+        "run_id": "string",
+        "input_values": {
+          "column_name": "value"
+        }
+      },
+      "response": {
+        "api_version": "v1",
+        "prediction_value": "any",
+        "confidence": "float | null (0-1)",
+        "input_features": {},
+        "task_type": "string",
+        "target_column": "string",
+        "model_name": "string | null"
+      }
+    },
+    "/api/predict/single": {
+      "method": "POST",
+      "summary": "Enhanced single prediction with SHAP",
+      "parameters": {
+        "run_id": "string (required)"
+      },
+      "request": {
+        "column_name": "value"
+      },
+      "response": {
+        "api_version": "v1",
+        "prediction_value": "any",
+        "probabilities": {
+          "class_probabilities": {
+            "class_name": "float"
+          },
+          "predicted_class": "string",
+          "confidence": "float"
+        },
+        "confidence_interval": {
+          "lower_bound": "float",
+          "upper_bound": "float",
+          "confidence_level": "float (0.95)"
+        },
+        "feature_contributions": [
+          {
+            "feature_name": "string",
+            "contribution_value": "float",
+            "feature_value": "float | int | string",
+            "contribution_direction": "positive | negative | neutral",
+            "shap_value": "float | null"
+          }
+        ],
+        "top_contributing_features": ["string array"],
+        "input_features": {},
+        "processed_features": {},
+        "task_type": "string",
+        "target_column": "string",
+        "model_name": "string | null",
+        "prediction_timestamp": "string",
+        "prediction_id": "string"
+      }
+    },
+    "/api/predict/explain/{prediction_id}": {
+      "method": "POST",
+      "summary": "Get SHAP explanation for prediction",
+      "parameters": {
+        "prediction_id": "string (required)",
+        "run_id": "string (required)"
+      },
+      "request": {
+        "input_data": "object (required)"
+      },
+      "response": {
+        "prediction_id": "string",
+        "shap_values": {
+          "feature_name": "float"
+        },
+        "shap_base_value": "float",
+        "feature_contributions": [
+          {
+            "feature_name": "string",
+            "contribution_value": "float",
+            "feature_value": "float | int | string",
+            "contribution_direction": "positive | negative | neutral",
+            "shap_value": "float | null"
+          }
+        ],
+        "top_contributing_features": ["string array"],
+        "explanation_summary": "string",
+        "shap_available": "boolean",
+        "fallback_used": "boolean",
+        "explanation_timestamp": "string"
+      }
+    },
+    "/api/predict/batch": {
+      "method": "POST",
+      "summary": "Batch predictions with summary",
+      "request": {
+        "run_id": "string",
+        "inputs": [
+          {
+            "column_name": "value"
+          }
+        ],
+        "include_explanations": "boolean (default: false)",
+        "include_confidence": "boolean (default: true)"
+      },
+      "response": {
+        "api_version": "v1",
+        "predictions": [
+          {
+            "input_index": "integer",
+            "prediction_value": "any",
+            "probabilities": {
+              "class_probabilities": {
+                "class_name": "float"
+              },
+              "predicted_class": "string",
+              "confidence": "float"
+            },
+            "confidence_interval": {
+              "lower_bound": "float",
+              "upper_bound": "float",
+              "confidence_level": "float"
+            },
+            "prediction_id": "string"
+          }
+        ],
+        "summary": {
+          "total_predictions": "integer",
+          "prediction_distribution": {
+            "class_name": "integer (count)"
+          },
+          "prediction_range": {
+            "min": "float",
+            "max": "float",
+            "mean": "float",
+            "std": "float"
+          },
+          "processing_time_seconds": "float"
+        },
+        "task_type": "string",
+        "target_column": "string",
+        "model_name": "string | null",
+        "batch_timestamp": "string"
+      }
+    },
+    "/api/predict/compare": {
+      "method": "POST",
+      "summary": "Compare prediction scenarios",
+      "request": {
+        "run_id": "string",
+        "scenarios": [
+          {
+            "scenario_name": "string",
+            "input_values": {
+              "column_name": "value"
+            },
+            "prediction_value": "any",
+            "probabilities": {
+              "class_probabilities": {
+                "class_name": "float"
+              },
+              "predicted_class": "string",
+              "confidence": "float"
+            },
+            "key_differences": ["string array"]
+          }
+        ]
+      },
+      "response": {
+        "api_version": "v1",
+        "scenarios": [
+          {
+            "scenario_name": "string",
+            "input_values": {
+              "column_name": "value"
+            },
+            "prediction_value": "any",
+            "probabilities": {
+              "class_probabilities": {
+                "class_name": "float"
+              },
+              "predicted_class": "string",
+              "confidence": "float"
+            },
+            "key_differences": ["string array"]
+          }
+        ],
+        "comparison_analysis": {
+          "most_influential_features": ["string array"],
+          "prediction_sensitivity": {
+            "feature_name": "float"
+          },
+          "scenario_rankings": ["string array | null"]
+        },
+        "task_type": "string",
+        "target_column": "string",
+        "model_name": "string | null",
+        "comparison_timestamp": "string"
+      }
+    },
+    "/api/download/{run_id}/{filename}": {
+      "method": "GET",
+      "summary": "Download result files from GCS",
+      "parameters": {
+        "run_id": "string (required)",
+        "filename": "string (required)"
+      },
+      "response": "File download (binary)"
+    }
+  },
+  "common_types": {
+    "task_types": ["classification", "regression"],
+    "pipeline_statuses": ["pending", "running", "processing", "completed", "failed"],
+    "contribution_directions": ["positive", "negative", "neutral"],
+    "available_files": [
+      "original_data.csv",
+      "cleaned_data.csv", 
+      "metadata.json",
+      "validation_report.html",
+      "profile_report.html",
+      "pycaret_pipeline.pkl",
+      "shap_plot.png",
+      "pipeline.log"
+    ]
+  },
+  "usage_flow": {
+    "1": "POST /api/upload - Upload CSV file",
+    "2": "GET /api/target-suggestion - Get AI suggestions for target",
+    "3": "POST /api/confirm-target - Confirm target column",
+    "4": "GET /api/feature-suggestion - Get feature suggestions",
+    "5": "POST /api/confirm-features - Confirm features, starts pipeline",
+    "6": "GET /api/status - Poll for pipeline completion",
+    "7": "GET /api/results - Get final results when completed",
+    "8": "GET /api/prediction-schema-enhanced - Get prediction form schema",
+    "9": "POST /api/predict/single - Make predictions with explanations"
+  }
+} 

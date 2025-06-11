@@ -534,84 +534,124 @@ class Step4DataPrepTest:
             return False
             
     def _validate_column_mapping(self, test_run_id: str, task_type: str, result: TestResult, test_logger) -> bool:
-        """Validate that column mapping exists and has correct structure."""
+        """Validate that column mapping information exists (Step 5 creates column_mapping.json, not Step 4)."""
         try:
-            # Download column mapping
-            mapping_bytes = download_run_file(test_run_id, "column_mapping.json")
-            if not mapping_bytes:
-                test_logger.error("❌ Column mapping file not found")
-                result.add_info("column_mapping_exists", False)
+            # Step 4 doesn't create column_mapping.json - that's created in Step 5 AutoML training
+            # Step 4 creates individual encoder/scaler files that provide the mapping info
+            
+            # Check for individual encoder/scaler files that Step 4 actually creates
+            test_logger.info("🔍 Checking for Step 4 encoder/scaler artifacts...")
+            
+            # Download metadata to see what encoders were created
+            metadata_bytes = download_run_file(test_run_id, constants.METADATA_FILENAME)
+            if not metadata_bytes:
+                test_logger.error("❌ Metadata file not found")
                 return False
                 
-            # Parse column mapping
-            column_mapping = json.loads(mapping_bytes.decode('utf-8'))
+            metadata = json.loads(metadata_bytes.decode('utf-8'))
             
-            # Validate mapping structure
-            required_keys = ['original_columns', 'encoded_columns', 'categorical_mappings']
-            for key in required_keys:
-                if key not in column_mapping:
-                    test_logger.error(f"❌ Missing key in column mapping: {key}")
-                    result.add_info(f"column_mapping_missing_{key}", True)
+            # Check for encoders_scalers_info in metadata (what Step 4 actually creates)
+            # Step 4 stores this under prep_info, not at root level
+            prep_info = metadata.get('prep_info', {})
+            if 'encoders_scalers_info' in prep_info:
+                encoders_info = prep_info['encoders_scalers_info']
+                test_logger.info(f"✅ Found encoders_scalers_info with {len(encoders_info)} items")
+                
+                # Validate encoder files exist in GCS
+                encoder_files_found = 0
+                for encoder_name, encoder_details in encoders_info.items():
+                    if 'gcs_path' in encoder_details:
+                        gcs_path = encoder_details['gcs_path']
+                        encoder_bytes = download_run_file(test_run_id, gcs_path)
+                        if encoder_bytes:
+                            encoder_files_found += 1
+                            test_logger.info(f"✅ Found encoder file: {gcs_path}")
+                        else:
+                            test_logger.warning(f"⚠️ Encoder file missing: {gcs_path}")
+                
+                result.add_info("encoders_found_count", encoder_files_found)
+                result.add_info("encoders_expected_count", len(encoders_info))
+                
+                if encoder_files_found > 0:
+                    test_logger.info(f"✅ Step 4 encoder validation passed: {encoder_files_found}/{len(encoders_info)} files found")
+                    result.add_info("step4_encoder_validation", "passed")
+                    return True
+                else:
+                    test_logger.error("❌ No encoder files found in GCS")
+                    result.add_info("step4_encoder_validation", "no_files")
                     return False
-                    
-            original_count = len(column_mapping.get('original_columns', []))
-            encoded_count = len(column_mapping.get('encoded_columns', []))
-            
-            test_logger.info(f"📊 Column mapping - Original: {original_count}, Encoded: {encoded_count}")
-            test_logger.info(f"📊 Categorical mappings: {len(column_mapping.get('categorical_mappings', {}))}")
-            
-            result.add_info("column_mapping_original_count", original_count)
-            result.add_info("column_mapping_encoded_count", encoded_count)
-            result.add_info("categorical_mappings_count", len(column_mapping.get('categorical_mappings', {})))
-            
-            test_logger.info("✅ Column mapping validation passed")
-            result.add_info("column_mapping_validation", "passed")
-            return True
-            
+            else:
+                test_logger.error("❌ No encoders_scalers_info found in metadata")
+                result.add_info("step4_encoder_validation", "no_metadata")
+                return False
+                
         except Exception as e:
-            test_logger.error(f"❌ Column mapping validation failed: {str(e)}")
-            result.add_info("column_mapping_validation_error", str(e))
+            test_logger.error(f"❌ Step 4 encoder validation failed: {str(e)}")
+            result.add_info("step4_encoder_validation_error", str(e))
             return False
             
     def _validate_scalers(self, test_run_id: str, result: TestResult, test_logger) -> bool:
-        """Validate that StandardScaler files exist."""
+        """Validate that individual feature scalers exist (Step 4 creates feature-specific scalers)."""
         try:
-            # Check for scaler directory files - StandardScaler should be created for numeric features
-            # The exact scaler files depend on the implementation, but we should find evidence of scaling
+            # Step 4 creates individual scaler files for each numeric feature: {feature}_scaler.joblib
+            # These are stored in models/ directory in GCS
             
-            # Try to download some common scaler file patterns
-            scaler_patterns = [
-                "scalers/StandardScaler.pkl",
-                "scaler.pkl", 
-                "standard_scaler.pkl"
-            ]
+            test_logger.info("🔍 Checking for individual feature scaler files...")
             
-            scaler_found = False
-            for pattern in scaler_patterns:
-                scaler_bytes = download_run_file(test_run_id, pattern)
-                if scaler_bytes:
-                    test_logger.info(f"✅ Found scaler file: {pattern}")
-                    result.add_info(f"scaler_found_{pattern.replace('/', '_').replace('.', '_')}", True)
-                    scaler_found = True
-                    
-                    # Try to validate it's a valid pickle file
-                    try:
-                        scaler_obj = pickle.loads(scaler_bytes)
-                        test_logger.info(f"✅ Scaler is valid pickle object: {type(scaler_obj)}")
-                        result.add_info("scaler_valid_pickle", True)
-                    except Exception as e:
-                        test_logger.warning(f"⚠️ Scaler file found but not valid pickle: {str(e)}")
-                        result.add_info("scaler_pickle_error", str(e))
-                        
-            if scaler_found:
-                test_logger.info("✅ Scaler validation passed")
+            # Download metadata to see what scalers were created
+            metadata_bytes = download_run_file(test_run_id, constants.METADATA_FILENAME)
+            if not metadata_bytes:
+                test_logger.error("❌ Metadata file not found")
+                return False
+                
+            metadata = json.loads(metadata_bytes.decode('utf-8'))
+            
+            # Check for scaler entries in encoders_scalers_info  
+            # Step 4 stores this under prep_info, not at root level
+            prep_info = metadata.get('prep_info', {})
+            if 'encoders_scalers_info' not in prep_info:
+                test_logger.error("❌ No encoders_scalers_info in prep_info")
+                return False
+                
+            encoders_info = prep_info['encoders_scalers_info']
+            scaler_count = 0
+            scaler_files_found = 0
+            
+            for encoder_name, encoder_details in encoders_info.items():
+                if encoder_details.get('type') == 'StandardScaler':
+                    scaler_count += 1
+                    gcs_path = encoder_details.get('gcs_path')
+                    if gcs_path:
+                        scaler_bytes = download_run_file(test_run_id, gcs_path)
+                        if scaler_bytes:
+                            scaler_files_found += 1
+                            test_logger.info(f"✅ Found scaler file: {gcs_path}")
+                            
+                            # Validate it's a proper joblib file
+                            try:
+                                import joblib
+                                import tempfile
+                                with tempfile.NamedTemporaryFile() as tmp_file:
+                                    tmp_file.write(scaler_bytes)
+                                    tmp_file.flush()
+                                    scaler_obj = joblib.load(tmp_file.name)
+                                test_logger.info(f"✅ Scaler is valid: {type(scaler_obj).__name__}")
+                            except Exception as e:
+                                test_logger.warning(f"⚠️ Scaler file exists but validation failed: {str(e)}")
+                        else:
+                            test_logger.warning(f"⚠️ Scaler file missing: {gcs_path}")
+            
+            result.add_info("scalers_found_count", scaler_files_found)
+            result.add_info("scalers_expected_count", scaler_count)
+            
+            if scaler_files_found > 0:
+                test_logger.info(f"✅ Individual scaler validation passed: {scaler_files_found}/{scaler_count} files found")
                 result.add_info("scaler_validation", "passed")
                 return True
             else:
-                # This might not be a critical failure - some implementations might not use separate scaler files
-                test_logger.warning("⚠️ No separate scaler files found (might be embedded in model)")
-                result.add_info("scaler_validation", "no_separate_files")
-                return True  # Don't fail the test for this
+                test_logger.warning("⚠️ No individual scaler files found")
+                result.add_info("scaler_validation", "no_files")
+                return True  # Don't fail completely - some datasets might not have numeric features
                 
         except Exception as e:
             test_logger.error(f"❌ Scaler validation failed: {str(e)}")
@@ -619,7 +659,7 @@ class Step4DataPrepTest:
             return False
             
     def _validate_prep_metadata(self, test_run_id: str, result: TestResult, test_logger) -> bool:
-        """Validate that metadata was updated with preparation information."""
+        """Validate that metadata contains Step 4 preparation information."""
         try:
             # Download updated metadata
             metadata_bytes = download_run_file(test_run_id, constants.METADATA_FILENAME)
@@ -629,31 +669,38 @@ class Step4DataPrepTest:
                 
             metadata = json.loads(metadata_bytes.decode('utf-8'))
             
-            # Check for preparation-related fields
-            prep_indicators = [
-                'preparation_completed_at',
-                'prep_completed_at',
-                'encoding_completed_at'
+            # Check for Step 4 specific metadata fields (what it actually creates)
+            # These are stored under prep_info, not at root level
+            step4_indicators = [
+                'cleaning_steps_performed',
+                'encoders_scalers_info', 
+                'cleaned_data_filename',
+                'final_shape_after_prep',
+                'storage_type'
             ]
             
-            prep_info_found = False
-            for indicator in prep_indicators:
-                if indicator in metadata:
-                    test_logger.info(f"✅ Found preparation indicator: {indicator}")
-                    result.add_info(f"prep_indicator_{indicator}", True)
-                    prep_info_found = True
+            prep_info = metadata.get('prep_info', {})
+            found_indicators = []
+            for indicator in step4_indicators:
+                if indicator in prep_info:
+                    found_indicators.append(indicator)
+                    test_logger.info(f"✅ Found Step 4 metadata field: {indicator}")
                     
-            if prep_info_found:
-                test_logger.info("✅ Preparation metadata validation passed")
+            result.add_info("step4_metadata_fields_found", len(found_indicators))
+            result.add_info("step4_metadata_fields_expected", len(step4_indicators))
+            result.add_info("step4_metadata_fields", found_indicators)
+            
+            if len(found_indicators) >= 3:  # At least 3 out of 5 core fields
+                test_logger.info(f"✅ Step 4 metadata validation passed: {len(found_indicators)}/{len(step4_indicators)} fields found")
                 result.add_info("prep_metadata_validation", "passed")
                 return True
             else:
-                test_logger.warning("⚠️ No clear preparation indicators in metadata")
-                result.add_info("prep_metadata_validation", "no_indicators")
-                return True  # Don't fail for this - step might complete without explicit metadata updates
+                test_logger.warning(f"⚠️ Limited Step 4 metadata found: {len(found_indicators)}/{len(step4_indicators)} fields")
+                result.add_info("prep_metadata_validation", "limited_fields")
+                return True  # Don't fail for this - core functionality more important
                 
         except Exception as e:
-            test_logger.error(f"❌ Preparation metadata validation failed: {str(e)}")
+            test_logger.error(f"❌ Step 4 metadata validation failed: {str(e)}")
             result.add_info("prep_metadata_validation_error", str(e))
             return False
             

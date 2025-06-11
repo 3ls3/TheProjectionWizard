@@ -344,7 +344,9 @@
         "run_id": "string (required)"
       },
       "request": {
-        "column_name": "value"
+        "input_data": {
+          "column_name": "value"
+        }
       },
       "response": {
         "api_version": "v1",
@@ -388,7 +390,9 @@
         "run_id": "string (required)"
       },
       "request": {
-        "input_data": "object (required)"
+        "input_data": {
+          "column_name": "value"
+        }
       },
       "response": {
         "prediction_id": "string",
@@ -475,16 +479,7 @@
             "scenario_name": "string",
             "input_values": {
               "column_name": "value"
-            },
-            "prediction_value": "any",
-            "probabilities": {
-              "class_probabilities": {
-                "class_name": "float"
-              },
-              "predicted_class": "string",
-              "confidence": "float"
-            },
-            "key_differences": ["string array"]
+            }
           }
         ]
       },
@@ -510,7 +505,9 @@
         "comparison_analysis": {
           "most_influential_features": ["string array"],
           "prediction_sensitivity": {
-            "feature_name": "float"
+            "prediction_std": "float",
+            "prediction_range": "float",
+            "coefficient_of_variation": "float"
           },
           "scenario_rankings": ["string array | null"]
         },

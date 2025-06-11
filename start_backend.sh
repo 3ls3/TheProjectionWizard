@@ -16,7 +16,7 @@ echo ""
 # LOCAL DEVELOPMENT LOGGING CONFIGURATION
 # ================================================================================
 # Uncomment the line below to enable local file logging for pipeline debugging:
-# export LOCAL_DEV_LOGGING=true
+# 
 #
 # When LOCAL_DEV_LOGGING=true:
 # - Pipeline logs are written to data/runs/{run_id}/logs/ directory  

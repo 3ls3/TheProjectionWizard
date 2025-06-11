@@ -1613,11 +1613,8 @@ async def predict_single_enhanced(
         if encoded_df is None or encoding_issues:
             raise HTTPException(status_code=400, detail=f"Input encoding failed: {encoding_issues}")
         
-        # CRITICAL BUG FIX: Generate enhanced prediction with preserved original input
-        from pipeline.step_7_predict.predict_logic import generate_enhanced_prediction_with_shap_fixed
-        result = generate_enhanced_prediction_with_shap_fixed(
-            model, encoded_df, target_column, task_type, original_input=input_data
-        )
+        # Generate enhanced prediction with real SHAP values using properly encoded input
+        result = generate_enhanced_prediction_with_shap(model, encoded_df, target_column, task_type)
         
         return result
         

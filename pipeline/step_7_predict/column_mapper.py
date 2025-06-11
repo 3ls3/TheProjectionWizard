@@ -13,6 +13,8 @@ from pathlib import Path
 import logging
 import json
 import numpy as np
+import joblib
+import tempfile
 
 from common import storage
 from api.utils.gcs_utils import download_run_file, check_run_file_exists, PROJECT_BUCKET_NAME
@@ -205,10 +207,11 @@ def encode_user_input_gcs(user_input: Dict[str, Any],
 
     This function:
     1. Loads the column mapping saved during training from GCS
-    2. Converts categorical inputs to one-hot encoded format
-    3. Adds missing columns with default values
-    4. Validates that no target column is present
-    5. Returns a properly formatted DataFrame ready for model prediction
+    2. Loads and applies saved StandardScalers to numeric features  
+    3. Converts categorical inputs to one-hot encoded format
+    4. Adds missing columns with default values
+    5. Validates that no target column is present
+    6. Returns a properly formatted DataFrame ready for model prediction
 
     Args:
         user_input: Dictionary of user inputs (in original column format)
@@ -248,18 +251,40 @@ def encode_user_input_gcs(user_input: Dict[str, Any],
 
         log.info(f"Encoding user input for {filtered_count} expected model features (excluding target)")
 
-        # Step 2: Handle numeric columns (direct pass-through)
+        # Step 2: Handle numeric columns with proper scaling
         encoded_input = {}
         for col in df_original.columns:
             if col == target_column:
                 continue  # Skip target column entirely
 
             if col in user_input and col in encoded_columns:
-                # Direct numeric column - pass through as-is
                 col_data = df_original[col].dropna()
                 if pd.api.types.is_numeric_dtype(col_data):
-                    encoded_input[col] = user_input[col]
-                    log.debug(f"Direct numeric column: {col} = {user_input[col]}")
+                    # Load the saved StandardScaler for this column
+                    scaler_filename = f"models/{col}_scaler.joblib"
+                    try:
+                        # Download scaler from GCS
+                        scaler_bytes = download_run_file(run_id, scaler_filename)
+                        if scaler_bytes is not None:
+                            # Load scaler from bytes
+                            with tempfile.NamedTemporaryFile() as tmp_file:
+                                tmp_file.write(scaler_bytes)
+                                tmp_file.flush()
+                                scaler = joblib.load(tmp_file.name)
+                            
+                            # Apply the scaler to the user input
+                            raw_value = user_input[col]
+                            scaled_value = scaler.transform([[raw_value]])[0][0]
+                            encoded_input[col] = scaled_value
+                            log.debug(f"Scaled numeric column: {col} = {raw_value} -> {scaled_value}")
+                        else:
+                            # Fallback: use raw value if scaler not found
+                            encoded_input[col] = user_input[col]
+                            log.warning(f"No scaler found for {col}, using raw value (may cause prediction issues)")
+                    except Exception as e:
+                        # Fallback: use raw value if scaling fails
+                        encoded_input[col] = user_input[col]
+                        log.warning(f"Failed to apply scaler to {col}: {e}, using raw value")
 
         # Step 3: Handle categorical columns (one-hot encoding)
         categorical_info = get_original_categorical_columns(df_original, target_column)

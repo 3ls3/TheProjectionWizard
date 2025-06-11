@@ -1595,13 +1595,26 @@ async def predict_single_enhanced(
         if model is None or metadata is None:
             raise HTTPException(status_code=404, detail="Model or metadata not found")
         
-        # Convert input to DataFrame
-        input_df = pd.DataFrame([input_data])
+        # Load original data for proper input encoding
+        from api.utils.io_helpers import load_original_data_csv_gcs
+        df_original = load_original_data_csv_gcs(run_id, PROJECT_BUCKET_NAME)
+        if df_original is None:
+            raise HTTPException(status_code=404, detail="Original data not found")
+            
         target_column = metadata.get('target_info', {}).get('name')
         task_type = metadata.get('target_info', {}).get('task_type', 'unknown')
         
-        # Generate enhanced prediction with real SHAP values
-        result = generate_enhanced_prediction_with_shap(model, input_df, target_column, task_type)
+        # CRITICAL FIX: Apply proper input encoding with StandardScaler
+        from pipeline.step_7_predict.column_mapper import encode_user_input_gcs
+        encoded_df, encoding_issues = encode_user_input_gcs(
+            input_data, run_id, df_original, target_column
+        )
+        
+        if encoded_df is None or encoding_issues:
+            raise HTTPException(status_code=400, detail=f"Input encoding failed: {encoding_issues}")
+        
+        # Generate enhanced prediction with real SHAP values using properly encoded input
+        result = generate_enhanced_prediction_with_shap(model, encoded_df, target_column, task_type)
         
         return result
         
@@ -1633,15 +1646,28 @@ async def get_prediction_explanation(
         if model is None or metadata is None:
             raise HTTPException(status_code=404, detail="Model or metadata not found")
         
-        # Convert input to DataFrame
-        input_df = pd.DataFrame([input_data])
+        # Load original data for proper input encoding
+        from api.utils.io_helpers import load_original_data_csv_gcs
+        df_original = load_original_data_csv_gcs(run_id, PROJECT_BUCKET_NAME)
+        if df_original is None:
+            raise HTTPException(status_code=404, detail="Original data not found")
+            
         target_column = metadata.get('target_info', {}).get('name')
         task_type = metadata.get('target_info', {}).get('task_type', 'unknown')
+        
+        # CRITICAL FIX: Apply proper input encoding with StandardScaler
+        from pipeline.step_7_predict.column_mapper import encode_user_input_gcs
+        encoded_df, encoding_issues = encode_user_input_gcs(
+            input_data, run_id, df_original, target_column
+        )
+        
+        if encoded_df is None or encoding_issues:
+            raise HTTPException(status_code=400, detail=f"Input encoding failed: {encoding_issues}")
         
         # Generate SHAP explanation
         from pipeline.step_7_predict.predict_logic import calculate_shap_values_for_prediction
         
-        shap_result = calculate_shap_values_for_prediction(model, input_df, target_column, task_type)
+        shap_result = calculate_shap_values_for_prediction(model, encoded_df, target_column, task_type)
         
         # Format response
         explanation_summary = f"SHAP explanation for prediction {prediction_id}. "

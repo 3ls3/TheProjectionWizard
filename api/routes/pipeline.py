@@ -2065,7 +2065,7 @@ def make_enhanced_prediction(req: PredictionInputRequest):
         # Extract processed features (excluding prediction column)
         input_features = result_df.drop(columns=['prediction']).iloc[0].to_dict()
 
-        # === STEP 2: Get feature importance from results ===
+        # === STEP 2: Get feature importance from metadata ===
         
         feature_importance = []
         feature_importance_scores = {}
@@ -2073,30 +2073,45 @@ def make_enhanced_prediction(req: PredictionInputRequest):
         explainability_available = False
         
         try:
-            # Check if pipeline is completed and results are available
-            status_data = result_utils.get_pipeline_status(req.run_id)
-            if status_data.get('status') == 'completed':
+            # Get feature importance directly from metadata (faster and more reliable)
+            explain_info = metadata.get('explain_info', {})
+            
+            # Check if SHAP feature importance is available
+            if explain_info.get('feature_importance_scores'):
+                feature_importance_scores = explain_info['feature_importance_scores']
+                # Convert to sorted list for feature_importance (backwards compatibility)
+                sorted_features = sorted(feature_importance_scores.items(), key=lambda x: x[1], reverse=True)
+                feature_importance = [feature for feature, score in sorted_features]
+                explainability_available = True
                 
-                # Try to get results data using the working results logic
-                results_data = result_utils.build_results(req.run_id)
-                
-                # Extract feature importance from results
-                if 'top_features' in results_data and results_data['top_features']:
-                    feature_importance = results_data['top_features']
-                    
-                # Try to get feature importance scores from automl_info
-                if 'automl_summary' in results_data and results_data['automl_summary']:
-                    automl_summary = results_data['automl_summary']
-                    if 'performance_metrics' in automl_summary:
-                        # Check if there are feature importance scores in metadata
-                        if 'feature_importance' in automl_info:
-                            feature_importance_scores = automl_info['feature_importance']
-                
-                # Check explainability availability
-                if 'explainability_summary' in results_data and results_data['explainability_summary']:
-                    explainability_summary = results_data['explainability_summary']
-                    explainability_available = True
-                    shap_plot_available = explainability_summary.get('shap_plot_available', False)
+            elif metadata.get('feature_importance', {}).get('scores'):
+                # Use top-level feature importance
+                feature_importance_scores = metadata['feature_importance']['scores']
+                feature_importance = metadata['feature_importance'].get('ranking', [])
+                explainability_available = True
+            
+            # Check SHAP plot availability
+            if explain_info:
+                shap_plot_gcs_path = explain_info.get('shap_summary_plot_gcs_path')
+                if shap_plot_gcs_path:
+                    from api.utils.gcs_utils import check_run_file_exists
+                    shap_plot_available = check_run_file_exists(req.run_id, shap_plot_gcs_path)
+                else:
+                    # Fallback check
+                    shap_plot_available = check_run_file_exists(req.run_id, f"plots/shap_summary.png")
+            
+            # If no SHAP data, try to get from results as fallback
+            if not feature_importance_scores:
+                status_data = result_utils.get_pipeline_status(req.run_id)
+                if status_data.get('status') == 'completed':
+                    try:
+                        results_data = result_utils.build_results(req.run_id)
+                        if 'feature_importance_scores' in results_data:
+                            feature_importance_scores = results_data['feature_importance_scores']
+                        if 'top_features' in results_data:
+                            feature_importance = results_data['top_features']
+                    except Exception:
+                        pass  # Fallback failed, continue with empty values
                     
         except Exception as e:
             # Log but don't fail the request if feature importance is not available

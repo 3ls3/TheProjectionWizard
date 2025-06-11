@@ -121,11 +121,26 @@ def build_results_gcs(run_id: str,
     if not model_metrics:
         raise ValueError(f"Model performance metrics missing for run {run_id}")
 
-    # Extract top features 
-    top_features = automl_info.get('feature_importance', [])
-    if not top_features:
-        # Fallback to any feature importance data
-        top_features = automl_info.get('top_features', [])
+    # Extract top features - prioritize SHAP feature importance from explain_info
+    top_features = []
+    feature_importance_scores = {}
+    
+    # First, try to get SHAP feature importance from explain_info or top-level metadata
+    explain_info = metadata.get('explain_info', {})
+    if explain_info.get('feature_importance_scores'):
+        feature_importance_scores = explain_info['feature_importance_scores']
+        # Convert to sorted list for top_features (backwards compatibility)
+        sorted_features = sorted(feature_importance_scores.items(), key=lambda x: x[1], reverse=True)
+        top_features = [feature for feature, score in sorted_features]
+    elif metadata.get('feature_importance', {}).get('ranking'):
+        # Use top-level feature importance ranking
+        top_features = metadata['feature_importance']['ranking']
+        feature_importance_scores = metadata['feature_importance'].get('scores', {})
+    else:
+        # Fallback to automl feature importance
+        top_features = automl_info.get('feature_importance', [])
+        if not top_features:
+            top_features = automl_info.get('top_features', [])
 
     # Extract explainability info
     explain_info = metadata.get('explain_info', {})
@@ -301,6 +316,10 @@ def build_results_gcs(run_id: str,
         "top_features": top_features,
         "explainability": explainability,
         "download_url": None,
+        
+        # Feature importance information
+        "feature_importance_scores": feature_importance_scores,
+        "feature_importance_available": bool(feature_importance_scores),
         
         # Enhanced detailed information
         "run_summary": run_summary,

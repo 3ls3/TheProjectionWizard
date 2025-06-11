@@ -516,6 +516,16 @@ class FinalResultsResponse(BaseModel):
     explainability: Dict[str, str]
     download_url: Optional[str] = None
     
+    # Feature importance information (NEW)
+    feature_importance_scores: Dict[str, float] = Field(
+        default_factory=dict,
+        description="SHAP-based feature importance scores for all features"
+    )
+    feature_importance_available: bool = Field(
+        default=False,
+        description="Whether feature importance scores are available"
+    )
+    
     # Enhanced detailed information
     run_summary: RunSummary
     pipeline_status: PipelineStatusInfo

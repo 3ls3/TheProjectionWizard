@@ -443,9 +443,9 @@ def run_explainability_stage_gcs(run_id: str,
         )
         
         try:
-            # Generate SHAP summary plot and save to GCS
+            # Generate SHAP summary plot and save to GCS, also get feature importance scores
             plot_gcs_path = f"{constants.PLOTS_DIR}/{constants.SHAP_SUMMARY_PLOT}"
-            plot_success = shap_logic.generate_shap_summary_plot_gcs(
+            plot_success, feature_importance_scores = shap_logic.generate_shap_summary_plot_gcs(
                 pycaret_pipeline=pycaret_pipeline,
                 X_data_sample=X_data,
                 run_id=run_id,
@@ -468,6 +468,17 @@ def run_explainability_stage_gcs(run_id: str,
             
             log.info(f"SHAP summary plot generated and saved to GCS: {plot_gcs_path}")
             
+            # Log feature importance scores
+            if feature_importance_scores:
+                log.info(f"Feature importance scores calculated for {len(feature_importance_scores)} features")
+                # Log top 5 features
+                sorted_features = sorted(feature_importance_scores.items(), key=lambda x: x[1], reverse=True)
+                log.info("Top 5 most important features from SHAP:")
+                for i, (feature, score) in enumerate(sorted_features[:5]):
+                    log.info(f"  {i+1}. {feature}: {score:.4f}")
+            else:
+                log.warning("No feature importance scores were calculated")
+            
             # Structured log: Plot generated
             logger.log_structured_event(
                 structured_log,
@@ -475,7 +486,8 @@ def run_explainability_stage_gcs(run_id: str,
                 {
                     "plot_type": "shap_summary",
                     "plot_gcs_path": plot_gcs_path,
-                    "storage_type": "gcs"
+                    "storage_type": "gcs",
+                    "feature_importance_count": len(feature_importance_scores) if feature_importance_scores else 0
                 },
                 f"SHAP summary plot generated and saved to GCS: {plot_gcs_path}"
             )
@@ -497,7 +509,7 @@ def run_explainability_stage_gcs(run_id: str,
         log.info("Updating metadata with explainability results...")
         
         try:
-            # Create explainability info with GCS paths
+            # Create explainability info with GCS paths and feature importance scores
             explain_info = {
                 'tool_used': 'SHAP',
                 'explanation_type': 'global_summary',
@@ -508,8 +520,23 @@ def run_explainability_stage_gcs(run_id: str,
                 'features_explained': len(X_data.columns),
                 'samples_used_for_explanation': len(X_data),
                 'storage_type': 'gcs',
-                'gcs_bucket': gcs_bucket_name
+                'gcs_bucket': gcs_bucket_name,
+                'feature_importance_scores': feature_importance_scores if feature_importance_scores else {},
+                'feature_importance_available': bool(feature_importance_scores)
             }
+            
+            # Also add feature importance to top level for easy access
+            if feature_importance_scores:
+                # Create sorted list of features for easy ranking
+                sorted_features = sorted(feature_importance_scores.items(), key=lambda x: x[1], reverse=True)
+                feature_importance_ranking = [feature for feature, score in sorted_features]
+                
+                metadata_dict['feature_importance'] = {
+                    'scores': feature_importance_scores,
+                    'ranking': feature_importance_ranking,
+                    'method': 'SHAP',
+                    'calculated_at': datetime.utcnow().isoformat()
+                }
             
             # Update metadata with explainability info
             metadata_dict['explain_info'] = explain_info

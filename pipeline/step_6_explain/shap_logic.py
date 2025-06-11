@@ -10,7 +10,7 @@ import pandas as pd
 import numpy as np
 import logging
 from pathlib import Path
-from typing import Any, Optional, Union, Callable
+from typing import Any, Optional, Union, Callable, List, Dict, Tuple
 import warnings
 import tempfile
 import io
@@ -92,6 +92,67 @@ def _create_prediction_function(pipeline: Any, task_type: str, logger: Optional[
             raise ValueError("Pipeline has no suitable prediction method for regression")
 
 
+def calculate_feature_importance_scores(
+    shap_values: Any,
+    feature_names: List[str],
+    task_type: str,
+    logger: Optional[logging.Logger] = None
+) -> Dict[str, float]:
+    """
+    Calculate feature importance scores from SHAP values.
+    
+    Args:
+        shap_values: SHAP values from explainer
+        feature_names: List of feature names
+        task_type: "classification" or "regression"
+        logger: Optional logger
+        
+    Returns:
+        Dictionary mapping feature names to importance scores (mean absolute SHAP values)
+    """
+    if logger is None:
+        logger = logging.getLogger(__name__)
+    
+    try:
+        # Extract the values array from SHAP explanation object
+        if hasattr(shap_values, 'values'):
+            values_array = shap_values.values
+        else:
+            values_array = shap_values
+        
+        # Handle multi-class classification
+        if task_type == "classification" and len(values_array.shape) == 3:
+            if values_array.shape[2] == 2:
+                # Binary classification - use positive class (index 1)
+                values_array = values_array[:, :, 1]
+                logger.info("Using positive class for binary classification feature importance")
+            else:
+                # Multi-class - use mean absolute values across classes
+                values_array = np.mean(np.abs(values_array), axis=2)
+                logger.info("Using mean absolute values across classes for multi-class feature importance")
+        
+        # Calculate mean absolute SHAP values for each feature
+        feature_importance = {}
+        for i, feature_name in enumerate(feature_names):
+            if i < values_array.shape[1]:  # Ensure we don't go out of bounds
+                mean_abs_shap = float(np.mean(np.abs(values_array[:, i])))
+                feature_importance[feature_name] = mean_abs_shap
+        
+        logger.info(f"Calculated feature importance for {len(feature_importance)} features")
+        
+        # Log top 5 features for debugging
+        sorted_features = sorted(feature_importance.items(), key=lambda x: x[1], reverse=True)
+        logger.info("Top 5 most important features:")
+        for i, (feature, score) in enumerate(sorted_features[:5]):
+            logger.info(f"  {i+1}. {feature}: {score:.4f}")
+        
+        return feature_importance
+        
+    except Exception as e:
+        logger.error(f"Failed to calculate feature importance scores: {e}")
+        return {}
+
+
 def generate_shap_summary_plot_gcs(
     pycaret_pipeline: Any, 
     X_data_sample: pd.DataFrame, 
@@ -100,9 +161,10 @@ def generate_shap_summary_plot_gcs(
     task_type: str,
     gcs_bucket_name: str = PROJECT_BUCKET_NAME,
     logger: Optional[logging.Logger] = None
-) -> bool:
+) -> Tuple[bool, Dict[str, float]]:
     """
     Generate a SHAP summary plot for the given PyCaret pipeline and save it to GCS.
+    Also calculate and return feature importance scores.
     
     Args:
         pycaret_pipeline: The loaded PyCaret pipeline object (from pycaret_pipeline.pkl)
@@ -114,7 +176,7 @@ def generate_shap_summary_plot_gcs(
         logger: Optional logger for detailed logging
         
     Returns:
-        True if plot generation and saving to GCS were successful, False otherwise
+        Tuple of (success: bool, feature_importance_scores: Dict[str, float])
     """
     if logger is None:
         logger = logging.getLogger(__name__)
@@ -163,7 +225,7 @@ def generate_shap_summary_plot_gcs(
         
         if non_numeric_cols:
             logger.error(f"Still have non-numeric columns after conversion: {non_numeric_cols}")
-            return False
+            return False, {}
         
         # =====================================
         # 2. CREATE SHAP EXPLAINER
@@ -194,7 +256,7 @@ def generate_shap_summary_plot_gcs(
                 logger.info("Fallback KernelExplainer created successfully")
             except Exception as e2:
                 logger.error(f"Fallback explainer also failed: {e2}")
-                return False
+                return False, {}
         
         # =====================================
         # 3. CALCULATE SHAP VALUES
@@ -215,10 +277,24 @@ def generate_shap_summary_plot_gcs(
             
         except Exception as e:
             logger.error(f"Failed to calculate SHAP values: {e}")
-            return False
+            return False, {}
         
         # =====================================
-        # 4. HANDLE MULTI-CLASS CLASSIFICATION
+        # 4. CALCULATE FEATURE IMPORTANCE SCORES
+        # =====================================
+        
+        logger.info("Calculating feature importance scores...")
+        feature_importance_scores = calculate_feature_importance_scores(
+            shap_values, list(X_sample.columns), task_type, logger
+        )
+        
+        if not feature_importance_scores:
+            logger.warning("Failed to calculate feature importance scores")
+        else:
+            logger.info(f"Successfully calculated feature importance for {len(feature_importance_scores)} features")
+        
+        # =====================================
+        # 5. HANDLE MULTI-CLASS CLASSIFICATION FOR PLOTTING
         # =====================================
         
         # For classification with multiple outputs (multi-class), select appropriate values
@@ -249,7 +325,7 @@ def generate_shap_summary_plot_gcs(
                     )
         
         # =====================================
-        # 5. GENERATE PLOT AND SAVE TO GCS
+        # 6. GENERATE PLOT AND SAVE TO GCS
         # =====================================
         
         logger.info("Generating SHAP summary plot...")
@@ -300,10 +376,10 @@ def generate_shap_summary_plot_gcs(
                     
                     if file_size_kb < 1:  # Less than 1KB probably indicates an issue
                         logger.warning("Plot file size is very small, may indicate an issue")
-                        return False
+                        return False, feature_importance_scores
                 else:
                     logger.error("Temporary plot file was not created")
-                    return False
+                    return False, feature_importance_scores
                 
                 # Upload to GCS
                 upload_success = upload_run_file(run_id, plot_gcs_path, temp_plot_path)
@@ -312,7 +388,7 @@ def generate_shap_summary_plot_gcs(
                     logger.info(f"SHAP summary plot successfully uploaded to GCS: {plot_gcs_path}")
                 else:
                     logger.error("Failed to upload plot to GCS")
-                    return False
+                    return False, feature_importance_scores
                 
             finally:
                 # Clean up temporary file
@@ -323,19 +399,19 @@ def generate_shap_summary_plot_gcs(
                 except Exception as cleanup_error:
                     logger.warning(f"Could not clean up temporary plot file {temp_plot_path}: {cleanup_error}")
             
-            return True
+            return True, feature_importance_scores
             
         except Exception as e:
             logger.error(f"Failed to generate or save SHAP plot to GCS: {e}")
             # Ensure we close any open figures
             plt.close('all')
-            return False
+            return False, feature_importance_scores
     
     except Exception as e:
         logger.error(f"Unexpected error in SHAP plot generation (GCS): {e}")
         # Ensure we close any open figures in case of error
         plt.close('all')
-        return False
+        return False, {}
 
 
 def generate_shap_summary_plot(

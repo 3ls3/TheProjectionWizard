@@ -278,13 +278,17 @@ class PredictionInputRequest(BaseModel):
 class PredictionSchemaResponse(BaseModel):
     """Response with input schema for building prediction form."""
     api_version: Literal["v1"] = "v1"
-    numeric_columns: Dict[str, Dict[str, float]] = Field(
+    numeric_columns: Dict[str, Dict[str, Union[float, str]]] = Field(
         default_factory=dict, 
-        description="Numeric columns with min, max, mean, std values"
+        description="Numeric columns with min, max, mean, std values and encoding_role"
     )
     categorical_columns: Dict[str, Dict[str, Any]] = Field(
         default_factory=dict,
-        description="Categorical columns with options and default values"
+        description="Categorical columns with options, default values, and encoding_role"
+    )
+    column_encoding_roles: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Mapping of column names to their confirmed encoding roles (boolean, numeric-discrete, numeric-continuous, categorical-nominal, etc.)"
     )
     target_info: Dict[str, Any] = Field(
         default_factory=dict, description="Target column information"

@@ -1334,6 +1334,7 @@ def get_prediction_schema(run_id: str = Query(...)):
         return PredictionSchemaResponse(
             numeric_columns=schema_info.get('numeric_columns', {}),
             categorical_columns=schema_info.get('categorical_columns', {}),
+            column_encoding_roles=schema_info.get('column_encoding_roles', {}),
             target_info=target_info
         )
 

@@ -345,6 +345,9 @@ def encode_user_input(user_input: Dict[str, Any],
 def get_input_schema(run_id: str, df_original: pd.DataFrame, target_column: str) -> Dict[str, Any]:
     """
     Get the input schema information for creating the prediction form.
+    
+    Now uses confirmed feature schemas from metadata.json to provide accurate
+    encoding role information instead of basic numeric/categorical classification.
 
     Args:
         run_id: Run identifier
@@ -352,15 +355,107 @@ def get_input_schema(run_id: str, df_original: pd.DataFrame, target_column: str)
         target_column: Target column name
 
     Returns:
-        Dictionary containing schema information for form creation
+        Dictionary containing schema information for form creation with encoding roles
     """
     schema = {
         'numeric_columns': {},
         'categorical_columns': {},
+        'column_encoding_roles': {},
         'target_column': target_column
     }
 
     try:
+        # Load confirmed feature schemas from metadata
+        metadata = storage.read_metadata(run_id)
+        confirmed_schemas = metadata.get('feature_schemas', {}) if metadata else {}
+        
+        for col in df_original.columns:
+            if col == target_column:
+                continue
+
+            col_data = df_original[col].dropna()
+            if len(col_data) == 0:
+                continue
+
+            # Get confirmed encoding role, fallback to basic classification
+            encoding_role = None
+            if col in confirmed_schemas:
+                encoding_role = confirmed_schemas[col].get('encoding_role')
+            
+            # Store the encoding role
+            schema['column_encoding_roles'][col] = encoding_role or 'unknown'
+            
+            # Classify for UI based on encoding role or fallback to data type
+            if encoding_role in ['boolean']:
+                # Boolean columns - treat as categorical with True/False options
+                unique_values = sorted(col_data.unique().astype(str))
+                schema['categorical_columns'][col] = {
+                    'options': unique_values,
+                    'default': unique_values[0] if unique_values else None,
+                    'encoding_role': 'boolean'
+                }
+            elif encoding_role in ['numeric-continuous', 'numeric-discrete']:
+                # Numeric columns (both continuous and discrete)
+                if pd.api.types.is_numeric_dtype(col_data):
+                    schema['numeric_columns'][col] = {
+                        'min_value': float(col_data.min()),
+                        'max_value': float(col_data.max()),
+                        'mean_value': float(col_data.mean()),
+                        'std_value': float(col_data.std()) if len(col_data) > 1 else 0.0,
+                        'encoding_role': encoding_role
+                    }
+                else:
+                    # Fallback if data doesn't match expected type
+                    log.warning(f"Column {col} marked as {encoding_role} but data is not numeric")
+                    unique_values = sorted(col_data.unique().astype(str))
+                    schema['categorical_columns'][col] = {
+                        'options': unique_values,
+                        'default': unique_values[0] if unique_values else None,
+                        'encoding_role': encoding_role
+                    }
+            elif encoding_role in ['categorical-nominal', 'categorical-ordinal']:
+                # Categorical columns
+                unique_values = sorted(col_data.unique().astype(str))
+                schema['categorical_columns'][col] = {
+                    'options': unique_values,
+                    'default': unique_values[0] if unique_values else None,
+                    'encoding_role': encoding_role
+                }
+            elif encoding_role in ['text', 'datetime']:
+                # Text/datetime columns - treat as categorical for now
+                unique_values = sorted(col_data.unique().astype(str))
+                schema['categorical_columns'][col] = {
+                    'options': unique_values,
+                    'default': unique_values[0] if unique_values else None,
+                    'encoding_role': encoding_role
+                }
+            else:
+                # Fallback to basic data type classification if no confirmed schema
+                if pd.api.types.is_numeric_dtype(col_data):
+                    # Default numeric classification
+                    schema['numeric_columns'][col] = {
+                        'min_value': float(col_data.min()),
+                        'max_value': float(col_data.max()),
+                        'mean_value': float(col_data.mean()),
+                        'std_value': float(col_data.std()) if len(col_data) > 1 else 0.0,
+                        'encoding_role': 'numeric-continuous'  # Default fallback
+                    }
+                    schema['column_encoding_roles'][col] = 'numeric-continuous'
+                else:
+                    # Default categorical classification
+                    unique_values = sorted(col_data.unique().astype(str))
+                    schema['categorical_columns'][col] = {
+                        'options': unique_values,
+                        'default': unique_values[0] if unique_values else None,
+                        'encoding_role': 'categorical-nominal'  # Default fallback
+                    }
+                    schema['column_encoding_roles'][col] = 'categorical-nominal'
+
+        log.info(f"Generated enhanced input schema with confirmed roles: {len(schema['numeric_columns'])} numeric, {len(schema['categorical_columns'])} categorical columns")
+
+    except Exception as e:
+        log.error(f"Failed to generate enhanced input schema: {e}")
+        # Fallback to basic classification without encoding roles
         for col in df_original.columns:
             if col == target_column:
                 continue
@@ -370,7 +465,6 @@ def get_input_schema(run_id: str, df_original: pd.DataFrame, target_column: str)
                 continue
 
             if pd.api.types.is_numeric_dtype(col_data):
-                # Numeric column
                 schema['numeric_columns'][col] = {
                     'min_value': float(col_data.min()),
                     'max_value': float(col_data.max()),
@@ -378,17 +472,11 @@ def get_input_schema(run_id: str, df_original: pd.DataFrame, target_column: str)
                     'std_value': float(col_data.std()) if len(col_data) > 1 else 0.0
                 }
             else:
-                # Categorical column
                 unique_values = sorted(col_data.unique().astype(str))
                 schema['categorical_columns'][col] = {
                     'options': unique_values,
                     'default': unique_values[0] if unique_values else None
                 }
-
-        log.info(f"Generated input schema: {len(schema['numeric_columns'])} numeric, {len(schema['categorical_columns'])} categorical columns")
-
-    except Exception as e:
-        log.error(f"Failed to generate input schema: {e}")
 
     return schema
 

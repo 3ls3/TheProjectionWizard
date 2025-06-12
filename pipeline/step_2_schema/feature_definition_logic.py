@@ -336,44 +336,25 @@ def suggest_initial_feature_schemas(df: pd.DataFrame) -> Dict[str, Dict[str, str
             suggested_encoding_role = "boolean"
             
         elif pd.api.types.is_numeric_dtype(col_series.dtype):
-            # First check if it's a binary 0/1 column (potential boolean)
-            unique_vals = sorted(col_series.dropna().unique())
-            if len(unique_vals) == 2 and set(unique_vals) == {0, 1}:
-                suggested_encoding_role = "boolean"
-            else:
-                # Check if this looks like a true categorical variable disguised as numeric
-                col_lower = col.lower()
-                
-                # These column name patterns suggest numeric features even with few unique values
-                numeric_indicators = [
-                    'age', 'year', 'count', 'number', 'num', 'score', 'rating', 'rank', 
-                    'bedroom', 'bathroom', 'room', 'floor', 'garage', 'space', 'feet', 
-                    'size', 'area', 'distance', 'mile', 'meter', 'inch', 'height', 'width',
-                    'length', 'depth', 'weight', 'price', 'cost', 'value', 'amount', 
-                    'percent', 'rate', 'level', 'grade', 'quality'
-                ]
-                
-                # Check if column name suggests numeric nature
-                is_likely_numeric = any(indicator in col_lower for indicator in numeric_indicators)
-                
-                if pd.api.types.is_integer_dtype(col_series.dtype) and nunique <= 10 and not is_likely_numeric:
-                    # Few unique integers with no numeric indicators - might be categorical
-                    # But be conservative - only if values look like categories (e.g., 1,2,3 or discrete IDs)
-                    unique_vals = sorted(col_series.dropna().unique())
-                    # If values are consecutive integers starting from 0 or 1, likely numeric
-                    if len(unique_vals) > 1:
-                        if unique_vals == list(range(min(unique_vals), max(unique_vals) + 1)):
-                            # Consecutive integers - likely numeric/ordinal
-                            suggested_encoding_role = "numeric-discrete"
-                        else:
-                            # Non-consecutive integers - might be categorical
-                            suggested_encoding_role = "categorical-nominal"
-                    else:
-                        suggested_encoding_role = "numeric-discrete"
-                elif pd.api.types.is_integer_dtype(col_series.dtype):
-                    suggested_encoding_role = "numeric-discrete"
+            # Get unique values excluding NaN
+            unique_vals = col_series.dropna().unique()
+            
+            # Check if it's a binary 0/1 column (potential boolean)
+            # Handle both int and float representations
+            if len(unique_vals) == 2:
+                unique_set = set(unique_vals)
+                # Check for 0/1 in various forms (int, float)
+                if (unique_set == {0, 1} or 
+                    unique_set == {0.0, 1.0} or 
+                    unique_set == {0, 1.0} or 
+                    unique_set == {0.0, 1}):
+                    suggested_encoding_role = "boolean"
                 else:
-                    suggested_encoding_role = "numeric-continuous"
+                    # Not a boolean, continue with other numeric logic
+                    suggested_encoding_role = _determine_numeric_role(col_series, col, unique_vals, nunique)
+            else:
+                # Not binary, determine numeric role
+                suggested_encoding_role = _determine_numeric_role(col_series, col, unique_vals, nunique)
                 
         elif pd.api.types.is_datetime64_any_dtype(col_series.dtype):
             suggested_encoding_role = "datetime"
@@ -405,6 +386,66 @@ def suggest_initial_feature_schemas(df: pd.DataFrame) -> Dict[str, Dict[str, str
         }
     
     return schema_suggestions
+
+
+def _determine_numeric_role(col_series: pd.Series, col: str, unique_vals: np.ndarray, nunique: int) -> str:
+    """
+    Helper function to determine the encoding role for numeric columns.
+    Handles the distinction between integer-like and float-like data even when 
+    pandas has upcast due to NaN values.
+    """
+    col_lower = col.lower()
+    
+    # These column name patterns suggest numeric features even with few unique values
+    numeric_indicators = [
+        'age', 'year', 'count', 'number', 'num', 'score', 'rating', 'rank', 
+        'bedroom', 'bathroom', 'room', 'floor', 'garage', 'space', 'feet', 
+        'size', 'area', 'distance', 'mile', 'meter', 'inch', 'height', 'width',
+        'length', 'depth', 'weight', 'price', 'cost', 'value', 'amount', 
+        'percent', 'rate', 'level', 'grade', 'quality'
+    ]
+    
+    # Check if column name suggests numeric nature
+    is_likely_numeric = any(indicator in col_lower for indicator in numeric_indicators)
+    
+    # Check if all non-NaN values are actually integers (even if stored as float due to NaN)
+    non_nan_values = col_series.dropna()
+    if len(non_nan_values) > 0:
+        # Check if all values are whole numbers (could be stored as float due to NaN)
+        all_whole_numbers = all(
+            isinstance(val, (int, np.integer)) or 
+            (isinstance(val, (float, np.floating)) and val.is_integer())
+            for val in non_nan_values
+        )
+        
+        if all_whole_numbers and nunique <= 10 and not is_likely_numeric:
+            # Few unique integers with no numeric indicators - might be categorical
+            # But be conservative - only if values look like categories (e.g., 1,2,3 or discrete IDs)
+            unique_vals_as_ints = sorted([
+                int(val) if isinstance(val, (float, np.floating)) and val.is_integer() else val
+                for val in unique_vals
+            ])
+            
+            # If values are consecutive integers starting from 0 or 1, likely numeric
+            if len(unique_vals_as_ints) > 1:
+                min_val, max_val = min(unique_vals_as_ints), max(unique_vals_as_ints)
+                if unique_vals_as_ints == list(range(min_val, max_val + 1)):
+                    # Consecutive integers - likely numeric/ordinal
+                    return "numeric-discrete"
+                else:
+                    # Non-consecutive integers - might be categorical
+                    return "categorical-nominal"
+            else:
+                return "numeric-discrete"
+        elif all_whole_numbers:
+            # Integer-like values
+            return "numeric-discrete"
+        else:
+            # Has decimal values
+            return "numeric-continuous"
+    else:
+        # All values are NaN - default to continuous
+        return "numeric-continuous"
 
 
 def confirm_feature_schemas_gcs(run_id: str, user_confirmed_schemas: Dict[str, Dict[str, str]], 

@@ -18,6 +18,7 @@ import json
 from io import BytesIO
 from pathlib import Path
 import traceback
+import numpy as np
 
 from common import storage, logger, constants
 from common import result_utils, errors
@@ -175,6 +176,21 @@ def _create_and_upload_metadata_json(run_id: str, filename: str, df: pd.DataFram
         raise GCSError(f"Failed to upload metadata.json to GCS for run {run_id}")
 
 
+def _format_value_for_preview(val):
+    """Format a value for display in data preview, handling numeric types properly."""
+    if pd.isna(val):
+        return "nan"
+    if isinstance(val, (int, np.integer)):
+        return str(val)
+    if isinstance(val, (float, np.floating)):
+        # If it's a whole number, display as integer
+        if val.is_integer():
+            return str(int(val))
+        else:
+            return str(val)
+    return str(val)
+
+
 def _create_preview(df: pd.DataFrame, num_rows: int = 5) -> List[List[str]]:
     """Create a preview of the first N rows as list of lists of strings."""
     # Get first N rows
@@ -186,9 +202,9 @@ def _create_preview(df: pd.DataFrame, num_rows: int = 5) -> List[List[str]]:
     # Add header row
     preview.append(list(df.columns.astype(str)))
 
-    # Add data rows, converting all values to strings
+    # Add data rows, converting all values to strings with proper formatting
     for _, row in preview_df.iterrows():
-        preview.append([str(val) for val in row.values])
+        preview.append([_format_value_for_preview(val) for val in row.values])
 
     return preview
 
@@ -425,7 +441,7 @@ def _get_column_statistics(series: pd.Series) -> "ColumnStatistics":
     sample_values = []
     non_null_values = series.dropna()
     if len(non_null_values) > 0:
-        sample_values = [str(val) for val in non_null_values.head(3).tolist()]
+        sample_values = [_format_value_for_preview(val) for val in non_null_values.head(3).tolist()]
     
     return ColumnStatistics(
         unique_values=series.nunique(),

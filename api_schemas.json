@@ -164,89 +164,38 @@
     },
     "/api/results": {
       "method": "GET",
-      "summary": "Get final pipeline results",
+      "summary": "Get comprehensive pipeline results including model comparison",
       "parameters": {
-        "run_id": "string (required)"
+        "run_id": "string (required) - The run ID to get results for"
       },
       "response": {
         "api_version": "v1",
-        "model_metrics": {
-          "metric_name": "float"
-        },
-        "top_features": ["string array"],
-        "explainability": {
-          "key": "string"
-        },
-        "download_url": "string | null",
-        "run_summary": {
-          "run_id": "string",
-          "timestamp": "string | null",
-          "original_filename": "string | null",
-          "initial_shape": [
-            "integer (rows)",
-            "integer (columns)"
-          ],
-          "target_info": {}
-        },
-        "pipeline_status": {
-          "stage": "string",
-          "status": "pending | running | processing | completed | failed",
-          "message": "string | null",
-          "errors": ["string array | null"]
-        },
-        "validation_summary": {
-          "overall_success": "boolean",
-          "total_expectations": "integer",
-          "successful_expectations": "integer",
-          "failed_expectations": "integer"
-        },
-        "data_prep_summary": {
-          "final_shape": [
-            "integer (rows)",
-            "integer (columns)"
-          ],
-          "cleaning_steps": ["string array"],
-          "profiling_report_available": "boolean",
-          "profiling_report_filename": "string | null"
-        },
+        "model_metrics": "object - Performance metrics for the best model",
+        "top_features": "array - List of most important features",
+        "explainability": "object - SHAP plot and explanation information",
+        "feature_importance_scores": "object - SHAP-based feature importance scores",
+        "feature_importance_available": "boolean - Whether feature importance is available",
+        "run_summary": "object - Basic run information",
+        "pipeline_status": "object - Current pipeline status",
+        "validation_summary": "object - Data validation results",
+        "data_prep_summary": "object - Data preparation summary",
         "automl_summary": {
-          "tool_used": "string | null",
-          "best_model_name": "string | null",
-          "target_column": "string | null",
-          "task_type": "string | null",
-          "performance_metrics": {
-            "metric_name": "float"
-          },
-          "model_file_available": "boolean"
+          "tool_used": "string - AutoML tool used (PyCaret)",
+          "best_model_name": "string - Name of the best performing model",
+          "target_column": "string - Target column name",
+          "task_type": "string - classification or regression",
+          "performance_metrics": "object - Best model performance metrics",
+          "model_file_available": "boolean - Whether model file exists",
+          "model_comparison_available": "boolean - Whether model comparison results are available",
+          "total_models_compared": "number - Total number of models compared",
+          "top_models_summary": "array - Summary of top 5 models with key metrics",
+          "all_model_results": "array - Complete results for all compared models with rankings and metrics"
         },
-        "explainability_summary": {
-          "tool_used": "string | null",
-          "features_explained": "integer | null",
-          "samples_used": "integer | null",
-          "shap_plot_available": "boolean",
-          "shap_plot_filename": "string | null"
-        },
-        "available_downloads": {
-          "original_data": "boolean",
-          "cleaned_data": "boolean",
-          "metadata_json": "boolean",
-          "validation_report": "boolean",
-          "profile_report": "boolean",
-          "model_artifacts": "boolean",
-          "shap_plot": "boolean",
-          "pipeline_log": "boolean",
-          "file_sizes": {
-            "filename": "float (KB)"
-          }
-        },
-        "prediction_readiness": {
-          "prediction_ready": "boolean",
-          "model_file_available": "boolean",
-          "column_mapping_available": "boolean",
-          "original_data_available": "boolean",
-          "metadata_available": "boolean"
-        }
-      }
+        "explainability_summary": "object - Model explainability information",
+        "available_downloads": "object - Available files for download",
+        "prediction_readiness": "object - Prediction capability status"
+      },
+      "description": "Returns comprehensive results including model comparison data for frontend visualization. The automl_summary now includes detailed comparison of all models tested during AutoML, allowing frontend to show model performance comparisons."
     },
     "/api/prediction-schema": {
       "method": "GET",

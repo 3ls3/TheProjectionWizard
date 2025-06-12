@@ -198,14 +198,40 @@ class DataPrepSummary(BaseModel):
     profiling_report_filename: Optional[str] = None
 
 
+# Model comparison result schemas
+class ModelComparisonResult(BaseModel):
+    """Individual model result from comparison."""
+    model_name: str
+    rank: int
+    metrics: Dict[str, Union[float, str]] = Field(default_factory=dict)
+
+
 class AutoMLSummary(BaseModel):
-    """AutoML model summary information."""
+    """AutoML model summary information with model comparison results."""
     tool_used: Optional[str] = None
     best_model_name: Optional[str] = None
     target_column: Optional[str] = None
     task_type: Optional[str] = None
     performance_metrics: Dict[str, float] = Field(default_factory=dict)
     model_file_available: bool = False
+    
+    # Model comparison results (NEW)
+    model_comparison_available: bool = Field(
+        default=False,
+        description="Whether model comparison results are available"
+    )
+    total_models_compared: int = Field(
+        default=0,
+        description="Total number of models that were compared"
+    )
+    top_models_summary: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Summary of top performing models with key metrics"
+    )
+    all_model_results: List[ModelComparisonResult] = Field(
+        default_factory=list,
+        description="Complete results for all compared models"
+    )
 
 
 class ExplainabilitySummary(BaseModel):

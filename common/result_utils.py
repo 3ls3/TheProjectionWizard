@@ -230,7 +230,7 @@ def build_results_gcs(run_id: str,
             "profiling_report_filename": profiling_filename
         }
 
-    # AutoML Summary
+    # AutoML Summary with Model Comparison Results
     model_file_available = check_run_file_exists(run_id, f"{constants.MODEL_DIR}/pycaret_pipeline.pkl")
     automl_summary = {
         "tool_used": automl_info.get('tool_used'),
@@ -238,7 +238,13 @@ def build_results_gcs(run_id: str,
         "target_column": automl_info.get('target_column'),
         "task_type": automl_info.get('task_type'),
         "performance_metrics": model_metrics,
-        "model_file_available": model_file_available
+        "model_file_available": model_file_available,
+        
+        # Model comparison results
+        "model_comparison_available": automl_info.get('model_comparison_available', False),
+        "total_models_compared": automl_info.get('total_models_compared', 0),
+        "top_models_summary": automl_info.get('top_models_summary', []),
+        "all_model_results": automl_info.get('model_comparison_results', {}).get('all_model_results', []) if automl_info.get('model_comparison_results') else []
     }
 
     # Explainability Summary

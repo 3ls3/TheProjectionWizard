@@ -11,6 +11,7 @@ from typing import Optional
 import traceback
 import tempfile
 import io
+import json
 
 from common import logger, storage, constants, schemas
 from api.utils.gcs_utils import (
@@ -285,6 +286,70 @@ def run_automl_stage_gcs(run_id: str,
                 'storage_type': 'gcs',
                 'gcs_bucket': gcs_bucket_name
             }
+
+            # =============================
+            # LOAD MODEL COMPARISON RESULTS
+            # =============================
+            try:
+                log.info("Loading model comparison results...")
+                
+                # Check if model comparison results exist in GCS
+                if check_run_file_exists(run_id, 'model_comparison_results.json'):
+                    # Download model comparison results from GCS
+                    comparison_bytes = download_run_file(run_id, 'model_comparison_results.json')
+                    if comparison_bytes:
+                        comparison_data = json.loads(comparison_bytes.decode('utf-8'))
+                        
+                        # Add model comparison results to automl_info
+                        automl_info['model_comparison_results'] = comparison_data
+                        automl_info['total_models_compared'] = comparison_data.get('total_models_compared', 0)
+                        automl_info['model_comparison_available'] = True
+                        
+                        log.info(f"Added model comparison results for {comparison_data.get('total_models_compared', 0)} models")
+                        
+                        # Extract summary statistics for quick access
+                        all_models = comparison_data.get('all_model_results', [])
+                        if all_models:
+                            # Get the best model metrics (first in list since PyCaret sorts by performance)
+                            best_model_metrics = all_models[0].get('metrics', {})
+                            automl_info['best_model_detailed_metrics'] = best_model_metrics
+                            
+                            # Create a summary of all models for quick reference
+                            model_summary = []
+                            for model_result in all_models[:5]:  # Top 5 models
+                                summary_item = {
+                                    'model_name': model_result.get('model_name', 'Unknown'),
+                                    'rank': model_result.get('rank', 0)
+                                }
+                                
+                                # Add key metrics based on task type
+                                model_metrics = model_result.get('metrics', {})
+                                if target_info.task_type == 'classification':
+                                    # Classification metrics
+                                    for metric in ['AUC', 'Accuracy', 'F1', 'Precision', 'Recall']:
+                                        if metric in model_metrics:
+                                            summary_item[metric] = model_metrics[metric]
+                                else:
+                                    # Regression metrics
+                                    for metric in ['R2', 'RMSE', 'MAE', 'MAPE']:
+                                        if metric in model_metrics:
+                                            summary_item[metric] = model_metrics[metric]
+                                
+                                model_summary.append(summary_item)
+                            
+                            automl_info['top_models_summary'] = model_summary
+                            log.info(f"Created summary for top {len(model_summary)} models")
+                    else:
+                        log.warning("Could not download model comparison results from GCS")
+                        automl_info['model_comparison_available'] = False
+                else:
+                    log.warning("Model comparison results file not found in GCS")
+                    automl_info['model_comparison_available'] = False
+                    
+            except Exception as comparison_error:
+                log.error(f"Failed to load model comparison results: {comparison_error}")
+                automl_info['model_comparison_available'] = False
+                # Don't fail the entire process
 
             # =============================
             # EXTRACT CLASS LABELS (FOR CLASSIFICATION)

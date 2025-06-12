@@ -5,6 +5,7 @@ Refactored for GCS-based storage.
 """
 
 import pandas as pd
+import numpy as np  # Add numpy import as well for potential use
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import traceback
@@ -277,7 +278,7 @@ def run_pycaret_experiment_gcs(
             return None, None, None
 
         # =============================
-        # 2. COMPARE MODELS
+        # 2. COMPARE MODELS AND CAPTURE ALL RESULTS
         # =============================
         log.info("Comparing models...")
 
@@ -320,6 +321,78 @@ def run_pycaret_experiment_gcs(
                 )
 
             log.info(f"Model comparison completed, got {len(top_models) if isinstance(top_models, list) else 1} model(s)")
+
+            # =============================
+            # CAPTURE ALL MODEL COMPARISON RESULTS
+            # =============================
+            all_model_results = []
+            comparison_metrics_df = None
+            
+            try:
+                # Get the comparison results DataFrame from PyCaret
+                comparison_metrics_df = pull()
+                
+                if comparison_metrics_df is not None and not comparison_metrics_df.empty:
+                    log.info(f"Captured comparison results for {len(comparison_metrics_df)} models")
+                    
+                    # Convert DataFrame to list of dictionaries for JSON serialization
+                    for idx, row in comparison_metrics_df.iterrows():
+                        model_result = {
+                            'model_name': str(idx),  # Model name is usually the index
+                            'rank': len(all_model_results) + 1,  # Rank based on order (PyCaret sorts by performance)
+                            'metrics': {}
+                        }
+                        
+                        # Extract all available metrics
+                        for col in comparison_metrics_df.columns:
+                            try:
+                                value = row[col]
+                                if isinstance(value, (int, float)) and not pd.isna(value):
+                                    model_result['metrics'][col] = float(value)
+                                elif isinstance(value, str):
+                                    model_result['metrics'][col] = value
+                            except Exception as metric_error:
+                                log.warning(f"Could not extract metric {col} for model {idx}: {metric_error}")
+                                continue
+                        
+                        all_model_results.append(model_result)
+                        log.info(f"  {model_result['rank']}. {model_result['model_name']}: {len(model_result['metrics'])} metrics")
+                    
+                    # Save all model comparison results to GCS
+                    try:
+                        model_comparison_data = {
+                            'task_type': task_type,
+                            'target_column': target_column_name,
+                            'comparison_timestamp': datetime.now().isoformat(),
+                            'cv_folds': cv_folds,
+                            'total_models_compared': len(all_model_results),
+                            'excluded_models': exclude_models,
+                            'top_n_selected': top_n_models_to_compare,
+                            'all_model_results': all_model_results,
+                            'storage_type': 'gcs'
+                        }
+                        
+                        # Upload model comparison results to GCS
+                        comparison_json = json.dumps(model_comparison_data, indent=2)
+                        comparison_bytes = io.BytesIO(comparison_json.encode('utf-8'))
+                        upload_success = upload_run_file(run_id, 'model_comparison_results.json', comparison_bytes)
+                        
+                        if upload_success:
+                            log.info(f"Model comparison results saved to GCS: model_comparison_results.json")
+                            log.info(f"Saved results for {len(all_model_results)} models")
+                        else:
+                            log.warning("Failed to save model comparison results to GCS")
+                            
+                    except Exception as save_error:
+                        log.error(f"Failed to save model comparison results: {save_error}")
+                        # Don't fail the entire process
+                        
+                else:
+                    log.warning("Could not retrieve model comparison results from PyCaret")
+                    
+            except Exception as comparison_error:
+                log.error(f"Failed to capture model comparison results: {comparison_error}")
+                # Don't fail the entire process, continue with model selection
 
             # Handle single model vs list of models
             if not isinstance(top_models, list):

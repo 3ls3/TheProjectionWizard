@@ -336,39 +336,44 @@ def suggest_initial_feature_schemas(df: pd.DataFrame) -> Dict[str, Dict[str, str
             suggested_encoding_role = "boolean"
             
         elif pd.api.types.is_numeric_dtype(col_series.dtype):
-            # Check if this looks like a true categorical variable disguised as numeric
-            col_lower = col.lower()
-            
-            # These column name patterns suggest numeric features even with few unique values
-            numeric_indicators = [
-                'age', 'year', 'count', 'number', 'num', 'score', 'rating', 'rank', 
-                'bedroom', 'bathroom', 'room', 'floor', 'garage', 'space', 'feet', 
-                'size', 'area', 'distance', 'mile', 'meter', 'inch', 'height', 'width',
-                'length', 'depth', 'weight', 'price', 'cost', 'value', 'amount', 
-                'percent', 'rate', 'level', 'grade', 'quality'
-            ]
-            
-            # Check if column name suggests numeric nature
-            is_likely_numeric = any(indicator in col_lower for indicator in numeric_indicators)
-            
-            if pd.api.types.is_integer_dtype(col_series.dtype) and nunique <= 10 and not is_likely_numeric:
-                # Few unique integers with no numeric indicators - might be categorical
-                # But be conservative - only if values look like categories (e.g., 1,2,3 or discrete IDs)
-                unique_vals = sorted(col_series.dropna().unique())
-                # If values are consecutive integers starting from 0 or 1, likely numeric
-                if len(unique_vals) > 1:
-                    if unique_vals == list(range(min(unique_vals), max(unique_vals) + 1)):
-                        # Consecutive integers - likely numeric/ordinal
-                        suggested_encoding_role = "numeric-discrete"
-                    else:
-                        # Non-consecutive integers - might be categorical
-                        suggested_encoding_role = "categorical-nominal"
-                else:
-                    suggested_encoding_role = "numeric-discrete"
-            elif pd.api.types.is_integer_dtype(col_series.dtype):
-                suggested_encoding_role = "numeric-discrete"
+            # First check if it's a binary 0/1 column (potential boolean)
+            unique_vals = sorted(col_series.dropna().unique())
+            if len(unique_vals) == 2 and set(unique_vals) == {0, 1}:
+                suggested_encoding_role = "boolean"
             else:
-                suggested_encoding_role = "numeric-continuous"
+                # Check if this looks like a true categorical variable disguised as numeric
+                col_lower = col.lower()
+                
+                # These column name patterns suggest numeric features even with few unique values
+                numeric_indicators = [
+                    'age', 'year', 'count', 'number', 'num', 'score', 'rating', 'rank', 
+                    'bedroom', 'bathroom', 'room', 'floor', 'garage', 'space', 'feet', 
+                    'size', 'area', 'distance', 'mile', 'meter', 'inch', 'height', 'width',
+                    'length', 'depth', 'weight', 'price', 'cost', 'value', 'amount', 
+                    'percent', 'rate', 'level', 'grade', 'quality'
+                ]
+                
+                # Check if column name suggests numeric nature
+                is_likely_numeric = any(indicator in col_lower for indicator in numeric_indicators)
+                
+                if pd.api.types.is_integer_dtype(col_series.dtype) and nunique <= 10 and not is_likely_numeric:
+                    # Few unique integers with no numeric indicators - might be categorical
+                    # But be conservative - only if values look like categories (e.g., 1,2,3 or discrete IDs)
+                    unique_vals = sorted(col_series.dropna().unique())
+                    # If values are consecutive integers starting from 0 or 1, likely numeric
+                    if len(unique_vals) > 1:
+                        if unique_vals == list(range(min(unique_vals), max(unique_vals) + 1)):
+                            # Consecutive integers - likely numeric/ordinal
+                            suggested_encoding_role = "numeric-discrete"
+                        else:
+                            # Non-consecutive integers - might be categorical
+                            suggested_encoding_role = "categorical-nominal"
+                    else:
+                        suggested_encoding_role = "numeric-discrete"
+                elif pd.api.types.is_integer_dtype(col_series.dtype):
+                    suggested_encoding_role = "numeric-discrete"
+                else:
+                    suggested_encoding_role = "numeric-continuous"
                 
         elif pd.api.types.is_datetime64_any_dtype(col_series.dtype):
             suggested_encoding_role = "datetime"
